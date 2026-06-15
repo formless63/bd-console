@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>bd-console</title>
+    <script>
+      // Apply the saved/preferred theme before first paint (no flash).
+      (function () {
+        var t = localStorage.getItem('bd_theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', t);
+      })();
+    </script>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="dot"></span>
+        <span id="ws-name">bd-console</span>
+      </div>
+      <nav class="tabs">
+        <button class="tab active" data-view="issues">Beads</button>
+        <button class="tab" data-view="docs">Docs</button>
+      </nav>
+      <div class="topbar-right">
+        <button id="quick-open" class="btn btn-accent" title="Capture an idea (press i)">+ idea</button>
+        <span id="meta" class="muted"></span>
+        <select id="theme-select" class="theme-select" title="Theme"></select>
+        <button id="refresh" class="btn" title="Reload data from disk">↻</button>
+      </div>
+    </header>
+
+    <!-- QUICK CAPTURE MODAL -->
+    <div class="modal-backdrop" id="quick-modal">
+      <div class="modal">
+        <div class="modal-head">Capture an idea</div>
+        <input id="quick-title" class="modal-input" type="text" placeholder="What's the idea? (title)" />
+        <textarea id="quick-desc" class="modal-input" rows="3" placeholder="Optional detail…"></textarea>
+        <div class="modal-row">
+          <label class="modal-field">label
+            <input id="quick-label" type="text" value="triage" />
+          </label>
+          <label class="modal-field">priority
+            <select id="quick-priority">
+              <option value="1">P1</option><option value="2">P2</option>
+              <option value="3" selected>P3</option><option value="4">P4</option>
+            </select>
+          </label>
+        </div>
+        <div class="modal-actions">
+          <span id="quick-err" class="modal-err"></span>
+          <button class="btn btn-ghost" id="quick-cancel">Cancel</button>
+          <button class="btn btn-accent" id="quick-save">Capture</button>
+        </div>
+      </div>
+    </div>
+    <div id="toast" class="toast"></div>
+
+    <!-- ISSUES VIEW -->
+    <main id="view-issues" class="view" data-pane="list">
+      <div class="mobile-bar">
+        <button class="btn" id="mi-filters">☰ Filters</button>
+        <button class="btn" id="mi-back">← Back to list</button>
+        <span id="mi-title" class="mb-title muted"></span>
+      </div>
+      <aside class="filters">
+        <div id="health" class="health-card"></div>
+        <input id="search" class="search" type="search" placeholder="Search id, title, description…" />
+        <div id="stats" class="stats"></div>
+        <div class="filter-group">
+          <div class="filter-label">Status</div>
+          <div id="f-status" class="chips"></div>
+        </div>
+        <div class="filter-group">
+          <div class="filter-label">Priority</div>
+          <div id="f-priority" class="chips"></div>
+        </div>
+        <div class="filter-group">
+          <div class="filter-label">Type</div>
+          <div id="f-type" class="chips"></div>
+        </div>
+        <div class="filter-group">
+          <div class="filter-label">Label</div>
+          <div id="f-label" class="chips"></div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="group-epic" checked /> Group by epic
+        </label>
+        <label class="toggle">
+          <input type="checkbox" id="ready-only" /> Ready only (open, unblocked)
+        </label>
+        <button id="clear-filters" class="btn btn-ghost">Clear filters</button>
+      </aside>
+
+      <section class="list-pane">
+        <div class="list-head">
+          <span>Issue</span>
+          <span class="sort" data-sort="priority">Pri</span>
+          <span class="sort" data-sort="status">Status</span>
+          <span class="sort" data-sort="updated_at">Updated</span>
+        </div>
+        <div id="issue-list" class="issue-list"></div>
+      </section>
+
+      <section id="detail" class="detail-pane">
+        <div class="detail-empty muted">Select an issue to see details.</div>
+      </section>
+    </main>
+
+    <!-- DOCS VIEW -->
+    <main id="view-docs" class="view hidden" data-pane="tree">
+      <div class="mobile-bar">
+        <button class="btn" id="md-tree">☰ Docs</button>
+        <span id="md-title" class="mb-title muted"></span>
+      </div>
+      <aside class="filters docs-filters">
+        <input id="doc-search" class="search" type="search" placeholder="Filter docs…" />
+        <div id="doc-tree" class="doc-tree"></div>
+      </aside>
+      <section class="doc-pane">
+        <div id="doc-content" class="markdown">
+          <div class="detail-empty muted">Select a document.</div>
+        </div>
+      </section>
+    </main>
+
+    <div class="backdrop" id="backdrop"></div>
+    <script src="app.js"></script>
+  </body>
+</html>

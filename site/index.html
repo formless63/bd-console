@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>bd-console docs</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="hero">
+      <div class="hero-inner">
+        <div class="eyebrow">bd-console documentation</div>
+        <h1>Point it at a beads repo and get a usable dashboard fast.</h1>
+        <p class="lede">
+          `bd-console` is a zero-dependency local web UI for beads issues and project markdown.
+          These docs cover setup, security, operations, troubleshooting, and agent guidance.
+        </p>
+        <nav class="hero-actions">
+          <a href="#quickstart">Quick start</a>
+          <a href="#configuration">Configuration</a>
+          <a href="#security">Security</a>
+          <a href="#troubleshooting">Troubleshooting</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="toc">
+        <div class="toc-title">On this page</div>
+        <details class="toc-group" open>
+          <summary>Getting started</summary>
+          <div class="toc-links">
+            <a href="#what">What it is</a>
+            <a href="#prereqs">Prerequisites</a>
+            <a href="#quickstart">Quick start</a>
+            <a href="#configuration">Configuration</a>
+          </div>
+        </details>
+        <details class="toc-group" open>
+          <summary>Operations</summary>
+          <div class="toc-links">
+            <a href="#security">Security posture</a>
+            <a href="#export">Export freshness</a>
+            <a href="#docs">Docs discovery</a>
+            <a href="#ideas">Ideas and triage</a>
+            <a href="#agents">Agent setup</a>
+            <a href="#verification">Verification</a>
+          </div>
+        </details>
+        <details class="toc-group" open>
+          <summary>Support</summary>
+          <div class="toc-links">
+            <a href="#troubleshooting">Troubleshooting</a>
+            <a href="#deploy">Publishing this site</a>
+          </div>
+        </details>
+      </aside>
+
+      <article class="content">
+        <section id="what">
+          <h2>What it is</h2>
+          <p>
+            `bd-console` reads `.beads/issues.jsonl` for issue lists, shells out to `bd` for live
+            comments and writes, and renders markdown docs from the target repo. It is designed for
+            repos that already use beads and want a simple local dashboard without introducing a
+            frontend framework or build pipeline.
+          </p>
+        </section>
+
+        <section id="prereqs">
+          <h2>Prerequisites</h2>
+          <ul>
+            <li>Node 18 or newer</li>
+            <li>`bd` installed and available on `PATH`</li>
+            <li>A target repo with `.beads/` already initialized</li>
+          </ul>
+          <pre><code>cd ~/code/my-project
+bd where
+bd export -o .beads/issues.jsonl</code></pre>
+        </section>
+
+        <section id="quickstart">
+          <h2>Quick start</h2>
+          <p>Choose one install path:</p>
+          <pre><code># clone the repo somewhere local
+git clone https://github.com/formless63/bd-console.git ~/code/bd-console
+
+# or install the CLI globally from GitHub
+npm install -g git+https://github.com/formless63/bd-console.git</code></pre>
+          <p>Then run the guided setup against the repo you actually want to inspect:</p>
+          <pre><code># from a clone
+node ~/code/bd-console/scripts/init.mjs --repo ~/code/my-project --apply-agent-docs
+
+# or with a global install
+bd-console-init --repo ~/code/my-project --apply-agent-docs</code></pre>
+          <p>The init flow refreshes `.beads/issues.jsonl`, writes `bd-console.json` if needed, and can update `AGENTS.md` / `CLAUDE.md`.</p>
+          <pre><code># start the dashboard
+cd ~/code/my-project
+bd-console
+
+# or run straight from the clone
+node ~/code/bd-console/serve.mjs --repo ~/code/my-project --host 127.0.0.1 --port 4180</code></pre>
+        </section>
+
+        <section id="configuration">
+          <h2>Configuration</h2>
+          <p>The init script writes `bd-console.json` for you unless one already exists. Create or edit it manually only when you need overrides.</p>
+          <pre><code>{
+  "port": 4180,
+  "host": "127.0.0.1",
+  "docRoots": ["docs", ".planning"],
+  "token": "shared-secret"
+}</code></pre>
+          <ul>
+            <li><strong>host</strong>: defaults to `127.0.0.1`; expose wider only on purpose</li>
+            <li><strong>port</strong>: defaults to `4180`</li>
+            <li><strong>docRoots</strong>: narrows markdown discovery in large repos</li>
+            <li><strong>token</strong>: gates write actions while leaving reads open</li>
+          </ul>
+          <p>Environment overrides: `BD_CONSOLE_REPO`, `BD_CONSOLE_HOST`, `BD_CONSOLE_PORT`, `BD_CONSOLE_TOKEN`.</p>
+        </section>
+
+        <section id="security">
+          <h2>Security posture</h2>
+          <ul>
+            <li>Default bind host is `127.0.0.1`.</li>
+            <li>Writes are open unless a token is configured.</li>
+            <li>If you bind off localhost, set a token.</li>
+            <li>Issue IDs are validated before write commands.</li>
+            <li>Writes use `execFile` with an args array, not shell strings.</li>
+          </ul>
+          <p>
+            For LAN or tailnet access, keep the setup explicit:
+          </p>
+          <pre><code>node serve.mjs --repo ~/code/my-project --host 0.0.0.0 --port 4180
+# and set BD_CONSOLE_TOKEN or token in bd-console.json</code></pre>
+        </section>
+
+        <section id="export">
+          <h2>Export freshness</h2>
+          <p>
+            Comments are live through `bd comments --json`. The issue list is exported JSONL.
+            `bd-console` now refreshes the export automatically when it is missing or older than
+            `.beads/last-touched`, and the UI shows sync state in the top bar.
+          </p>
+          <p>
+            You still want explicit refreshes when operating outside the dashboard, especially in
+            scripted or agent-driven flows:
+          </p>
+          <pre><code>bd create "something"
+bd export -o .beads/issues.jsonl</code></pre>
+        </section>
+
+        <section id="docs">
+          <h2>Docs discovery</h2>
+          <p>
+            Without `docRoots`, the server auto-discovers markdown under the repo root, skipping
+            directories like `.git`, `node_modules`, `.next`, `dist`, and `.beads`. The `.planning`
+            directory is explicitly allowed.
+          </p>
+          <p>
+            In large repos, define `docRoots` so users only see the documentation that matters.
+          </p>
+        </section>
+
+        <section id="ideas">
+          <h2>Ideas and triage conventions</h2>
+          <ul>
+            <li>Quick capture creates a `task` with a default `triage` label.</li>
+            <li>Treat `triage` as an inbox, not a final classification.</li>
+            <li>For doc-derived ideas, add a `doc:&lt;path&gt;` label so provenance survives triage.</li>
+          </ul>
+        </section>
+
+        <section id="agents">
+          <h2>Agent setup</h2>
+          <p>The init script can update agent docs for you:</p>
+          <pre><code>bd-console-init --repo ~/code/my-project --apply-agent-docs
+bd-console-init --repo ~/code/my-project --apply-agent-docs --create-missing-agent-docs</code></pre>
+          <p>The inserted guidance includes:</p>
+          <ul>
+            <li>how to start `bd-console`</li>
+            <li>that `.beads/issues.jsonl` should be refreshed after non-UI `bd` mutations</li>
+            <li>the `triage` / `doc:&lt;path&gt;` conventions</li>
+            <li>how to verify the dashboard is reachable</li>
+          </ul>
+          <pre><code>bd export -o .beads/issues.jsonl
+curl -I http://127.0.0.1:4180/api/meta</code></pre>
+        </section>
+
+        <section id="verification">
+          <h2>Verification</h2>
+          <pre><code>npm run check
+npm run smoke
+npm_config_cache=/tmp/bd-console-npm-cache npm pack --dry-run</code></pre>
+          <p>
+            The smoke test creates a temporary beads repo, starts the server, exercises the API,
+            and covers inline issue edits, comments, and quick capture.
+          </p>
+        </section>
+
+        <section id="troubleshooting">
+          <h2>Troubleshooting</h2>
+          <dl class="faq">
+            <dt>`Error: no beads database found`</dt>
+            <dd>Run inside a beads repo, pass `--repo`, or inspect `bd where`.</dd>
+
+            <dt>Issue list looks stale</dt>
+            <dd>Run `bd export -o .beads/issues.jsonl` and refresh the page.</dd>
+
+            <dt>Comments work but status changes do not appear</dt>
+            <dd>Comments are live; issue list data comes from the exported JSONL.</dd>
+
+            <dt>Docs tree is noisy</dt>
+            <dd>Set `docRoots` explicitly in `bd-console.json`.</dd>
+
+            <dt>Token prompts keep appearing</dt>
+            <dd>Check the configured token value and clear `localStorage.bd_token` if needed.</dd>
+          </dl>
+        </section>
+
+        <section id="deploy">
+          <h2>Publishing this site</h2>
+          <p>
+            This repo ships the docs site as plain static files under `site/`.
+          </p>
+          <ul>
+            <li>GitHub Pages: workflow at `.github/workflows/docs-site.yml` deploys `site/` on pushes to `main`.</li>
+            <li>Cloudflare Pages: set build command to none and output directory to `site`.</li>
+          </ul>
+          <p>Local preview:</p>
+          <pre><code>npm run docs:serve</code></pre>
+        </section>
+      </article>
+    </main>
+  </body>
+</html>

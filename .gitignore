@@ -1,0 +1,14 @@
+node_modules/
+*.log
+.DS_Store
+.env
+.env.*
+*.local
+bd-console.json
+
+# Beads / Dolt files (added by bd init)
+.beads/
+.claude/
+.dolt/
+*.db
+.beads-credential-key

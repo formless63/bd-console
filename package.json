@@ -1,0 +1,30 @@
+{
+  "name": "bd-console",
+  "version": "0.1.0",
+  "description": "Standalone, project-agnostic viewer + light editor for beads issues and a project's docs.",
+  "type": "module",
+  "bin": {
+    "bd-console": "serve.mjs",
+    "bd-console-init": "scripts/init.mjs"
+  },
+  "scripts": {
+    "start": "node serve.mjs",
+    "init": "node scripts/init.mjs",
+    "check": "node --check serve.mjs && node --check public/app.js && node --check scripts/init.mjs && node --check scripts/smoke.mjs && node --check scripts/serve-static.mjs",
+    "smoke": "node scripts/smoke.mjs",
+    "docs:serve": "node scripts/serve-static.mjs site 4179"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": ["beads", "bd", "issues", "issue-tracker", "docs", "viewer"],
+  "license": "MIT",
+  "files": [
+    "LICENSE",
+    "serve.mjs",
+    "scripts",
+    "public",
+    "bd-console.json.example",
+    "README.md"
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "port": 4180,
+  "host": "127.0.0.1",
+  "docRoots": ["docs", ".planning"],
+  "token": ""
+}
