@@ -140,9 +140,19 @@ function renderHealth() {
 // Derived issue helpers
 // ---------------------------------------------------------------------------
 function blockersOf(issue) {
-  return (issue.dependencies || [])
-    .filter((d) => d.type !== 'parent-child')
-    .map((d) => d.depends_on_id);
+  const blockers = [];
+  for (const b of state.issues) {
+    if (b.id === issue.id) continue;
+    // b blocks issue
+    if (b.dependencies && b.dependencies.some(d => d.type === 'blocks' && d.depends_on_id === issue.id)) {
+      blockers.push(b.id);
+    }
+    // issue depends on b
+    if (issue.dependencies && issue.dependencies.some(d => d.type === 'depends' && d.depends_on_id === b.id)) {
+      blockers.push(b.id);
+    }
+  }
+  return blockers;
 }
 function parentOf(issue) {
   const p = (issue.dependencies || []).find((d) => d.type === 'parent-child');
