@@ -11,14 +11,16 @@ installed.
 
 ## What it does
 
+- **Modern Visual Design**: Sleek dark and light themes (10 visual presets including Dracula, Nord, Gruvbox, and Tokyo Night) utilizing smooth CSS transitions and a responsive fluid grid layout.
+- **Native View Transitions**: Fluid page and detail morphing animations when navigating views or selecting issues, leveraging native browser transition APIs.
 - **Beads**: every issue from `.beads/issues.jsonl`, including dependencies,
   with filter/sort by status, priority, type, label, search, group-by-epic,
   and "ready only".
 - **Relationships**: derived parent / children / blocked-by / blocks state,
   computed client-side from `dependencies[]`.
 - **Comments**: read and add comments on any issue through `bd comment`.
-- **Quick capture**: press `i` or click `+ idea` to file a bead into a triage
-  inbox without leaving your current context.
+- **Quick capture**: Uses a native, accessible HTML5 `<dialog>` modal to easily capture ideas without leaving your context.
+- **Keyboard Shortcuts**: Vim/Gmail-like keyboard shortcuts for fast, hands-on-keyboard triage.
 - **Docs**: browse project markdown, either auto-discovered or pinned through
   config.
 
@@ -206,6 +208,21 @@ Suggested conventions for repos using `bd-console`:
 - Add focused labels after review.
 - For doc-originated ideas, use a `doc:<path>` label so the source document is
   recoverable even before doc-anchored creation is implemented in the UI.
+
+## Keyboard Navigation
+
+To speed up issue triage, the dashboard supports vim-like keyboard navigation shortcuts directly inside the app:
+
+| Shortcut | Action |
+| --- | --- |
+| `j` | Select the next issue in the list |
+| `k` | Select the previous issue in the list |
+| `/` | Focus the issue search field |
+| `c` | Focus the "Add a comment" input area |
+| `i` | Open the Quick Capture modal dialog |
+| `Esc` | Close the open modal dialog or remove focus |
+
+Note: These keys are ignored when you are typing into a form field or text input element.
 
 ## Agent integration
 

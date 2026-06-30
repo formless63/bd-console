@@ -7,6 +7,16 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="dot"></span>
+        <span>bd-console docs</span>
+      </div>
+      <div class="topbar-right">
+        <a href="https://github.com/formless63/bd-console" class="btn">GitHub</a>
+      </div>
+    </header>
+
     <header class="hero">
       <div class="hero-inner">
         <div class="eyebrow">bd-console documentation</div>
@@ -43,6 +53,7 @@
             <a href="#export">Export freshness</a>
             <a href="#docs">Docs discovery</a>
             <a href="#ideas">Ideas and triage</a>
+            <a href="#shortcuts">Keyboard shortcuts</a>
             <a href="#agents">Agent setup</a>
             <a href="#verification">Verification</a>
           </div>
@@ -170,6 +181,47 @@ bd export -o .beads/issues.jsonl</code></pre>
             <li>Treat `triage` as an inbox, not a final classification.</li>
             <li>For doc-derived ideas, add a `doc:&lt;path&gt;` label so provenance survives triage.</li>
           </ul>
+        </section>
+
+        <section id="shortcuts">
+          <h2>Keyboard shortcuts</h2>
+          <p>
+            `bd-console` supports high-speed triage through hotkeys designed to let you keep your hands on the keyboard. These shortcuts are disabled when typing inside input elements.
+          </p>
+          <table class="shortcut-table">
+            <thead>
+              <tr>
+                <th>Shortcut</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>j</code></td>
+                <td>Select the next issue in the list</td>
+              </tr>
+              <tr>
+                <td><code>k</code></td>
+                <td>Select the previous issue in the list</td>
+              </tr>
+              <tr>
+                <td><code>/</code></td>
+                <td>Focus search query text box</td>
+              </tr>
+              <tr>
+                <td><code>c</code></td>
+                <td>Focus comment edit field in the active details pane</td>
+              </tr>
+              <tr>
+                <td><code>i</code></td>
+                <td>Open the Capture an idea modal window</td>
+              </tr>
+              <tr>
+                <td><code>Esc</code></td>
+                <td>Close capture modal or remove current active focus</td>
+              </tr>
+            </tbody>
+          </table>
         </section>
 
         <section id="agents">
