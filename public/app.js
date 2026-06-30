@@ -1,6 +1,19 @@
 'use strict';
 
 // ---------------------------------------------------------------------------
+// Hub Mode & Router State
+// ---------------------------------------------------------------------------
+let APP_MODE = 'single';
+let PROJECT_ID = null;
+
+function apiUrl(path) {
+  if (APP_MODE === 'hub' && PROJECT_ID && path.startsWith('/api/') && path !== '/api/meta') {
+    return '/api/p/' + PROJECT_ID + '/' + path.substring(5);
+  }
+  return path;
+}
+
+// ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 const state = {
@@ -38,7 +51,7 @@ function getToken() {
 async function apiPost(path, body) {
   const headers = { 'content-type': 'application/json' };
   if (META.tokenRequired) headers['x-bd-token'] = getToken();
-  const r = await fetch(path, { method: 'POST', headers, body: JSON.stringify(body) });
+  const r = await fetch(apiUrl(path), { method: 'POST', headers, body: JSON.stringify(body) });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
   return data;
@@ -170,7 +183,7 @@ const STATUS_ORDER = { in_progress: 0, blocked: 1, open: 2, closed: 3 };
 // Data load
 // ---------------------------------------------------------------------------
 async function loadIssues() {
-  const r = await fetch('/api/issues');
+  const r = await fetch(apiUrl('/api/issues'));
   const data = await r.json();
   if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
   const { issues, generatedAt, export: exportInfo } = data;
@@ -183,7 +196,7 @@ async function loadIssues() {
   renderIssues();
 }
 async function loadDocs() {
-  const r = await fetch('/api/docs');
+  const r = await fetch(apiUrl('/api/docs'));
   const { docs } = await r.json();
   state.docs = docs;
   renderDocTree();
@@ -884,14 +897,87 @@ function initTheme() {
   };
 }
 
-async function loadMeta() {
+
+function switchTab(viewName) {
+  const t = document.querySelector(`.tab[data-view="${viewName}"]`);
+  if (!t) return;
+  const update = () => {
+    document.querySelectorAll('.tab').forEach((x) => x.classList.remove('active'));
+    t.classList.add('active');
+    document.getElementById('view-hub').classList.toggle('hidden', viewName !== 'hub');
+    document.getElementById('view-issues').classList.toggle('hidden', viewName !== 'issues');
+    document.getElementById('view-docs').classList.toggle('hidden', viewName !== 'docs');
+    if (viewName === 'docs' && !state.docs.length) loadDocs();
+  };
+  if (document.startViewTransition) document.startViewTransition(update);
+  else update();
+}
+
+async function loadMeta(useProjectUrl = false) {
   try {
-    const r = await fetch('/api/meta');
+    const url = useProjectUrl ? apiUrl('/api/meta') : '/api/meta';
+    const r = await fetch(url);
     META = await r.json();
-    $('#ws-name').textContent = META.name || 'bd-console';
+    document.getElementById('ws-name').textContent = META.name || (PROJECT_ID || 'bd-console');
     document.title = (META.name || 'bd') + ' · console';
     renderHealth();
   } catch { /* ignore */ }
+}
+
+async function loadHub() {
+  const r = await fetch('/api/projects');
+  const data = await r.json();
+  const list = document.getElementById('project-list');
+  list.innerHTML = '';
+  if (!data.projects || Object.keys(data.projects).length === 0) {
+    list.innerHTML = '<div class="muted" style="text-align: center;">No projects registered. Run <code>bd-console add</code> inside a project to register it.</div>';
+    return;
+  }
+  for (const [id, p] of Object.entries(data.projects)) {
+    const btn = el('button', 'btn', id);
+    btn.style.display = 'block';
+    btn.style.width = '100%';
+    btn.style.textAlign = 'left';
+    btn.style.padding = '1rem';
+    btn.style.fontSize = '1.1rem';
+    btn.onclick = () => { window.location.hash = '#/p/' + id; };
+    list.appendChild(btn);
+  }
+}
+
+async function handleRoute() {
+  const hash = window.location.hash || '#/';
+  if (APP_MODE === 'hub') {
+    if (hash.startsWith('#/p/')) {
+      PROJECT_ID = hash.substring(4);
+      
+      // Update theme for this project
+      const saved = localStorage.getItem('bd_theme_' + PROJECT_ID) || localStorage.getItem('bd_theme');
+      const t = saved || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+      document.documentElement.setAttribute('data-theme', t);
+      const ts = document.getElementById('theme-select');
+      if (ts) ts.value = t;
+
+      await loadMeta(true);
+      
+      switchTab('issues');
+      document.querySelector('.tabs').style.display = '';
+      document.getElementById('nav-hub').classList.remove('hidden');
+      loadIssues().catch(e => toast(e.message, 'err'));
+      loadDocs();
+    } else {
+      PROJECT_ID = null;
+      document.getElementById('ws-name').textContent = 'bd-console';
+      switchTab('hub');
+      document.querySelector('.tabs').style.display = 'none';
+      document.getElementById('nav-hub').classList.add('hidden');
+      loadHub();
+    }
+  } else {
+    // Single mode
+    loadIssues().catch(e => toast(e.message, 'err'));
+    loadDocs();
+  }
 }
 
 function init() {
@@ -902,22 +988,12 @@ function init() {
   $('#backdrop').onclick = closeDrawer;
 
   document.querySelectorAll('.tab').forEach((t) => {
-    t.onclick = () => {
-      const update = () => {
-        document.querySelectorAll('.tab').forEach((x) => x.classList.remove('active'));
-        t.classList.add('active');
-        const v = t.dataset.view;
-        $('#view-issues').classList.toggle('hidden', v !== 'issues');
-        $('#view-docs').classList.toggle('hidden', v !== 'docs');
-        if (v === 'docs' && !state.docs.length) loadDocs();
-      };
-      if (document.startViewTransition) {
-        document.startViewTransition(update);
-      } else {
-        update();
-      }
-    };
+    t.onclick = () => switchTab(t.dataset.view);
   });
+  
+  const navHub = document.getElementById('nav-hub');
+  if (navHub) navHub.onclick = () => { window.location.hash = '#/'; };
+
   $('#search').oninput = (e) => { state.search = e.target.value; renderIssues(); };
   $('#group-epic').onchange = (e) => { state.groupEpic = e.target.checked; renderIssues(); };
   $('#ready-only').onchange = (e) => { state.readyOnly = e.target.checked; renderIssues(); };
@@ -929,6 +1005,7 @@ function init() {
   };
   $('#refresh').onclick = async () => {
     try {
+      if (APP_MODE === 'hub' && !PROJECT_ID) return loadHub();
       await loadIssues();
       if (state.docs.length) loadDocs();
       toast('Reloaded issues');
@@ -968,10 +1045,21 @@ function init() {
   });
 
   initTheme();
-  loadMeta();
-  loadIssues().catch((e) => {
-    renderMeta(0, Date.now(), { error: e.message });
-    toast(e.message, 'err');
+  
+  // boot
+  fetch('/api/meta').then(r => r.json()).then(m => {
+    APP_MODE = m.mode || 'single';
+    META = m;
+    if (APP_MODE === 'hub') {
+      window.addEventListener('hashchange', handleRoute);
+      handleRoute();
+    } else {
+      loadMeta();
+      handleRoute();
+    }
+  }).catch(() => {
+    loadMeta();
+    handleRoute();
   });
 }
 init();

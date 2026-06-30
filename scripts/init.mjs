@@ -20,7 +20,7 @@ function usage() {
 Usage:
   bd-console-init [--repo PATH] [--host HOST] [--port PORT] [--token VALUE]
                   [--apply-agent-docs] [--create-missing-agent-docs]
-                  [--force-config] [--dry-run]
+                  [--force-config] [--install-service] [--dry-run]
 
 What it does:
   - checks that the target repo already has .beads/
@@ -39,6 +39,7 @@ function parseArgs(argv) {
     applyAgentDocs: false,
     createMissingAgentDocs: false,
     forceConfig: false,
+    installService: false,
     dryRun: false,
     help: false
   };
@@ -51,6 +52,7 @@ function parseArgs(argv) {
     else if (a === '--apply-agent-docs') out.applyAgentDocs = true;
     else if (a === '--create-missing-agent-docs') out.createMissingAgentDocs = true;
     else if (a === '--force-config') out.forceConfig = true;
+    else if (a === '--install-service') out.installService = true;
     else if (a === '--dry-run') out.dryRun = true;
     else if (a === '--help' || a === '-h') out.help = true;
     else throw new Error(`unknown arg: ${a}`);
@@ -74,6 +76,14 @@ function findWorkspace(start) {
 function runBd(workspace, args) {
   return new Promise((resolveP) => {
     execFile('bd', args, { cwd: workspace, encoding: 'utf8' }, (err, stdout, stderr) => {
+      resolveP({ ok: !err, stdout: stdout || '', stderr: stderr || '' });
+    });
+  });
+}
+
+function runCmd(cmd, args, opts = {}) {
+  return new Promise((resolveP) => {
+    execFile(cmd, args, { encoding: 'utf8', ...opts }, (err, stdout, stderr) => {
       resolveP({ ok: !err, stdout: stdout || '', stderr: stderr || '' });
     });
   });
@@ -142,7 +152,7 @@ function renderAgentBlock() {
 
 This repo uses \`bd-console\` as a local dashboard for beads issues and markdown docs.
 
-- Start it from the repo root with \`bd-console --repo .\` if installed globally, or \`node /path/to/bd-console/serve.mjs --repo .\` if running from a clone.
+- Start the background daemon from the repo root with \`bd-console start\` if installed globally, or \`node /path/to/bd-console/serve.mjs start\` if running from a clone. Stop it later with \`bd-console stop\`.
 - Keep \`.beads/issues.jsonl\` fresh after non-UI beads mutations with \`bd export -o .beads/issues.jsonl\`.
 - Treat \`triage\` as the default inbox label for captured ideas.
 - Preserve document provenance with \`doc:<path>\` labels when an idea comes from a specific markdown file.
@@ -171,6 +181,48 @@ async function upsertGuideFile(path, createIfMissing, dryRun) {
   return { path, changed: true, skipped: false };
 }
 
+import { fileURLToPath } from 'node:url';
+import { mkdir } from 'node:fs/promises';
+import { basename } from 'node:path';
+
+async function installSystemService(workspace, dryRun) {
+  if (process.platform !== 'linux') {
+    return { error: 'systemd service installation is only supported on Linux.' };
+  }
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const serveJs = resolve(join(__dirname, '..', 'serve.mjs'));
+  const repoName = basename(workspace) || 'repo';
+  const safeName = repoName.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase();
+  const serviceName = `bd-console-${safeName}.service`;
+  
+  const unitFile = `[Unit]
+Description=bd-console for ${workspace}
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=${process.execPath} ${serveJs} --repo ${workspace}
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+`;
+
+  const systemdDir = join(process.env.HOME, '.config', 'systemd', 'user');
+  const servicePath = join(systemdDir, serviceName);
+  
+  if (!dryRun) {
+    await mkdir(systemdDir, { recursive: true });
+    await writeFile(servicePath, unitFile, 'utf8');
+    const daemonReload = await runCmd('systemctl', ['--user', 'daemon-reload']);
+    if (!daemonReload.ok) return { error: `daemon-reload failed: ${daemonReload.stderr}` };
+    const enableStart = await runCmd('systemctl', ['--user', 'enable', '--now', serviceName]);
+    if (!enableStart.ok) return { error: `enable failed: ${enableStart.stderr}` };
+  }
+  return { serviceName, servicePath };
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) return usage();
@@ -193,7 +245,24 @@ async function main() {
   const configExists = existsSync(configPath);
   const wrote = [];
 
+  // Register with Global Hub
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const serveJs = resolve(join(__dirname, '..', 'serve.mjs'));
+  if (!args.dryRun) {
+    try {
+      const addResult = await runCmd(process.execPath, [serveJs, 'add', '--repo', workspace]);
+      if (addResult.ok) {
+        console.log(`hub: registered ${workspace}`);
+      } else {
+        console.warn(`hub: failed to register (${addResult.stderr.trim()})`);
+      }
+    } catch (e) {
+      console.warn(`hub: failed to register (${e.message})`);
+    }
+  }
+
   if (!configExists || args.forceConfig) {
+
     const configText = renderConfig({ host: args.host, port: args.port, token: args.token, docRoots: configDocRoots });
     if (!args.dryRun) await writeFile(configPath, configText, 'utf8');
     wrote.push(`${CONFIG_FILE}${configExists ? ' (overwritten)' : ''}`);
@@ -203,6 +272,11 @@ async function main() {
   if (args.applyAgentDocs) {
     guideUpdates.push(await upsertGuideFile(join(workspace, 'AGENTS.md'), args.createMissingAgentDocs, args.dryRun));
     guideUpdates.push(await upsertGuideFile(join(workspace, 'CLAUDE.md'), args.createMissingAgentDocs, args.dryRun));
+  }
+
+  let serviceStatus = null;
+  if (args.installService) {
+    serviceStatus = await installSystemService(workspace, args.dryRun);
   }
 
   console.log(`workspace: ${workspace}`);
@@ -220,9 +294,22 @@ async function main() {
   } else {
     console.log('agent docs: unchanged (pass --apply-agent-docs to update AGENTS.md / CLAUDE.md)');
   }
+  
+  if (args.installService) {
+    if (serviceStatus.error) {
+      console.log(`systemd: error - ${serviceStatus.error}`);
+    } else {
+      console.log(`systemd: ${args.dryRun ? 'would install and start' : 'installed and started'} ${serviceStatus.serviceName}`);
+    }
+  }
+
   console.log('');
   console.log('Next steps:');
-  console.log('1. Start the dashboard with `bd-console --repo .` or `node /path/to/bd-console/serve.mjs --repo .`.');
+  if (args.installService && !serviceStatus?.error && !args.dryRun) {
+    console.log(`1. The daemon is running via systemd. Manage it with: systemctl --user status ${serviceStatus.serviceName}`);
+  } else {
+    console.log('1. Start the daemon with `bd-console start` or `node /path/to/bd-console/serve.mjs start`.');
+  }
   console.log(`2. Open http://${args.host === '0.0.0.0' ? 'localhost' : args.host}:${args.port}`);
   console.log('3. If you edit beads outside the dashboard, run `bd export -o .beads/issues.jsonl` again.');
 }

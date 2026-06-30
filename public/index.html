@@ -18,9 +18,11 @@
     <header class="topbar">
       <div class="brand">
         <span class="dot"></span>
+        <button id="nav-hub" class="btn btn-ghost hidden" style="margin-right: 0.5rem;" title="Return to Hub">← Hub</button>
         <span id="ws-name">bd-console</span>
       </div>
       <nav class="tabs">
+        <button class="tab hidden" data-view="hub" id="tab-hub">Hub</button>
         <button class="tab active" data-view="issues">Beads</button>
         <button class="tab" data-view="docs">Docs</button>
       </nav>
@@ -55,6 +57,15 @@
       </div>
     </dialog>
     <div id="toast" class="toast"></div>
+
+    <!-- HUB VIEW -->
+    <main id="view-hub" class="view hidden" style="flex-direction: column; align-items: center; padding: 4rem 1rem;">
+      <h1 style="font-weight: 600; margin-bottom: 0.5rem;">bd-console hub</h1>
+      <p class="muted" style="margin-bottom: 2rem;">Select a project to view</p>
+      <div id="project-list" style="display: flex; flex-direction: column; gap: 0.75rem; width: 100%; max-width: 500px;">
+        <!-- Projects injected here -->
+      </div>
+    </main>
 
     <!-- ISSUES VIEW -->
     <main id="view-issues" class="view" data-pane="list">

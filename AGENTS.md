@@ -24,8 +24,8 @@ repository.
 ## Run
 
 ```bash
-node serve.mjs                    # auto-detects .beads/ from cwd, port 4180
-node serve.mjs --repo ~/proj --port 4181 --host 127.0.0.1
+node serve.mjs start              # starts in background, auto-detects .beads/ from cwd, port 4180
+node serve.mjs start --repo ~/proj --port 4181 --host 127.0.0.1
 node scripts/init.mjs --repo ~/proj --apply-agent-docs
 ```
 `package.json` exposes a `bd-console` bin, so once published it's `npx bd-console`.
@@ -142,7 +142,7 @@ the patterns established here.
 - If you update install or agent conventions here, mirror the same operational
   guidance in `README.md`, `AGENTS.md`, and `CLAUDE.md` together.
 - Keep the beginner path working: clone or global install, run `bd-console-init`,
-  then start `bd-console` without requiring the user to infer missing steps.
+  then start `bd-console start` without requiring the user to infer missing steps.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:7510c1e2 -->
 ## Beads Issue Tracker

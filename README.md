@@ -82,24 +82,37 @@ What that does:
 - detects likely markdown doc roots
 - optionally updates `AGENTS.md` / `CLAUDE.md` with `bd-console` guidance
 
+*(Linux Users)*: You can add `--install-service` to automatically configure and start a `systemd` user service that persists across system reboots.
+
 If the target repo does not already have `AGENTS.md` or `CLAUDE.md`, rerun with:
 
 ```bash
 bd-console-init --repo ~/code/my-project --apply-agent-docs --create-missing-agent-docs
 ```
 
-### Start the server
+### Start the daemon
+
+Start `bd-console` in the background as a persistent daemon:
 
 ```bash
 # from inside the target repo, with a global install
 cd ~/code/my-project
-bd-console
+bd-console start
 
 # from a clone of this repo, pointed at the target repo
-node ~/code/bd-console/serve.mjs --repo ~/code/my-project --port 4180 --host 127.0.0.1
+node ~/code/bd-console/serve.mjs start --repo ~/code/my-project --port 4180
 ```
 
 Then open `http://localhost:4180`.
+
+You can manage the daemon with:
+
+```bash
+bd-console status
+bd-console stop
+```
+
+*(Note: If you run `bd-console` without `start`, it will run in the foreground.)*
 
 ## Verification
 
