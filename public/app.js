@@ -7,7 +7,7 @@ let APP_MODE = 'single';
 let PROJECT_ID = null;
 
 function apiUrl(path) {
-  if (APP_MODE === 'hub' && PROJECT_ID && path.startsWith('/api/') && path !== '/api/meta') {
+  if (APP_MODE === 'hub' && PROJECT_ID && path.startsWith('/api/')) {
     return '/api/p/' + PROJECT_ID + '/' + path.substring(5);
   }
   return path;
@@ -100,12 +100,11 @@ function healthState(meta) {
 function healthLabel(meta) {
   const state = healthState(meta);
   if (state === 'err') return 'attention needed';
-  if (state === 'warn') return 'review setup';
+  if (state === 'warn') return 'ready';
   return 'ready';
 }
 function bindLabel(meta) {
-  const host = meta.host || '127.0.0.1';
-  return `${host}:${meta.port || 4180}`;
+  return meta.hostname || 'unknown';
 }
 function exportStateLabel(info) {
   if (!info) return 'unknown';
@@ -118,12 +117,7 @@ function renderHealth() {
   if (!box) return;
   const exportInfo = META.export || {};
   const health = META.health || {};
-  const warnings = []
-    .concat(health.errors || [])
-    .concat(health.warnings || []);
-  const warningKinds = []
-    .concat((health.errors || []).map(() => 'err'))
-    .concat((health.warnings || []).map(() => 'warn'));
+  const errors = health.errors || [];
   box.innerHTML = `
     <div class="health-head">
       <span class="health-title">System</span>
@@ -131,15 +125,15 @@ function renderHealth() {
     </div>
     <div class="health-kv">
       <span class="health-k">workspace</span><span class="health-v"><code>${esc(META.workspace || 'unknown')}</code></span>
-      <span class="health-k">bind</span><span class="health-v"><code>${esc(bindLabel(META))}</code></span>
+      <span class="health-k">host</span><span class="health-v"><code>${esc(bindLabel(META))}</code></span>
       <span class="health-k">writes</span><span class="health-v">${META.tokenRequired ? 'token-gated' : 'open'}</span>
       <span class="health-k">export</span><span class="health-v">${esc(exportStateLabel(exportInfo))}${exportInfo.exportedAt ? ` @ ${esc(fmtClock(exportInfo.exportedAt))}` : ''}</span>
       <span class="health-k">docs</span><span class="health-v">${esc(health.docsMode || 'auto')}</span>
       <span class="health-k">bd</span><span class="health-v"><code>${esc(health.bdVersion || 'unknown')}</code></span>
     </div>
-    <div class="health-warnings">
-      ${warnings.map((msg, i) => `<div class="health-warning ${warningKinds[i] || 'warn'}">${esc(msg)}</div>`).join('')}
-    </div>`;
+    ${errors.length ? `<div class="health-warnings">
+      ${errors.map((msg) => `<div class="health-warning err">${esc(msg)}</div>`).join('')}
+    </div>` : ''}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -257,27 +251,6 @@ function passesFilters(i) {
   return true;
 }
 
-function renderStats() {
-  const box = $('#stats');
-  box.innerHTML = '';
-  const tally = { open: 0, in_progress: 0, blocked: 0, closed: 0, ready: 0 };
-  for (const i of state.issues) {
-    tally[effStatus(i)]++;
-    if (isReady(i)) tally.ready++;
-  }
-  const items = [
-    ['ready', tally.ready, 'st-open'],
-    ['in prog', tally.in_progress, 'st-in_progress'],
-    ['blocked', tally.blocked, 'st-blocked'],
-    ['open', tally.open, 'st-open'],
-    ['closed', tally.closed, 'st-closed']
-  ];
-  for (const [label, n, cls] of items) {
-    const s = el('span', 'stat ' + cls);
-    s.innerHTML = `${label} <b>${n}</b>`;
-    box.appendChild(s);
-  }
-}
 
 function priBadge(p) {
   return `<span class="badge pri pri-${p}">${PRI_LABEL[p] ?? p}</span>`;
@@ -410,7 +383,6 @@ function issueGroupHead({ key, title, meta, count, selectId }) {
 }
 
 function renderIssues() {
-  renderStats();
   const list = $('#issue-list');
   list.innerHTML = '';
   const shown = state.issues.filter(passesFilters);
@@ -752,7 +724,7 @@ async function openDoc(path) {
   // Mobile: switch to the content pane.
   $('#view-docs').dataset.pane = 'content';
   $('#md-title').textContent = path.split('/').pop();
-  const r = await fetch('/api/doc?path=' + encodeURIComponent(path));
+  const r = await fetch(apiUrl('/api/doc?path=' + encodeURIComponent(path)));
   const pane = $('#doc-content');
   if (!r.ok) { pane.innerHTML = '<div class="detail-empty muted">Could not load.</div>'; return; }
   const { content } = await r.json();
@@ -930,26 +902,73 @@ async function loadHub() {
   const list = document.getElementById('project-list');
   list.innerHTML = '';
   if (!data.projects || Object.keys(data.projects).length === 0) {
-    list.innerHTML = '<div class="muted" style="text-align: center;">No projects registered. Run <code>bd-console add</code> inside a project to register it.</div>';
+    list.innerHTML = '<div class="muted" style="grid-column: 1/-1; text-align: center;">No projects registered. Run <code>bd-console add</code> inside a project to register it.</div>';
     return;
   }
   for (const [id, p] of Object.entries(data.projects)) {
-    const btn = el('button', 'btn', id);
-    btn.style.display = 'block';
-    btn.style.width = '100%';
-    btn.style.textAlign = 'left';
-    btn.style.padding = '1rem';
-    btn.style.fontSize = '1.1rem';
-    btn.onclick = () => { window.location.hash = '#/p/' + id; };
-    list.appendChild(btn);
+    const card = el('div', 'hub-card');
+    card.innerHTML = `
+      <div class="hub-card-title">${esc(id)}</div>
+      <div class="hub-card-path">${esc(p.path)}</div>
+      <div class="hub-card-stats" id="stats-${id}">
+        <span class="muted" style="font-size:12px;">Loading stats...</span>
+      </div>
+    `;
+    card.onclick = () => { window.location.hash = '#/p/' + id; };
+    list.appendChild(card);
+    
+    // Fetch stats async
+    fetch('/api/p/' + id + '/issues')
+      .then(res => res.json())
+      .then(res => {
+         const issues = res.issues || [];
+         const tally = { open: 0, in_progress: 0, blocked: 0, closed: 0 };
+         for (const i of issues) {
+            const effStatus = () => {
+              if (i.status !== 'open') return i.status;
+              const isBlocked = issues.some(b => {
+                 if (b.status === 'closed') return false;
+                 if (b.dependencies && b.dependencies.some(d => d.type === 'blocks' && d.depends_on_id === i.id)) return true;
+                 if (i.dependencies && i.dependencies.some(d => d.type === 'depends' && d.depends_on_id === b.id)) return true;
+                 return false;
+              });
+              if (isBlocked) return 'blocked';
+              return 'open';
+            };
+            const st = effStatus();
+            if (st === 'open') tally.open++;
+            else if (st === 'in_progress') tally.in_progress++;
+            else if (st === 'blocked') tally.blocked++;
+            else if (st === 'closed') tally.closed++;
+         }
+         const statsDiv = document.getElementById('stats-' + id);
+         if (statsDiv) {
+           statsDiv.innerHTML = `
+             <div class="stat-pill"><span class="st-indicator st-open"></span> ${tally.open} Open</div>
+             <div class="stat-pill"><span class="st-indicator st-in_progress"></span> ${tally.in_progress} Active</div>
+             <div class="stat-pill"><span class="st-indicator st-blocked"></span> ${tally.blocked} Blocked</div>
+             <div class="stat-pill"><span class="st-indicator st-closed"></span> ${tally.closed} Closed</div>
+             <div class="stat-pill"><span class="st-indicator st-blocked"></span> ${tally.blocked} Blocked</div>
+           `;
+         }
+      })
+      .catch(() => {
+         const statsDiv = document.getElementById('stats-' + id);
+         if (statsDiv) statsDiv.innerHTML = '<span class="muted" style="font-size:12px;">Failed to load</span>';
+      });
   }
 }
+
 
 async function handleRoute() {
   const hash = window.location.hash || '#/';
   if (APP_MODE === 'hub') {
     if (hash.startsWith('#/p/')) {
       PROJECT_ID = hash.substring(4);
+      state.issues = [];
+      state.docs = [];
+      renderIssues();
+      renderDocTree();
       
       // Update theme for this project
       const saved = localStorage.getItem('bd_theme_' + PROJECT_ID) || localStorage.getItem('bd_theme');

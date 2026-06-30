@@ -105,12 +105,16 @@ node ~/code/bd-console/scripts/init.mjs --repo ~/code/my-project --apply-agent-d
 # or with a global install
 bd-console-init --repo ~/code/my-project --apply-agent-docs</code></pre>
           <p>The init flow refreshes `.beads/issues.jsonl`, writes `bd-console.json` if needed, and can update `AGENTS.md` / `CLAUDE.md`.</p>
-          <pre><code># start the dashboard
-cd ~/code/my-project
-bd-console
-
-# or run straight from the clone
-node ~/code/bd-console/serve.mjs --repo ~/code/my-project --host 127.0.0.1 --port 4180</code></pre>
+          <p><code>bd-console</code> now runs as a <strong>Global Hub</strong>. Start one instance, and register your projects to it.</p>
+<pre><code>bd-console start
+bd-console add ~/code/my-project
+bd-console add .
+</code></pre>
+<p>Then open <code>http://localhost:4180</code> to view the Hub Dashboard.</p>
+<p>You can manage the daemon with:</p>
+<pre><code>bd-console status
+bd-console stop
+</code></pre>
         </section>
 
         <section id="configuration">

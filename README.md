@@ -1,6 +1,6 @@
 # bd-console
 
-A standalone, project-agnostic **viewer + light editor** for
+A **Global Hub and viewer + light editor** for
 [beads](https://github.com/gastownhall/beads) (`bd`) issues and a project's
 markdown docs. One responsive web UI for desktop and mobile. Zero npm
 dependencies: just Node (>=18) and the `bd` CLI on your `PATH`.
@@ -90,23 +90,31 @@ If the target repo does not already have `AGENTS.md` or `CLAUDE.md`, rerun with:
 bd-console-init --repo ~/code/my-project --apply-agent-docs --create-missing-agent-docs
 ```
 
-### Start the daemon
+### Hub Mode (Default)
 
-Start `bd-console` in the background as a persistent daemon:
+`bd-console` now runs as a **Global Hub**. You start one instance of the server, and then add your repositories to it.
 
+Start the daemon:
 ```bash
-# from inside the target repo, with a global install
-cd ~/code/my-project
 bd-console start
+```
+Then open `http://localhost:4180` to view the Hub Dashboard.
 
-# from a clone of this repo, pointed at the target repo
-node ~/code/bd-console/serve.mjs start --repo ~/code/my-project --port 4180
+Register your projects with the Hub:
+```bash
+bd-console add ~/code/my-project
+bd-console add .
+```
+The Hub Dashboard will now display live metrics for all registered projects and let you navigate between them seamlessly.
+
+### Single-Project Mode (Legacy)
+
+If you prefer to run a dedicated instance for a single project, pass the `--repo` flag:
+```bash
+bd-console start --repo ~/code/my-project --port 4181
 ```
 
-Then open `http://localhost:4180`.
-
 You can manage the daemon with:
-
 ```bash
 bd-console status
 bd-console stop

@@ -26,6 +26,7 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync, openSync } from 'n
 import { join, extname, resolve, relative, sep, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile, spawn } from 'node:child_process';
+import { hostname } from 'node:os';
 
 import { mkdirSync } from 'node:fs';
 
@@ -485,8 +486,13 @@ async function computeHealth(ctx) {
     errors.push((version.stderr || 'bd unavailable').trim());
   } else {
     bdVersion = (version.stdout || '').trim();
+    const vMatch = bdVersion.match(/version\s+([0-9.]+)/i);
+    if (vMatch) bdVersion = vMatch[1];
+    
     const extra = (version.stderr || '').trim();
-    if (extra) warnings.push(extra.replace(/\s+/g, ' '));
+    if (extra && !extra.includes("multiple 'bd' binaries")) {
+      warnings.push(extra.replace(/\s+/g, ' '));
+    }
   }
 
   const exportInfo = await getExportInfo(ctx);
@@ -559,7 +565,7 @@ const server = createServer(async (req, res) => {
       if (path === '/api/meta') {
         if (!ctx) {
           // Hub mode root meta
-          return sendJson(res, 200, { mode: 'hub', host: HOST, port: PORT, writable: true, tokenRequired: !!TOKEN });
+          return sendJson(res, 200, { mode: 'hub', host: HOST, port: PORT, hostname: hostname(), writable: true, tokenRequired: !!TOKEN });
         }
         const exportInfo = await getExportInfo(ctx);
         const health = await computeHealth(ctx);
@@ -570,6 +576,7 @@ const server = createServer(async (req, res) => {
           name: basename(ctx.workspace),
           host: HOST,
           port: PORT,
+          hostname: hostname(),
           writable: true,
           tokenRequired: !!TOKEN,
           export: exportInfo,

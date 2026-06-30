@@ -24,8 +24,8 @@ repository.
 ## Run
 
 ```bash
-node serve.mjs start              # starts in background, auto-detects .beads/ from cwd, port 4180
-node serve.mjs start --repo ~/proj --port 4181 --host 127.0.0.1
+bd-console start               # starts the Global Hub in the background on port 4180
+bd-console start --repo ~/proj # bypass Hub mode and start for a single repo
 node scripts/init.mjs --repo ~/proj --apply-agent-docs
 ```
 `package.json` exposes a `bd-console` bin, so once published it's `npx bd-console`.
