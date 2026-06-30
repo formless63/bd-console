@@ -33,29 +33,27 @@
     </header>
 
     <!-- QUICK CAPTURE MODAL -->
-    <div class="modal-backdrop" id="quick-modal">
-      <div class="modal">
-        <div class="modal-head">Capture an idea</div>
-        <input id="quick-title" class="modal-input" type="text" placeholder="What's the idea? (title)" />
-        <textarea id="quick-desc" class="modal-input" rows="3" placeholder="Optional detail…"></textarea>
-        <div class="modal-row">
-          <label class="modal-field">label
-            <input id="quick-label" type="text" value="triage" />
-          </label>
-          <label class="modal-field">priority
-            <select id="quick-priority">
-              <option value="1">P1</option><option value="2">P2</option>
-              <option value="3" selected>P3</option><option value="4">P4</option>
-            </select>
-          </label>
-        </div>
-        <div class="modal-actions">
-          <span id="quick-err" class="modal-err"></span>
-          <button class="btn btn-ghost" id="quick-cancel">Cancel</button>
-          <button class="btn btn-accent" id="quick-save">Capture</button>
-        </div>
+    <dialog class="modern-dialog" id="quick-modal">
+      <div class="modal-head">Capture an idea</div>
+      <input id="quick-title" class="modal-input" type="text" placeholder="What's the idea? (title)" />
+      <textarea id="quick-desc" class="modal-input" rows="3" placeholder="Optional detail…"></textarea>
+      <div class="modal-row">
+        <label class="modal-field">label
+          <input id="quick-label" type="text" value="triage" />
+        </label>
+        <label class="modal-field">priority
+          <select id="quick-priority">
+            <option value="1">P1</option><option value="2">P2</option>
+            <option value="3" selected>P3</option><option value="4">P4</option>
+          </select>
+        </label>
       </div>
-    </div>
+      <div class="modal-actions">
+        <span id="quick-err" class="modal-err"></span>
+        <button class="btn btn-ghost" id="quick-cancel">Cancel</button>
+        <button class="btn btn-accent" id="quick-save">Capture</button>
+      </div>
+    </dialog>
     <div id="toast" class="toast"></div>
 
     <!-- ISSUES VIEW -->

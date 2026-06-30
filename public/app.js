@@ -311,6 +311,66 @@ function sortIssues(list) {
   });
 }
 
+function getSortedFilteredIssues() {
+  const shown = state.issues.filter(passesFilters);
+  if (state.groupEpic) {
+    const epics = sortIssues(shown.filter((i) => i.issue_type === 'epic' || !parentOf(i)));
+    const childMap = new Map();
+    for (const i of shown) {
+      const p = parentOf(i);
+      if (p) { if (!childMap.has(p)) childMap.set(p, []); childMap.get(p).push(i); }
+    }
+    const flattened = [];
+    const rendered = new Set();
+    const addGroup = (head) => {
+      const kids = sortIssues(childMap.get(head.id) || []);
+      const key = `epic:${head.id}`;
+      flattened.push(head);
+      rendered.add(head.id);
+      if (!state.collapsedIssueGroups.has(key)) {
+        for (const k of kids) { flattened.push(k); rendered.add(k.id); }
+      }
+    };
+    for (const e of epics) if (e.issue_type === 'epic') addGroup(e);
+    const orphans = sortIssues(shown.filter((i) => !rendered.has(i.id) && !parentOf(i) && i.issue_type !== 'epic'));
+    if (orphans.length) {
+      const key = 'standalone';
+      if (!state.collapsedIssueGroups.has(key)) {
+        for (const o of orphans) { flattened.push(o); rendered.add(o.id); }
+      }
+    }
+    const leftover = sortIssues(shown.filter((i) => !rendered.has(i.id)));
+    for (const o of leftover) flattened.push(o);
+    return flattened.filter(i => i.id);
+  } else {
+    return sortIssues(shown);
+  }
+}
+
+function selectNextIssue() {
+  const list = getSortedFilteredIssues();
+  if (!list.length) return;
+  const idx = list.findIndex(i => i.id === state.selected);
+  const nextIdx = idx === -1 ? 0 : Math.min(idx + 1, list.length - 1);
+  selectIssue(list[nextIdx].id);
+  setTimeout(() => {
+    const activeRow = $('.issue-row.sel');
+    if (activeRow) activeRow.scrollIntoView({ block: 'nearest' });
+  }, 50);
+}
+
+function selectPrevIssue() {
+  const list = getSortedFilteredIssues();
+  if (!list.length) return;
+  const idx = list.findIndex(i => i.id === state.selected);
+  const prevIdx = idx === -1 ? 0 : Math.max(idx - 1, 0);
+  selectIssue(list[prevIdx].id);
+  setTimeout(() => {
+    const activeRow = $('.issue-row.sel');
+    if (activeRow) activeRow.scrollIntoView({ block: 'nearest' });
+  }, 50);
+}
+
 function toggleIssueGroup(key) {
   if (state.collapsedIssueGroups.has(key)) state.collapsedIssueGroups.delete(key);
   else state.collapsedIssueGroups.add(key);
@@ -405,119 +465,127 @@ function relRow(id) {
 }
 
 function selectIssue(id) {
-  state.selected = id;
-  document.querySelectorAll('.issue-row').forEach((r) => r.classList.remove('sel'));
-  renderIssues();
-  const i = state.byId.get(id);
-  // Mobile: switch to the detail pane.
-  $('#view-issues').dataset.pane = 'detail';
-  $('#mi-title').textContent = i ? i.id : '';
-  closeDrawer();
-  const d = $('#detail');
-  if (!i) { d.innerHTML = '<div class="detail-empty muted">Not found.</div>'; return; }
+  const update = () => {
+    state.selected = id;
+    document.querySelectorAll('.issue-row').forEach((r) => r.classList.remove('sel'));
+    renderIssues();
+    const i = state.byId.get(id);
+    // Mobile: switch to the detail pane.
+    $('#view-issues').dataset.pane = 'detail';
+    $('#mi-title').textContent = i ? i.id : '';
+    closeDrawer();
+    const d = $('#detail');
+    if (!i) { d.innerHTML = '<div class="detail-empty muted">Not found.</div>'; return; }
 
-  const blockers = blockersOf(i);
-  const openBlockers = openBlockersOf(i);
-  const children = childrenOf(id);
-  const blocks = blocksList(id);
-  const parent = parentOf(i);
+    const blockers = blockersOf(i);
+    const openBlockers = openBlockersOf(i);
+    const children = childrenOf(id);
+    const blocks = blocksList(id);
+    const parent = parentOf(i);
 
-  let html = `<div class="detail-head">
-    <div class="detail-meta">${priBadge(i.priority)}${statusBadge(i)}<span class="badge type-tag">${esc(i.issue_type)}</span><span class="it-id">${esc(i.id)}</span></div>
-    <h2>${esc(i.title)}</h2>
-    <div class="detail-meta">${(i.labels || []).map((l) => `<span class="lab">${esc(l)}</span>`).join('')}</div>
-  </div><div class="detail-body">`;
+    let html = `<div class="detail-head">
+      <div class="detail-meta">${priBadge(i.priority)}${statusBadge(i)}<span class="badge type-tag">${esc(i.issue_type)}</span><span class="it-id">${esc(i.id)}</span></div>
+      <h2>${esc(i.title)}</h2>
+      <div class="detail-meta">${(i.labels || []).map((l) => `<span class="lab">${esc(l)}</span>`).join('')}</div>
+    </div><div class="detail-body">`;
 
-  if (i.status !== 'closed' && openBlockers.length) {
-    html += `<div class="blocked-banner">⛔ Blocked by ${openBlockers.length} open ${openBlockers.length === 1 ? 'issue' : 'issues'}</div>`;
-  } else if (isReady(i) && i.issue_type !== 'epic') {
-    html += `<div class="ready-banner">✓ Ready to work — no open blockers</div>`;
-  }
+    if (i.status !== 'closed' && openBlockers.length) {
+      html += `<div class="blocked-banner">⛔ Blocked by ${openBlockers.length} open ${openBlockers.length === 1 ? 'issue' : 'issues'}</div>`;
+    } else if (isReady(i) && i.issue_type !== 'epic') {
+      html += `<div class="ready-banner">✓ Ready to work — no open blockers</div>`;
+    }
 
-  if (i.description) html += section('Description', `<div class="field-text">${esc(i.description)}</div>`);
-  if (i.status === 'closed' && i.close_reason) html += section('Close reason', `<div class="close-reason">${esc(i.close_reason)}</div>`);
-  if (i.notes) html += section('Notes', `<div class="field-text">${esc(i.notes)}</div>`);
-  if (i.design) html += section('Design', `<div class="field-text">${esc(i.design)}</div>`);
-  if (i.acceptance_criteria) html += section('Acceptance', `<div class="field-text">${esc(i.acceptance_criteria)}</div>`);
+    if (i.description) html += section('Description', `<div class="field-text">${esc(i.description)}</div>`);
+    if (i.status === 'closed' && i.close_reason) html += section('Close reason', `<div class="close-reason">${esc(i.close_reason)}</div>`);
+    if (i.notes) html += section('Notes', `<div class="field-text">${esc(i.notes)}</div>`);
+    if (i.design) html += section('Design', `<div class="field-text">${esc(i.design)}</div>`);
+    if (i.acceptance_criteria) html += section('Acceptance', `<div class="field-text">${esc(i.acceptance_criteria)}</div>`);
 
-  if (parent) html += section('Parent', `<div class="rel">${relRow(parent).outerHTML}</div>`);
-  if (blockers.length) html += section(`Blocked by (${blockers.length})`, `<div class="rel">${blockers.map((b) => relRow(b).outerHTML).join('')}</div>`);
-  if (blocks.length) html += section(`Blocks (${blocks.length})`, `<div class="rel">${blocks.map((b) => relRow(b.id).outerHTML).join('')}</div>`);
-  if (children.length) html += section(`Children (${children.length})`, `<div class="rel">${children.map((c) => relRow(c.id).outerHTML).join('')}</div>`);
+    if (parent) html += section('Parent', `<div class="rel">${relRow(parent).outerHTML}</div>`);
+    if (blockers.length) html += section(`Blocked by (${blockers.length})`, `<div class="rel">${blockers.map((b) => relRow(b).outerHTML).join('')}</div>`);
+    if (blocks.length) html += section(`Blocks (${blocks.length})`, `<div class="rel">${blocks.map((b) => relRow(b.id).outerHTML).join('')}</div>`);
+    if (children.length) html += section(`Children (${children.length})`, `<div class="rel">${children.map((c) => relRow(c.id).outerHTML).join('')}</div>`);
 
-  html += section('Edit', `<div class="edit-tools">
-    <div class="edit-row">
-      ${i.status !== 'closed' ? '<button class="btn" id="act-claim">Claim</button>' : ''}
-      ${i.status !== 'in_progress' ? '<button class="btn" id="act-progress">In progress</button>' : ''}
-      ${i.status !== 'closed' ? '<button class="btn" id="act-close">Close</button>' : '<button class="btn" id="act-reopen">Reopen</button>'}
-    </div>
-    <div class="edit-block">
-      <label class="edit-label" for="edit-priority">Priority</label>
+    html += section('Edit', `<div class="edit-tools">
       <div class="edit-row">
-        <select id="edit-priority" class="edit-input">
-          ${[0, 1, 2, 3, 4].map((p) => `<option value="${p}"${i.priority === p ? ' selected' : ''}>${PRI_LABEL[p]}</option>`).join('')}
-        </select>
-        <button class="btn" id="act-priority">Apply</button>
+        ${i.status !== 'closed' ? '<button class="btn" id="act-claim">Claim</button>' : ''}
+        ${i.status !== 'in_progress' ? '<button class="btn" id="act-progress">In progress</button>' : ''}
+        ${i.status !== 'closed' ? '<button class="btn" id="act-close">Close</button>' : '<button class="btn" id="act-reopen">Reopen</button>'}
       </div>
-    </div>
-    <div class="edit-block">
-      <label class="edit-label" for="edit-label-add">Labels</label>
-      <div class="edit-chiprow">
-        ${(i.labels || []).map((label) => `<button class="chip edit-chip-remove" data-label="${esc(label)}" title="Remove label">${esc(label)} ×</button>`).join('')}
+      <div class="edit-block">
+        <label class="edit-label" for="edit-priority">Priority</label>
+        <div class="edit-row">
+          <select id="edit-priority" class="edit-input">
+            ${[0, 1, 2, 3, 4].map((p) => `<option value="${p}"${i.priority === p ? ' selected' : ''}>${PRI_LABEL[p]}</option>`).join('')}
+          </select>
+          <button class="btn" id="act-priority">Apply</button>
+        </div>
       </div>
-      <div class="edit-row">
-        <input id="edit-label-add" class="edit-input" type="text" placeholder="new-label" />
-        <button class="btn" id="act-label-add">Add</button>
+      <div class="edit-block">
+        <label class="edit-label" for="edit-label-add">Labels</label>
+        <div class="edit-chiprow">
+          ${(i.labels || []).map((label) => `<button class="chip edit-chip-remove" data-label="${esc(label)}" title="Remove label">${esc(label)} ×</button>`).join('')}
+        </div>
+        <div class="edit-row">
+          <input id="edit-label-add" class="edit-input" type="text" placeholder="new-label" />
+          <button class="btn" id="act-label-add">Add</button>
+        </div>
       </div>
-    </div>
-    <div class="edit-block">
-      <label class="edit-label" for="edit-parent">Parent</label>
-      <div class="edit-row">
-        <input id="edit-parent" class="edit-input" type="text" value="${esc(parent || '')}" placeholder="issue-id" />
-        <button class="btn" id="act-parent-save">Save</button>
-        <button class="btn btn-ghost" id="act-parent-clear">Clear</button>
+      <div class="edit-block">
+        <label class="edit-label" for="edit-parent">Parent</label>
+        <div class="edit-row">
+          <input id="edit-parent" class="edit-input" type="text" value="${esc(parent || '')}" placeholder="issue-id" />
+          <button class="btn" id="act-parent-save">Save</button>
+          <button class="btn btn-ghost" id="act-parent-clear">Clear</button>
+        </div>
       </div>
-    </div>
-    <div class="edit-block">
-      <label class="edit-label" for="edit-blocker">Blocked by</label>
-      <div class="edit-chiprow">
-        ${blockers.map((blocker) => `<button class="chip edit-chip-remove" data-blocker="${esc(blocker)}" title="Remove blocker">${esc(blocker)} ×</button>`).join('')}
+      <div class="edit-block">
+        <label class="edit-label" for="edit-blocker">Blocked by</label>
+        <div class="edit-chiprow">
+          ${blockers.map((blocker) => `<button class="chip edit-chip-remove" data-blocker="${esc(blocker)}" title="Remove blocker">${esc(blocker)} ×</button>`).join('')}
+        </div>
+        <div class="edit-row">
+          <input id="edit-blocker" class="edit-input" type="text" placeholder="issue-id" />
+          <button class="btn" id="act-blocker-add">Add</button>
+        </div>
       </div>
-      <div class="edit-row">
-        <input id="edit-blocker" class="edit-input" type="text" placeholder="issue-id" />
-        <button class="btn" id="act-blocker-add">Add</button>
+      <div class="edit-block">
+        <label class="edit-label" for="edit-defer">Defer until</label>
+        <div class="edit-row">
+          <input id="edit-defer" class="edit-input" type="text" value="${esc(i.deferred_until || '')}" placeholder="+1d or 2026-06-20" />
+          <button class="btn" id="act-defer-save">Save</button>
+          <button class="btn btn-ghost" id="act-defer-clear">Clear</button>
+        </div>
       </div>
-    </div>
-    <div class="edit-block">
-      <label class="edit-label" for="edit-defer">Defer until</label>
-      <div class="edit-row">
-        <input id="edit-defer" class="edit-input" type="text" value="${esc(i.deferred_until || '')}" placeholder="+1d or 2026-06-20" />
-        <button class="btn" id="act-defer-save">Save</button>
-        <button class="btn btn-ghost" id="act-defer-clear">Clear</button>
-      </div>
-    </div>
-    <div id="edit-err" class="modal-err"></div>
-  </div>`);
-
-  html += section(`Comments`, `<div id="comments-mount" class="comments"><div class="comments-empty">loading…</div></div>
-    <div class="comment-add">
-      <textarea id="comment-input" placeholder="Add a comment…"></textarea>
-      <div class="row"><span id="comment-err" class="modal-err"></span><button class="btn btn-accent" id="comment-send">Comment</button></div>
+      <div id="edit-err" class="modal-err"></div>
     </div>`);
 
-  html += section('Details', `<div class="kv">
-    <span class="k">Assignee</span><span class="v">${esc(i.assignee || '—')}</span>
-    <span class="k">Created</span><span class="v">${new Date(i.created_at).toLocaleString()}</span>
-    <span class="k">Updated</span><span class="v">${new Date(i.updated_at).toLocaleString()}</span>
-    ${i.closed_at ? `<span class="k">Closed</span><span class="v">${new Date(i.closed_at).toLocaleString()}</span>` : ''}
-  </div>`);
+    html += section(`Comments`, `<div id="comments-mount" class="comments"><div class="comments-empty">loading…</div></div>
+      <div class="comment-add">
+        <textarea id="comment-input" placeholder="Add a comment…"></textarea>
+        <div class="row"><span id="comment-err" class="modal-err"></span><button class="btn btn-accent" id="comment-send">Comment</button></div>
+      </div>`);
 
-  html += '</div>';
-  d.innerHTML = html;
-  d.scrollTop = 0;
-  wireIssueEdit(i);
-  wireComments(id);
+    html += section('Details', `<div class="kv">
+      <span class="k">Assignee</span><span class="v">${esc(i.assignee || '—')}</span>
+      <span class="k">Created</span><span class="v">${new Date(i.created_at).toLocaleString()}</span>
+      <span class="k">Updated</span><span class="v">${new Date(i.updated_at).toLocaleString()}</span>
+      ${i.closed_at ? `<span class="k">Closed</span><span class="v">${new Date(i.closed_at).toLocaleString()}</span>` : ''}
+    </div>`);
+
+    html += '</div>';
+    d.innerHTML = html;
+    d.scrollTop = 0;
+    wireIssueEdit(i);
+    wireComments(id);
+  };
+  if (document.startViewTransition) {
+    document.startViewTransition(update);
+  } else {
+    update();
+  }
 }
+
 function section(title, body) {
   return `<div class="detail-section"><h3>${esc(title)}</h3>${body}</div>`;
 }
@@ -758,11 +826,23 @@ function closeDrawer() { document.querySelectorAll('.filters.open').forEach((f) 
 
 // --- quick capture ----------------------------------------------------------
 function openQuick() {
-  $('#quick-modal').classList.add('show');
+  const modal = $('#quick-modal');
+  if (modal && modal.showModal) {
+    modal.showModal();
+  } else {
+    modal.classList.add('show');
+  }
   $('#quick-err').textContent = '';
   setTimeout(() => $('#quick-title').focus(), 30);
 }
-function closeQuick() { $('#quick-modal').classList.remove('show'); }
+function closeQuick() {
+  const modal = $('#quick-modal');
+  if (modal && modal.close) {
+    modal.close();
+  } else {
+    modal.classList.remove('show');
+  }
+}
 async function submitQuick() {
   const title = $('#quick-title').value.trim();
   if (!title) { $('#quick-err').textContent = 'Title required'; return; }
@@ -823,12 +903,19 @@ function init() {
 
   document.querySelectorAll('.tab').forEach((t) => {
     t.onclick = () => {
-      document.querySelectorAll('.tab').forEach((x) => x.classList.remove('active'));
-      t.classList.add('active');
-      const v = t.dataset.view;
-      $('#view-issues').classList.toggle('hidden', v !== 'issues');
-      $('#view-docs').classList.toggle('hidden', v !== 'docs');
-      if (v === 'docs' && !state.docs.length) loadDocs();
+      const update = () => {
+        document.querySelectorAll('.tab').forEach((x) => x.classList.remove('active'));
+        t.classList.add('active');
+        const v = t.dataset.view;
+        $('#view-issues').classList.toggle('hidden', v !== 'issues');
+        $('#view-docs').classList.toggle('hidden', v !== 'docs');
+        if (v === 'docs' && !state.docs.length) loadDocs();
+      };
+      if (document.startViewTransition) {
+        document.startViewTransition(update);
+      } else {
+        update();
+      }
     };
   });
   $('#search').oninput = (e) => { state.search = e.target.value; renderIssues(); };
@@ -868,7 +955,16 @@ function init() {
   document.addEventListener('keydown', (e) => {
     const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName || '');
     if (e.key === 'Escape') closeQuick();
-    if (e.key === 'i' && !typing && !e.metaKey && !e.ctrlKey) { e.preventDefault(); openQuick(); }
+    if (!typing && !e.metaKey && !e.ctrlKey) {
+      if (e.key === 'i') { e.preventDefault(); openQuick(); }
+      else if (e.key === 'j') { e.preventDefault(); selectNextIssue(); }
+      else if (e.key === 'k') { e.preventDefault(); selectPrevIssue(); }
+      else if (e.key === '/') { e.preventDefault(); $('#search').focus(); }
+      else if (e.key === 'c') {
+        const commentBox = $('#comment-input');
+        if (commentBox) { e.preventDefault(); commentBox.focus(); }
+      }
+    }
   });
 
   initTheme();
