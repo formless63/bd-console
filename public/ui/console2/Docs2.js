@@ -144,7 +144,6 @@ export function Docs2() {
   return html`
     <div class="c2-docs">
       ${Tree()}
-      ${c2.docTreeOpen.value && html`<div class="c2-scrim mobile" onClick=${() => (c2.docTreeOpen.value = false)}></div>`}
       <section class="c2-doc-main">
         ${!path ? html`
             <div class="c2-map-empty">

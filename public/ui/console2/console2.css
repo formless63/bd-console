@@ -37,7 +37,12 @@
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  /* minmax(0,1fr) column: a bare implicit grid track has a CONTENT-based
+     minimum, so any child with intrinsic width (the pulse bar's tile row)
+     silently widens the whole grid past the viewport — the same bug class
+     as the .c2-body lane blowout, one level up. */
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   height: 100%;
   background: var(--bg);
   color: var(--text);
@@ -193,36 +198,45 @@
   box-shadow: inset 0 1px 0 var(--c2-rim), var(--shadow-lg); }
 .c2-themesw-scheme { display: flex; gap: 4px; }
 .c2-themesw-scheme .c2-mini { flex: 1; text-align: center; }
-.c2-themesw-pulse { display: none; }
+/* Double class beats .c2-pulse-block's display:flex (same specificity, later
+   in source) so the details-panel theme block truly hides on desktop, where
+   the header switcher already covers it. */
+.c2-pulse-block.c2-themesw-pulse { display: none; }
 
 /* ==========================================================================
-   Body layout
+   Body layout — single column; the Pulse bar above owns all the stats. No
+   sidebar, no drawer: pulse content lives in normal document flow so it can
+   never stack under (or steal taps from) the canvas.
    ========================================================================== */
-.c2-body { display: grid; grid-template-columns: 264px minmax(0, 1fr); min-height: 0; overflow: hidden; }
+.c2-body { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; overflow: hidden; }
 
-/* ---- Pulse rail ---------------------------------------------------------- */
-.c2-pulse { display: flex; flex-direction: column; gap: 14px; padding: 16px 14px; overflow-y: auto;
-  border-right: 1px solid var(--c2-line); background: color-mix(in srgb, var(--surface) 30%, transparent); }
-.c2-pulse-head { margin-bottom: -4px; }
-.c2-pulse-close { display: none; }
-/* Compact 4-up summary strip — lives above the body grid, always mounted but
-   only shown at the mobile breakpoint (the full Pulse rail is visible inline
-   on desktop already, so a second summary there would be redundant). */
-.c2-pulse-strip { display: none; }
-.c2-stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.c2-stat { position: relative; display: flex; flex-direction: column; gap: 2px; align-items: flex-start;
-  padding: 12px 12px 10px; background: var(--c2-glass); border: 1px solid var(--c2-line);
-  box-shadow: inset 0 1px 0 var(--c2-rim-soft); cursor: pointer; text-align: left; color: var(--text);
+/* ---- Pulse bar ----------------------------------------------------------- */
+.c2-pulsebar-wrap { border-bottom: 1px solid var(--c2-line);
+  background: color-mix(in srgb, var(--surface) 34%, transparent); backdrop-filter: var(--c2-blur); }
+.c2-pulsebar { display: flex; align-items: stretch; gap: 12px; padding: 8px 16px; }
+.c2-pb-tiles { display: flex; gap: 8px; flex: 1 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
+.c2-pb-item { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  flex: 1 0 86px; min-height: 52px; padding: 6px 10px; background: var(--c2-glass); border: 1px solid var(--c2-line);
+  border-radius: 10px; box-shadow: inset 0 1px 0 var(--c2-rim-soft); cursor: pointer; color: var(--text);
   transition: border-color 0.15s var(--ease), transform 0.1s var(--ease); }
-.c2-stat:hover { transform: translateY(-1px); border-color: var(--c2-line-2); }
-.c2-stat-k { font-family: var(--font-display); font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-faint); }
-.c2-stat-v { font-family: var(--font-display); font-size: 26px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
-.c2-stat-sub { font-size: 10px; color: var(--text-dim); }
-.c2-stat.tone-green .c2-stat-v { color: var(--green); }
-.c2-stat.tone-accent .c2-stat-v { color: var(--accent); }
-.c2-stat.tone-red .c2-stat-v { color: var(--red); }
-.c2-stat.tone-amber .c2-stat-v { color: var(--amber); }
-.c2-stat.tone-purple .c2-stat-v { color: var(--purple); }
+.c2-pb-item:hover { transform: translateY(-1px); border-color: var(--c2-line-2); }
+.c2-pb-v { font-family: var(--font-display); font-size: 20px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.c2-pb-k { font-family: var(--font-display); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-faint); }
+.c2-pb-sub { font-size: 9px; color: var(--text-dim); }
+.c2-pb-item.tone-green .c2-pb-v { color: var(--green); }
+.c2-pb-item.tone-accent .c2-pb-v { color: var(--accent); }
+.c2-pb-item.tone-red .c2-pb-v { color: var(--red); }
+.c2-pb-item.tone-amber .c2-pb-v { color: var(--amber); }
+.c2-pb-item.tone-purple .c2-pb-v { color: var(--purple); }
+.c2-pb-side { display: flex; align-items: center; gap: 12px; flex: none; }
+.c2-pb-more { font-family: var(--font-display); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 6px 12px; min-height: 36px; background: transparent; border: 1px solid var(--c2-line); border-radius: 8px;
+  color: var(--text-dim); cursor: pointer; }
+.c2-pb-more:hover, .c2-pb-more.on { color: var(--text); border-color: var(--c2-line-2); }
+
+/* Expanded details — normal-flow panel pushing the canvas down, not a layer. */
+.c2-pulsex { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px;
+  padding: 10px 16px 14px; border-top: 1px dashed var(--c2-line); animation: c2clifade 0.18s var(--ease); }
 
 .c2-pulse-block { display: flex; flex-direction: column; gap: 7px; }
 .c2-age-list { display: flex; flex-direction: column; gap: 3px; }
@@ -241,6 +255,7 @@
 
 .c2-spark { display: flex; flex-direction: column; gap: 2px; }
 .c2-spark svg { width: 100%; height: 34px; display: block; }
+.c2-pb-side .c2-spark svg { width: 132px; height: 30px; }
 .c2-spark-area { fill: color-mix(in srgb, var(--c2-neon) 16%, transparent); }
 .c2-spark-line { stroke: var(--c2-neon); stroke-width: 1.6; }
 .c2-spark-dot { fill: var(--c2-neon); }
@@ -468,7 +483,6 @@
    Detail slide-over
    ========================================================================== */
 .c2-scrim { position: absolute; inset: 0; z-index: 30; background: color-mix(in srgb, var(--bg) 40%, transparent); backdrop-filter: blur(1px); }
-.c2-scrim.mobile { display: none; }
 .c2-detail { position: absolute; top: 0; right: 0; bottom: 0; z-index: 35; width: min(500px, 92vw);
   transform: translateX(102%); transition: transform 0.24s var(--ease);
   background: var(--c2-glass-3); backdrop-filter: var(--c2-blur); border-left: 1px solid var(--c2-line-2);
@@ -543,57 +557,17 @@
   .c2-sync { display: inline-flex; align-items: center; min-height: 44px; padding: 6px 8px; }
   .c2-header-echo { flex-wrap: wrap; row-gap: 4px; }
 
-  /* ---- theme switcher: header trigger gives way to the pulse-drawer copy - */
+  /* ---- theme switcher: header trigger gives way to the pulse-details copy  */
   .c2-themesw-header { display: none; }
-  .c2-themesw-pulse { display: flex; flex-direction: column; gap: 7px; }
+  .c2-pulse-block.c2-themesw-pulse { display: flex; flex-direction: column; gap: 7px; }
   .c2-themesw-pulse .c2-themesw-btn { min-width: 44px; min-height: 44px; }
 
-  /* ---- pulse: compact inline strip stays visible; full rail is a drawer -- */
-  .c2 { grid-template-rows: auto auto minmax(0, 1fr); }
-  .c2-pulse-strip {
-    display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
-    padding: 8px 12px; border-bottom: 1px solid var(--c2-line);
-    background: color-mix(in srgb, var(--surface) 40%, transparent); backdrop-filter: var(--c2-blur);
-  }
-  .c2-pulse-strip-item {
-    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
-    min-height: 44px; padding: 6px 4px; background: var(--c2-glass); border: 1px solid var(--c2-line);
-    border-radius: 10px; cursor: pointer; color: var(--text);
-  }
-  .c2-pulse-strip-v { font-family: var(--font-display); font-size: 16px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
-  .c2-pulse-strip-k { font-family: var(--font-display); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-faint); }
-  .c2-pulse-strip-item.tone-green .c2-pulse-strip-v { color: var(--green); }
-  .c2-pulse-strip-item.tone-accent .c2-pulse-strip-v { color: var(--accent); }
-  .c2-pulse-strip-item.tone-red .c2-pulse-strip-v { color: var(--red); }
-  .c2-pulse-strip-item.tone-purple .c2-pulse-strip-v { color: var(--purple); }
-
-  .c2-body { grid-template-columns: minmax(0, 1fr); }
-  /* .c2-pulse's z-index:36 below only wins against ITS OWN siblings inside
-     .c2-body — .c2-body is a direct .c2 child at z-index:1 (from `.c2 > *`),
-     while the drawer's .c2-scrim.mobile is a SEPARATE direct .c2 child at
-     z-index:30. A descendant's z-index can never outrank a sibling of its
-     ancestor; the ancestor itself has to win that comparison first. Net
-     effect (found while wiring the drawer's new theme-switch/session
-     controls): every tap inside the open drawer was silently landing on the
-     scrim underneath instead of the drawer's own buttons — same stacking-
-     context class of bug as the header/omnibar fix above. Bumping .c2-body's
-     z-index only while the drawer is open (scoped via the existing
-     .c2.pulse-open hook) fixes it without touching desktop layout at all. */
-  .c2.pulse-open .c2-body { position: relative; z-index: 32; }
-  .c2-pulse {
-    position: absolute; z-index: 36; top: 0; bottom: 0; left: 0; width: min(320px, 88vw);
-    padding-bottom: calc(16px + env(safe-area-inset-bottom));
-    padding-left: calc(14px + env(safe-area-inset-left));
-    transform: translateX(-102%); transition: transform 0.2s var(--ease);
-    background: var(--c2-glass-3); backdrop-filter: var(--c2-blur); box-shadow: var(--shadow-lg);
-  }
-  .c2.pulse-open .c2-pulse { transform: none; }
-  .c2-pulse-head { display: flex; align-items: center; justify-content: space-between; }
-  .c2-pulse-close {
-    display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px;
-    background: transparent; border: 1px solid var(--c2-line); color: var(--text-dim); border-radius: 8px; cursor: pointer;
-  }
-  .c2-scrim.mobile { display: block; }
+  /* ---- pulse bar: tiles scroll horizontally; sparkline yields its space --- */
+  .c2-pulsebar { padding: 8px 12px; gap: 8px; }
+  .c2-pb-item { flex: 1 0 72px; min-height: 48px; }
+  .c2-pb-side .c2-spark { display: none; }
+  .c2-pb-more { min-height: 48px; min-width: 44px; }
+  .c2-pulsex { grid-template-columns: 1fr; padding: 8px 12px 12px; }
 
   /* ---- canvas: stop every flex/grid child from forcing horizontal overflow */
   .c2-canvas, .c2-canvas-body, .c2-canvas-body > *, .c2-flow, .c2-map, .c2-docs, .c2-doc-main { min-width: 0; }
@@ -627,15 +601,17 @@
     color: var(--text); cursor: pointer; box-shadow: inset 0 1px 0 var(--c2-rim);
   }
 
-  /* ---- docs: tree becomes a drawer/picker; editor stays full-width ------- */
-  .c2-docs { grid-template-columns: minmax(0, 1fr); }
+  /* ---- docs: the tree is an inline collapsible picker ABOVE the document,
+     in normal flow — it pushes content down instead of overlaying it, so it
+     can never cover the doc text (the absolute-drawer version anchored to
+     .c2 and painted over half the page). ---------------------------------- */
+  .c2-docs { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   .c2-doctree {
-    position: absolute; z-index: 36; top: 0; bottom: 0; left: 0; width: min(300px, 86vw);
-    max-width: none; transform: translateX(-102%); transition: transform 0.2s var(--ease);
-    background: var(--c2-glass-3); backdrop-filter: var(--c2-blur); box-shadow: var(--shadow-lg);
-    padding-bottom: calc(16px + env(safe-area-inset-bottom));
+    display: none; border-right: 0; border-bottom: 1px solid var(--c2-line);
+    max-height: 44vh; overflow-y: auto;
+    background: color-mix(in srgb, var(--surface) 60%, transparent);
   }
-  .c2-doctree.open { transform: none; }
+  .c2-doctree.open { display: flex; }
   .c2-doctree-bar { display: flex; align-items: center; gap: 8px; }
   .c2-doctree-close {
     display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; flex: none;
@@ -662,7 +638,7 @@
   .c2-omni-input { min-height: 44px; }
 
   /* ---- generic >=44px tap-target floor for every remaining small control - */
-  .c2-mini, .c2-chip.removable, .c2-age-row, .c2-pribar, .c2-stat, .c2-rel,
+  .c2-mini, .c2-chip.removable, .c2-age-row, .c2-pribar, .c2-rel,
   .c2-cli-copy, .c2-cli-x, .c2-edit-input, .c2-docfilter, .c2-omni-mode, .c2-toggle {
     min-height: 44px;
   }

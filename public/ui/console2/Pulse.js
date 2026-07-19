@@ -1,5 +1,12 @@
-// console2/Pulse.js — left rail of live, client-computed stats. Every number is
-// a control: clicking focuses the matching flow lane or opens an issue.
+// console2/Pulse.js — the Pulse bar: a horizontal strip of live, client-computed
+// stats directly under the header, plus a collapsible details panel (active
+// ages, unblock hint, priority mix, this-repo sessions). Every number is a
+// control: clicking focuses the matching flow lane or opens an issue.
+//
+// Deliberately NO drawers, scrims, or z-index layering here: the bar and its
+// expanded panel are normal document flow on every viewport, so they can never
+// paint under (or eat taps meant for) other content — the drawer version
+// produced exactly those bugs twice.
 import { html } from 'htm/preact';
 import { store, selectIssue, toast } from '../store.js';
 import { c2 } from './state.js';
@@ -8,33 +15,19 @@ import { Corners, PRI_LABEL, StatusGlyph } from './ui.js';
 import { matchProject, cwdTail } from '../components/common.js';
 import { ThemeSwitch } from './ThemeSwitch.js';
 
-function focus(lane) { c2.canvasMode.value = 'flow'; c2.laneFocus.value = lane; c2.pulseOpen.value = false; }
+function focus(lane) { c2.canvasMode.value = 'flow'; c2.laneFocus.value = lane; }
 
-// Compact always-visible summary strip for narrow viewports — the Pulse rail
-// itself moves behind a drawer there, but a 4-stat readout stays inline so
-// "see pulse summary" doesn't require an extra tap. Same tap targets jump
-// straight to the matching Flow lane, same as the full rail's stat tiles.
-export function PulseStrip() {
-  const p = pulse.value;
+function Tile({ label, value, tone, onClick, sub }) {
   return html`
-    <div class="c2-pulse-strip" aria-hidden=${false}>
-      <button class="c2-pulse-strip-item tone-green" onClick=${() => focus('ready')}>
-        <span class="c2-pulse-strip-v">${p.ready}</span><span class="c2-pulse-strip-k">Ready</span>
-      </button>
-      <button class="c2-pulse-strip-item tone-accent" onClick=${() => focus('in_progress')}>
-        <span class="c2-pulse-strip-v">${p.inProgress.length}</span><span class="c2-pulse-strip-k">Active</span>
-      </button>
-      <button class="c2-pulse-strip-item tone-red" onClick=${() => focus('blocked')}>
-        <span class="c2-pulse-strip-v">${p.blocked.length}</span><span class="c2-pulse-strip-k">Blocked</span>
-      </button>
-      <button class="c2-pulse-strip-item tone-purple" onClick=${() => focus('triage')}>
-        <span class="c2-pulse-strip-v">${p.triage}</span><span class="c2-pulse-strip-k">Triage</span>
-      </button>
-    </div>`;
+    <button class=${'c2-pb-item tone-' + (tone || 'default')} onClick=${onClick}>
+      <span class="c2-pb-v">${value}</span>
+      <span class="c2-pb-k">${label}</span>
+      ${sub && html`<span class="c2-pb-sub">${sub}</span>`}
+    </button>`;
 }
 
 function Sparkline({ data }) {
-  const w = 132, h = 34, max = Math.max(1, ...data);
+  const w = 132, h = 30, max = Math.max(1, ...data);
   const n = data.length;
   const step = n > 1 ? w / (n - 1) : w;
   const pts = data.map((v, i) => [i * step, h - (v / max) * (h - 4) - 2]);
@@ -44,7 +37,7 @@ function Sparkline({ data }) {
   const total = data.reduce((a, b) => a + b, 0);
   return html`
     <div class="c2-spark" title=${`${total} closed across ${n} weeks`}>
-      <svg viewBox=${`0 0 ${w} ${h}`} width=${w} height=${h} preserveAspectRatio="none">
+      <svg viewBox=${`0 0 ${w} ${h}`} preserveAspectRatio="none">
         <path d=${area} class="c2-spark-area" />
         <path d=${line} class="c2-spark-line" fill="none" />
         ${last && html`<circle cx=${last[0].toFixed(1)} cy=${last[1].toFixed(1)} r="2.4" class="c2-spark-dot" />`}
@@ -66,79 +59,73 @@ function PriorityBars({ dist }) {
     </div>`;
 }
 
-function Stat({ label, value, tone, onClick, sub }) {
-  return html`
-    <button class=${'c2-stat tone-' + (tone || 'default')} onClick=${onClick}>
-      ${Corners()}
-      <span class="c2-stat-k">${label}</span>
-      <span class="c2-stat-v">${value}</span>
-      ${sub && html`<span class="c2-stat-sub">${sub}</span>`}
-    </button>`;
-}
-
-export function Pulse() {
+export function PulseBar() {
   const p = pulse.value;
+  const open = c2.pulseOpen.value;
   const activeAging = p.inProgress.filter((i) => ageMs(i) / 3600000 > AGE_AMBER_H).length;
 
   return html`
-    <aside class="c2-pulse">
-      <div class="c2-pulse-head">
-        <span class="c2-hud-label">Pulse</span>
-        <button class="c2-pulse-close" aria-label="Close pulse rail" title="Close" onClick=${() => (c2.pulseOpen.value = false)}>✕</button>
+    <section class="c2-pulsebar-wrap">
+      <div class="c2-pulsebar">
+        <div class="c2-pb-tiles">
+          ${Tile({ label: 'Ready', value: p.ready, tone: 'green', onClick: () => focus('ready') })}
+          ${Tile({ label: 'Active', value: p.inProgress.length, tone: 'accent',
+            sub: activeAging ? `${activeAging} aging` : null, onClick: () => focus('in_progress') })}
+          ${Tile({ label: 'Blocked', value: p.blocked.length, tone: 'red', onClick: () => focus('blocked') })}
+          ${Tile({ label: 'Triage', value: p.triage, tone: 'purple', onClick: () => focus('triage') })}
+          ${Tile({ label: 'Stale', value: p.stale, tone: 'amber', sub: '21d+', onClick: () => focus('stale') })}
+        </div>
+        <div class="c2-pb-side">
+          <${Sparkline} data=${p.velocity} />
+          <button class=${'c2-pb-more' + (open ? ' on' : '')} aria-expanded=${open}
+            onClick=${() => (c2.pulseOpen.value = !open)}>
+            details <span aria-hidden="true">${open ? '▴' : '▾'}</span>
+          </button>
+        </div>
       </div>
 
-      <div class="c2-stat-grid">
-        ${Stat({ label: 'Ready', value: p.ready, tone: 'green', onClick: () => focus('ready') })}
-        ${Stat({ label: 'In progress', value: p.inProgress.length, tone: 'accent',
-          sub: activeAging ? `${activeAging} aging` : null, onClick: () => focus('in_progress') })}
-        ${Stat({ label: 'Blocked', value: p.blocked.length, tone: 'red', onClick: () => focus('blocked') })}
-        ${Stat({ label: 'Triage', value: p.triage, tone: 'purple', onClick: () => focus('triage') })}
-        ${Stat({ label: 'Stale', value: p.stale, tone: 'amber',
-          sub: '21d+', onClick: () => focus('stale') })}
-      </div>
+      ${open && html`
+        <div class="c2-pulsex">
+          ${p.inProgress.length > 0 && html`
+            <div class="c2-pulse-block">
+              <span class="c2-hud-label">Active · ages</span>
+              <div class="c2-age-list">
+                ${p.inProgress.map((i) => {
+                  const h = ageMs(i) / 3600000;
+                  const tone = h > AGE_RED_H ? 'red' : h > AGE_AMBER_H ? 'amber' : 'ok';
+                  const label = h < 24 ? Math.max(1, Math.round(h)) + 'h' : Math.round(h / 24) + 'd';
+                  return html`<button key=${i.id} class="c2-age-row" onClick=${() => selectIssue(i.id)}>
+                    ${StatusGlyph(i)}
+                    <span class="c2-age-title">${i.title}</span>
+                    <span class=${'c2-age c2-age-' + tone}>${label}</span>
+                  </button>`;
+                })}
+              </div>
+            </div>`}
 
-      ${p.inProgress.length > 0 && html`
-        <div class="c2-pulse-block">
-          <span class="c2-hud-label">Active · ages</span>
-          <div class="c2-age-list">
-            ${p.inProgress.map((i) => {
-              const h = ageMs(i) / 3600000;
-              const tone = h > AGE_RED_H ? 'red' : h > AGE_AMBER_H ? 'amber' : 'ok';
-              const label = h < 24 ? Math.max(1, Math.round(h)) + 'h' : Math.round(h / 24) + 'd';
-              return html`<button key=${i.id} class="c2-age-row" onClick=${() => selectIssue(i.id)}>
-                ${StatusGlyph(i)}
-                <span class="c2-age-title">${i.title}</span>
-                <span class=${'c2-age c2-age-' + tone}>${label}</span>
-              </button>`;
-            })}
+          ${p.unblock && html`
+            <div class="c2-pulse-block">
+              <span class="c2-hud-label">Unblock hint</span>
+              <button class="c2-unblock" onClick=${() => selectIssue(p.unblock.id)}>
+                ${Corners()}
+                <span class="c2-unblock-body">${p.unblock.issue && StatusGlyph(p.unblock.issue)} Closing <b>${p.unblock.id}</b> frees <b>${p.unblock.count}</b> issue${p.unblock.count === 1 ? '' : 's'}</span>
+                <span class="c2-unblock-title">${p.unblock.issue?.title || ''}</span>
+              </button>
+            </div>`}
+
+          <div class="c2-pulse-block">
+            <span class="c2-hud-label">Priority mix</span>
+            <${PriorityBars} dist=${p.priority} />
+          </div>
+
+          <${SessionsBlock} />
+
+          <div class="c2-pulse-block c2-themesw-pulse">
+            <span class="c2-hud-label">Theme</span>
+            <${ThemeSwitch} />
           </div>
         </div>`}
-
-      ${p.unblock && html`
-        <button class="c2-unblock" onClick=${() => selectIssue(p.unblock.id)}>
-          ${Corners()}
-          <span class="c2-hud-label">Unblock hint</span>
-          <span class="c2-unblock-body">${p.unblock.issue && StatusGlyph(p.unblock.issue)} Closing <b>${p.unblock.id}</b> frees <b>${p.unblock.count}</b> issue${p.unblock.count === 1 ? '' : 's'}</span>
-          <span class="c2-unblock-title">${p.unblock.issue?.title || ''}</span>
-        </button>`}
-
-      <div class="c2-pulse-block">
-        <span class="c2-hud-label">Velocity</span>
-        <${Sparkline} data=${p.velocity} />
-      </div>
-
-      <div class="c2-pulse-block">
-        <span class="c2-hud-label">Priority mix</span>
-        <${PriorityBars} dist=${p.priority} />
-      </div>
-
-      <${SessionsBlock} />
-
-      <div class="c2-pulse-block c2-themesw-pulse">
-        <span class="c2-hud-label">Theme</span>
-        <${ThemeSwitch} />
-      </div>
-    </aside>`;
+    </section>`;
 }
 
 // ---------------------------------------------------------------------------

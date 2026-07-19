@@ -8,7 +8,7 @@ export const c2 = {
   bootError: signal(null),
 
   canvasMode: signal('flow'),    // 'flow' | 'map' | 'docs'
-  pulseOpen: signal(false),      // mobile: pulse rail shown as an overlay
+  pulseOpen: signal(false),      // pulse bar: details panel expanded
   epicGroup: signal(true),       // Flow: regroup lanes into epic rows (default ON — see loadEpicGroupPref)
   laneFocus: signal(null),       // Pulse click → focus a lane/status bucket
 
