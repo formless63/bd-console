@@ -70,7 +70,7 @@ import { REGISTRY_PATH, LOG_PATH, PID_PATH } from './lib/paths.mjs';
 import { loadRegistry, addProject, removeProject, listProjects } from './lib/registry.mjs';
 import { resolveSettings } from './lib/config.mjs';
 import {
-  daemonStart, daemonStop, daemonStatus, hostLabel,
+  daemonStart, daemonStop, daemonStatus, hostLabel, dashboardUrls,
   PortConflictError, tailStartupLog
 } from './lib/daemon.mjs';
 import { runUpdate, DirtyWorkTreeError } from './lib/update.mjs';
@@ -163,6 +163,12 @@ if (ARGS.command === null || ARGS.command === 'start') {
 
 // --- effective settings -------------------------------------------------
 const { port: PORT, host: HOST, token: TOKEN, persist: PERSIST } = resolveSettings({ argsPort: ARGS.port, argsHost: ARGS.host });
+
+function printDashboardUrls() {
+  const urls = dashboardUrls(HOST, PORT);
+  console.log(`Dashboard: ${urls[0]}`);
+  for (const url of urls.slice(1)) console.log(`           ${url}`);
+}
 const SERVE_ENTRY = fileURLToPath(import.meta.url);
 
 // --- daemon commands ----------------------------------------------------
@@ -175,7 +181,7 @@ async function cmdStart() {
     console.log(result.supervised === 'systemd'
       ? 'Started bd-console (systemd-supervised).'
       : `Started bd-console in background (PID: ${result.pid}).`);
-    console.log(`Dashboard: http://${hostLabel(HOST)}:${PORT}`);
+    printDashboardUrls();
     if (result.supervised === 'systemd') {
       console.log(`Supervision: systemd --user unit (${result.unitPath})`);
       console.log('Manage with: systemctl --user {status,stop,restart} bd-console.service');
@@ -229,7 +235,7 @@ async function cmdStatus() {
   console.log(`  supervision: ${result.supervised}`);
   console.log(`  pid:         ${result.pid ?? 'unknown'}`);
   console.log(`  port ${PORT}:    ${result.portReachable ? 'reachable (/api/meta responded)' : 'NOT reachable (process may be starting or wedged)'}`);
-  console.log(`Dashboard: http://${hostLabel(HOST)}:${PORT}`);
+  printDashboardUrls();
   console.log(`Logs:      ${LOG_PATH}`);
   process.exit(0);
 }
@@ -260,7 +266,7 @@ async function cmdUpdate() {
     if (result.unchanged) console.log('Already up to date.');
     if (before.running) {
       if (result.restarted) {
-        console.log(`Restarted (${result.restarted.supervised}-supervised). Dashboard: http://${hostLabel(HOST)}:${PORT}`);
+        console.log(`Restarted (${result.restarted.supervised}-supervised). Dashboard: ${dashboardUrls(HOST, PORT)[0]}`);
       } else {
         console.log("Update finished, but the restart step did not complete — run 'bd-console start' manually.");
       }
@@ -296,7 +302,7 @@ const handler = createRequestHandler({ host: HOST, port: PORT, token: TOKEN });
 const server = createServer(handler);
 
 server.listen(PORT, HOST, () => {
-  console.log(`bd-console [hub mode] → http://${hostLabel(HOST)}:${PORT}`);
+  console.log(`bd-console [hub mode] → ${dashboardUrls(HOST, PORT).join('  ·  ')}`);
   console.log(`  registry: ${REGISTRY_PATH}`);
   console.log(`  writes: ${TOKEN ? 'token-gated' : 'open'}`);
   if (!isLocalOnlyHost(HOST) && !TOKEN) {
