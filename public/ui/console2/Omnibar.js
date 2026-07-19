@@ -8,7 +8,7 @@ import { c2 } from './state.js';
 import {
   captureTriage, actClaim, actStart, actClose, actDefer, actPriority,
 } from './actions.js';
-import { TypeGlyph, Pip } from './ui.js';
+import { TypeGlyph, Pip, StatusGlyph } from './ui.js';
 
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*(\.\d+)*$/;
 
@@ -180,6 +180,7 @@ export function Omnibar() {
             }
             if (item.type === 'jump') {
               return html`<button key=${item.issue.id} role="option" class=${'c2-omni-row jump' + (active ? ' active' : '')} onMouseEnter=${() => setSel(n)} onClick=${() => run(item)}>
+                ${StatusGlyph(item.issue)}
                 ${TypeGlyph(item.issue.issue_type)}
                 <span class="c2-omni-desc">${item.issue.title}</span>
                 <span class="c2-omni-id">${item.issue.id}</span>

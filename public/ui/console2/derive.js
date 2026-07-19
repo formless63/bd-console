@@ -8,6 +8,7 @@ import {
   store, byId, effStatus, isReady, openBlockersOf, blockersOf,
   parentOf, childrenOf, blocksList,
 } from '../store.js';
+import { c2 } from './state.js';
 
 export const DAY = 86400000;
 export const STALE_DAYS = 21;
@@ -220,5 +221,26 @@ function criticalChain(inEdges, set) {
   while (cur) { chain.add(cur); cur = prev.get(cur); }
   return max > 1 ? chain : new Set();
 }
+
+// ---------------------------------------------------------------------------
+// Focus (Pulse stat click / omnibar view command) — the single source of
+// truth for "which issues does the current lane/status focus narrow Flow
+// to." Both the ungrouped lanes and the epic-grouped rows read this so a
+// focus set from either surface visibly narrows both render paths (fixes:
+// focus previously only dimmed the ungrouped lanes via CSS and had no effect
+// at all on the epic-grouped view, which never read c2.laneFocus).
+// Returns null when no focus is active (render everything), else a Set of
+// matching issue ids.
+export const focusedIds = computed(() => {
+  const focus = c2.laneFocus.value;
+  if (!focus) return null;
+  if (focus === 'stale') return new Set(store.issues.value.filter(isStale).map((i) => i.id));
+  const L = lanes.value;
+  return new Set((L[focus] || []).map((i) => i.id));
+});
+
+export const LANE_LABEL = {
+  triage: 'Triage', ready: 'Ready', in_progress: 'In progress', blocked: 'Blocked', done: 'Done', stale: 'Stale · 21d+',
+};
 
 export { byId, effStatus, isReady, openBlockersOf, blockersOf, parentOf, childrenOf, blocksList };

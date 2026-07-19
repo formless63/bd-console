@@ -9,8 +9,10 @@ export const c2 = {
 
   canvasMode: signal('flow'),    // 'flow' | 'map' | 'docs'
   pulseOpen: signal(false),      // mobile: pulse rail shown as an overlay
-  epicGroup: signal(false),      // Flow: regroup lanes into epic rows
+  epicGroup: signal(true),       // Flow: regroup lanes into epic rows (default ON — see loadEpicGroupPref)
   laneFocus: signal(null),       // Pulse click → focus a lane/status bucket
+
+  delegatePreset: signal(null),  // Pulse "delegate here" → session name Detail's Delegate composer should preselect once
 
   docTreeOpen: signal(false),    // mobile: doc tree shown as a drawer
   promoteOpen: signal(false),    // mobile: manual "promote…" excerpt form visible
@@ -29,4 +31,30 @@ export const c2 = {
 
 export function flashCli(cmd, label) {
   c2.lastCli.value = { cmd, label: label || '', at: Date.now() };
+}
+
+// ---------------------------------------------------------------------------
+// Epic-grouping preference — Flow groups by epic by default; an explicit
+// "Ungroup" click should stick per-project (a user working an epic-heavy
+// project shouldn't have to re-toggle every visit). Stored as a single JSON
+// map keyed by project id so switching projects doesn't bleed one project's
+// choice into another's.
+// ---------------------------------------------------------------------------
+const EPIC_GROUP_KEY = 'bd_c2_epicgroup';
+function readEpicGroupMap() {
+  try { return JSON.parse(localStorage.getItem(EPIC_GROUP_KEY)) || {}; } catch { return {}; }
+}
+export function loadEpicGroupPref(pid) {
+  if (!pid) return true;
+  const v = readEpicGroupMap()[pid];
+  return typeof v === 'boolean' ? v : true; // default: grouped
+}
+export function setEpicGroup(pid, val) {
+  c2.epicGroup.value = val;
+  if (!pid) return;
+  try {
+    const map = readEpicGroupMap();
+    map[pid] = val;
+    localStorage.setItem(EPIC_GROUP_KEY, JSON.stringify(map));
+  } catch { /* ignore */ }
 }

@@ -1,10 +1,12 @@
 // console2/Pulse.js — left rail of live, client-computed stats. Every number is
 // a control: clicking focuses the matching flow lane or opens an issue.
 import { html } from 'htm/preact';
-import { store, selectIssue } from '../store.js';
+import { store, selectIssue, toast } from '../store.js';
 import { c2 } from './state.js';
 import { pulse, AGE_AMBER_H, AGE_RED_H, ageMs } from './derive.js';
-import { Corners, PRI_LABEL } from './ui.js';
+import { Corners, PRI_LABEL, StatusGlyph } from './ui.js';
+import { matchProject, cwdTail } from '../components/common.js';
+import { ThemeSwitch } from './ThemeSwitch.js';
 
 function focus(lane) { c2.canvasMode.value = 'flow'; c2.laneFocus.value = lane; c2.pulseOpen.value = false; }
 
@@ -104,6 +106,7 @@ export function Pulse() {
               const tone = h > AGE_RED_H ? 'red' : h > AGE_AMBER_H ? 'amber' : 'ok';
               const label = h < 24 ? Math.max(1, Math.round(h)) + 'h' : Math.round(h / 24) + 'd';
               return html`<button key=${i.id} class="c2-age-row" onClick=${() => selectIssue(i.id)}>
+                ${StatusGlyph(i)}
                 <span class="c2-age-title">${i.title}</span>
                 <span class=${'c2-age c2-age-' + tone}>${label}</span>
               </button>`;
@@ -115,7 +118,7 @@ export function Pulse() {
         <button class="c2-unblock" onClick=${() => selectIssue(p.unblock.id)}>
           ${Corners()}
           <span class="c2-hud-label">Unblock hint</span>
-          <span class="c2-unblock-body">Closing <b>${p.unblock.id}</b> frees <b>${p.unblock.count}</b> issue${p.unblock.count === 1 ? '' : 's'}</span>
+          <span class="c2-unblock-body">${p.unblock.issue && StatusGlyph(p.unblock.issue)} Closing <b>${p.unblock.id}</b> frees <b>${p.unblock.count}</b> issue${p.unblock.count === 1 ? '' : 's'}</span>
           <span class="c2-unblock-title">${p.unblock.issue?.title || ''}</span>
         </button>`}
 
@@ -128,5 +131,59 @@ export function Pulse() {
         <span class="c2-hud-label">Priority mix</span>
         <${PriorityBars} dist=${p.priority} />
       </div>
+
+      <${SessionsBlock} />
+
+      <div class="c2-pulse-block c2-themesw-pulse">
+        <span class="c2-hud-label">Theme</span>
+        <${ThemeSwitch} />
+      </div>
     </aside>`;
+}
+
+// ---------------------------------------------------------------------------
+// Sessions — the tmux sessions whose active pane cwd is inside THIS project's
+// working directory, reusing the hub's own cwd-matching logic (matchProject,
+// from components/common.js) verbatim rather than re-deriving the prefix
+// check here. tmux itself is host-wide (GET /api/tmux lists every session on
+// the machine), so this is purely a client-side filter over the already-
+// loaded store.tmuxSessions against the active project's path (store.meta's
+// per-project `workspace` field).
+// ---------------------------------------------------------------------------
+function projectSessions() {
+  const path = store.meta.value?.workspace;
+  if (!path) return [];
+  const fake = { __c2_project__: { path } };
+  return store.tmuxSessions.value.filter((s) => (s.panes || []).some((p) => matchProject(p.cwd, fake)));
+}
+
+// Delegate-here is explicit-selection-only, same "no silent default" rule the
+// hub's Delegate composer already enforces: it only preselects a session when
+// the user has an issue open (Detail visible) to delegate — tapping it with
+// nothing selected can't guess an issue, so it just tells the user what to do
+// instead of silently no-opping.
+function delegateHere(sessionName) {
+  if (!store.selectedId.value) { toast('Open an issue first, then delegate to ' + sessionName, 'err'); return; }
+  c2.delegatePreset.value = sessionName;
+}
+
+function SessionsBlock() {
+  if (!store.tmuxAvailable.value) return null;
+  const sessions = projectSessions();
+  return html`
+    <div class="c2-pulse-block c2-sessions">
+      <span class="c2-hud-label">Sessions · this repo</span>
+      ${sessions.length === 0
+        ? html`<div class="c2-lane-empty">No sessions here.</div>`
+        : sessions.map((s) => {
+          const first = s.panes && s.panes[0];
+          return html`
+            <div key=${s.name} class="c2-session-row">
+              <span class="c2-session-name" title=${cwdTail(first?.cwd)}>${s.name}</span>
+              <span class=${'badge tmux-attach' + (s.attached ? ' on' : '')}>${s.attached ? 'attached' : 'detached'}</span>
+              <span class="c2-session-cmd">${first?.command || '—'}</span>
+              <button class="c2-mini" title="Delegate here" onClick=${() => delegateHere(s.name)}>delegate here</button>
+            </div>`;
+        })}
+    </div>`;
 }

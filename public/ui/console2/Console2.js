@@ -21,7 +21,7 @@ effect(() => {
     store.projectId.value = r.projectId;
   }
 });
-import { c2 } from './state.js';
+import { c2, loadEpicGroupPref } from './state.js';
 import { pulse } from './derive.js';
 import { Omnibar } from './Omnibar.js';
 import { Pulse, PulseStrip } from './Pulse.js';
@@ -29,6 +29,7 @@ import { Flow } from './Flow.js';
 import { MapView } from './MapView.js';
 import { Docs2 } from './Docs2.js';
 import { Detail } from './Detail.js';
+import { ThemeSwitch } from './ThemeSwitch.js';
 
 const MODES = [['flow', 'Flow'], ['map', 'Map'], ['docs', 'Docs']];
 
@@ -54,6 +55,9 @@ function Header() {
   return html`
     <header class="c2-header">
       <div class="c2-header-top">
+        <a class="c2-hublink" href="#/" title="Back to hub · all projects" aria-label="Back to hub">
+          <span class="c2-icon" aria-hidden="true">⌂</span>
+        </a>
         <div class="c2-brand">
           <span class="c2-brand-mark">◆</span>
           <div class="c2-brand-txt">
@@ -63,6 +67,7 @@ function Header() {
         </div>
         <${Omnibar} />
         <div class="c2-header-right">
+          <div class="c2-themesw-header"><${ThemeSwitch} /></div>
           <span class=${'c2-sync sync-' + syncState} title=${'Issue export: ' + syncState}>${syncState}</span>
           <button class="c2-pulse-toggle" aria-label="Toggle pulse rail" title="Pulse" onClick=${() => (c2.pulseOpen.value = !c2.pulseOpen.value)}>
             <span class="c2-icon" aria-hidden="true">◈</span><span class="c2-btn-label">Pulse</span>
@@ -111,6 +116,8 @@ export function Console2() {
     store.docContent.value = null;
     c2.ready.value = false;
     c2.bootError.value = null;
+    c2.laneFocus.value = null;
+    c2.epicGroup.value = loadEpicGroupPref(pid);
     (async () => {
       await loadProjectMeta();
       await Promise.all([loadIssues(), loadDocs(), loadTmux()]);

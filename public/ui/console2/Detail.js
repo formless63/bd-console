@@ -14,7 +14,8 @@ import {
   actAddLabel, actRemoveLabel, actSetParent, actAddBlocker, actRemoveBlocker,
   delegateNow, delegateSchedule,
 } from './actions.js';
-import { TypeGlyph, Pip, PRI_LABEL } from './ui.js';
+import { TypeGlyph, Pip, PRI_LABEL, StatusGlyph, glyphStatus } from './ui.js';
+import { c2 } from './state.js';
 
 function timeAgo(s) {
   if (!s) return '';
@@ -28,8 +29,8 @@ function timeAgo(s) {
 function RelChip(id) {
   const i = byId.value.get(id);
   if (!i) return html`<button class="c2-rel unknown" disabled>${id}</button>`;
-  return html`<button class=${'c2-rel st-' + effStatus(i)} onClick=${() => selectIssue(id)} title=${i.title}>
-    ${TypeGlyph(i.issue_type)}<span class="c2-rel-id">${id}</span><span class="c2-rel-t">${i.title}</span>
+  return html`<button class=${'c2-rel st-' + glyphStatus(i)} onClick=${() => selectIssue(id)} title=${i.title}>
+    ${StatusGlyph(i)}${TypeGlyph(i.issue_type)}<span class="c2-rel-id">${id}</span><span class="c2-rel-t">${i.title}</span>
   </button>`;
 }
 
@@ -126,14 +127,21 @@ function Delegate({ issue }) {
   const [busy, setBusy] = useState(false);
   const sessions = store.tmuxSessions.value;
   const available = store.tmuxAvailable.value;
+  const preset = c2.delegatePreset.value;
 
   useEffect(() => {
     loadTmux();
     setText(`Work on ${id}: ${issue.title}\n\nRun \`bd show ${id}\` for full context.`);
   }, [id]);
-  // Deliberately NOT auto-selecting a session: the picker lists real host
-  // sessions, so defaulting to one risks an accidental Send to a live agent.
-  // The user must consciously choose a target; Send now stays disabled until then.
+  // Deliberately NOT auto-selecting a session on mount: the picker lists real
+  // host sessions, so defaulting to one risks an accidental Send to a live
+  // agent. The user must consciously choose a target — EXCEPT when they just
+  // tapped a named session's "delegate here" in the pulse rail's Sessions
+  // block, which is itself the explicit choice (c2.delegatePreset). Consumed
+  // once, same pattern as store.scheduleSessionPreset.
+  useEffect(() => {
+    if (preset) { setSession(preset); c2.delegatePreset.value = null; }
+  }, [preset]);
 
   const sendNow = async () => { setBusy(true); try { await delegateNow(session, text); } catch {} finally { setBusy(false); } };
   const schedule = async () => {
@@ -177,7 +185,7 @@ export function Detail() {
         <div class="c2-detail-inner" key=${id}>
           <div class="c2-detail-head">
             <div class="c2-detail-badges">${TypeGlyph(issue.issue_type)} ${Pip(issue.priority)}
-              <span class=${'c2-detail-status st-' + effStatus(issue)}>${effStatus(issue).replace('_', ' ')}</span>
+              <span class=${'c2-detail-status st-' + glyphStatus(issue)}>${StatusGlyph(issue)} ${effStatus(issue).replace('_', ' ')}</span>
               <span class="c2-rel-id">${issue.id}</span>
             </div>
             <button class="c2-detail-close" title="Close" onClick=${() => selectIssue(null)}>✕</button>

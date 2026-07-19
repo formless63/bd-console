@@ -23,6 +23,11 @@
   --c2-rim-soft: color-mix(in srgb, white 7%, transparent);
   --c2-line: var(--border);
   --c2-line-2: var(--border-2);
+  /* Fully opaque surface for floating panels that must stay legible over any
+     canvas content behind them (omnibar suggestions, theme popover) — every
+     preset's --elevated token is itself a solid color, so this carries
+     alpha 1.0 through, unlike the --c2-glass-* tokens above. */
+  --c2-opaque: var(--elevated);
   --font-display: "Space Grotesk", var(--font-ui);
   --font-body: "Manrope", var(--font-ui);
   --c2-r-card: 1rem;
@@ -80,8 +85,23 @@
   backdrop-filter: var(--c2-blur);
   border-bottom: 1px solid var(--c2-line);
   box-shadow: inset 0 1px 0 var(--c2-rim-soft);
+  /* .c2 > * defaults every direct child to z-index:1 (position:relative), so
+     the header and .c2-body (which holds Flow/Map/Docs canvas content) were
+     stacking-order ties — as later DOM siblings, .c2-body painted ON TOP of
+     the header, including the omnibar's absolutely-positioned dropdown
+     nested inside it (root cause of the "suggestions render under page
+     content" report: it's a stacking-context paint-order bug, not a
+     z-index-too-low bug — the dropdown's own z-index:40 only wins within the
+     header's stacking context, which itself was losing to its sibling).
+     Lifting the header above .c2-body (1) fixes that, while staying below
+     the scrim (30) / detail slide-over (35) / mobile pulse drawer (36) so
+     those overlays still cover the header exactly as before. */
+  z-index: 20;
 }
 .c2-header-top { display: flex; align-items: center; gap: 20px; }
+.c2-hublink { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex: none;
+  border: 1px solid var(--c2-line); border-radius: var(--radius-sm); color: var(--text-dim); text-decoration: none; font-size: 15px; }
+.c2-hublink:hover { color: var(--c2-neon); border-color: var(--c2-neon); }
 .c2-brand { display: flex; align-items: center; gap: 10px; min-width: 190px; }
 .c2-brand-mark { color: var(--c2-neon); font-size: 20px; filter: drop-shadow(0 0 6px color-mix(in srgb, var(--c2-neon) 55%, transparent)); }
 .c2-brand-txt { display: flex; flex-direction: column; line-height: 1.1; }
@@ -136,7 +156,11 @@
 .c2-omni-drop {
   position: absolute; top: calc(100% + 8px); left: 0; right: 0; z-index: 40;
   max-height: 52vh; overflow-y: auto;
-  background: var(--c2-glass-3); backdrop-filter: var(--c2-blur);
+  /* Opaque, not glass: the glass-3 token reads ~82% alpha, which over busy
+     card/map content left suggestion text unreadable (user report). Solid
+     --elevated (alpha 1.0) keeps the rim-light border/shadow for the "HUD
+     panel" look without sacrificing contrast. */
+  background: var(--c2-opaque);
   border: 1px solid var(--c2-line-2); border-radius: 12px;
   box-shadow: inset 0 1px 0 var(--c2-rim), var(--shadow-lg);
   padding: 6px;
@@ -152,6 +176,24 @@
 .c2-omni-id { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); }
 .c2-omni-kind { font-family: var(--font-display); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-faint); border: 1px solid var(--c2-line); padding: 1px 5px; }
 .c2-omni-kind.k-action { color: var(--c2-synergy); }
+
+/* ==========================================================================
+   Theme switcher — compact ◐ trigger + popover. Mounted twice: once in the
+   header (desktop-visible, hidden at the mobile breakpoint below) and once
+   inside the Pulse rail (hidden on desktop, shown in the mobile pulse
+   drawer) so it never has to compete for header space on a phone.
+   ========================================================================== */
+.c2-themesw { position: relative; }
+.c2-themesw-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px;
+  background: transparent; border: 1px solid var(--c2-line); border-radius: var(--radius-sm); color: var(--text-dim); cursor: pointer; font-size: 14px; }
+.c2-themesw-btn:hover, .c2-themesw-btn[aria-expanded="true"] { color: var(--text); border-color: var(--c2-line-2); }
+.c2-themesw-pop { position: absolute; top: calc(100% + 8px); right: 0; z-index: 46; min-width: 190px;
+  display: flex; flex-direction: column; gap: 6px; padding: 10px;
+  background: var(--c2-opaque); border: 1px solid var(--c2-line-2); border-radius: 10px;
+  box-shadow: inset 0 1px 0 var(--c2-rim), var(--shadow-lg); }
+.c2-themesw-scheme { display: flex; gap: 4px; }
+.c2-themesw-scheme .c2-mini { flex: 1; text-align: center; }
+.c2-themesw-pulse { display: none; }
 
 /* ==========================================================================
    Body layout
@@ -216,6 +258,13 @@
 .c2-pribar-fill.pf-4 { background: var(--text-faint); }
 .c2-pribar-v { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); text-align: right; }
 
+/* ---- Sessions (this repo's tmux sessions) -------------------------------- */
+.c2-sessions { gap: 6px; }
+.c2-session-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 6px 8px; background: var(--c2-glass); border: 1px solid var(--c2-line); border-radius: 8px; }
+.c2-session-name { font-family: var(--font-mono); font-size: 11px; color: var(--text); }
+.c2-session-cmd { font-size: 11px; color: var(--text-dim); flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* ==========================================================================
    Canvas + segmented control
    ========================================================================== */
@@ -262,9 +311,11 @@
 .c2-card.sel { border-color: var(--c2-accent); box-shadow: 0 0 0 1px var(--c2-accent), inset 0 1px 0 var(--c2-rim-soft); }
 .c2-card.dim { opacity: 0.32; }
 .c2-card.st-ready { border-left-color: var(--green); }
+.c2-card.st-open { border-left-color: var(--text-faint); }
 .c2-card.st-in_progress { border-left-color: var(--accent); }
 .c2-card.st-blocked { border-left-color: var(--red); }
 .c2-card.st-closed { border-left-color: var(--text-faint); opacity: 0.72; }
+.c2-card.st-deferred { border-left-color: var(--amber); }
 .c2-card-top { display: flex; align-items: flex-start; gap: 7px; }
 .c2-card-title { flex: 1; font-size: 13px; line-height: 1.35; color: var(--text); font-weight: 500; }
 .c2-card-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -279,6 +330,17 @@
 .c2-glyph-bug { color: var(--red); }
 .c2-glyph-chore { color: var(--text-faint); }
 .c2-glyph-task { color: var(--green); }
+
+/* ---- Status glyphs — shape-distinct per status (never color alone) ------ */
+.c2-sglyph { display: inline-flex; align-items: center; justify-content: center; width: 14px; font-size: 12px; line-height: 1; flex: none; }
+.c2-sglyph.st-ready { color: var(--green); }
+.c2-sglyph.st-open { color: var(--text-faint); }
+.c2-sglyph.st-in_progress { color: var(--accent); animation: c2sglyphpulse 2.2s ease-in-out infinite; }
+.c2-sglyph.st-blocked { color: var(--red); }
+.c2-sglyph.st-closed { color: var(--text-faint); opacity: 0.75; }
+.c2-sglyph.st-deferred { color: var(--amber); }
+@keyframes c2sglyphpulse { 0%, 100% { opacity: 0.7; filter: none; } 50% { opacity: 1; filter: drop-shadow(0 0 3px currentColor); } }
+@media (prefers-reduced-motion: reduce) { .c2-sglyph.st-in_progress { animation: none; } }
 
 .c2-pip { font-family: var(--font-mono); font-size: 10px; font-weight: 700; padding: 1px 5px; border: 1px solid var(--c2-line); color: var(--text-dim); border-radius: 4px; }
 .c2-pip-0 { color: var(--red); border-color: color-mix(in srgb, var(--red) 50%, var(--border)); }
@@ -347,6 +409,12 @@
 .c2-node-glyph { fill: var(--text); font-size: 13px; }
 .c2-node-id { fill: var(--text-faint); font-family: var(--font-mono); font-size: 10px; }
 .c2-node-title { fill: var(--text); font-size: 11px; font-family: var(--font-body); }
+.c2-node-mark { font-size: 11px; pointer-events: none; }
+.c2-node-mark.st-ready { fill: var(--green); }
+.c2-node-mark.st-open { fill: var(--text-faint); }
+.c2-node-mark.st-in_progress { fill: var(--accent); }
+.c2-node-mark.st-blocked { fill: var(--red); }
+.c2-node-mark.st-deferred { fill: var(--amber); }
 
 /* ==========================================================================
    Docs
@@ -410,7 +478,7 @@
 .c2-detail-head { display: flex; align-items: center; gap: 8px; }
 .c2-detail-badges { display: flex; align-items: center; gap: 8px; flex: 1; }
 .c2-detail-status { font-family: var(--font-display); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; padding: 2px 7px; border: 1px solid var(--c2-line); color: var(--text-dim); }
-.c2-detail-status.st-ready { color: var(--green); } .c2-detail-status.st-in_progress { color: var(--accent); } .c2-detail-status.st-blocked { color: var(--red); }
+.c2-detail-status.st-ready { color: var(--green); } .c2-detail-status.st-in_progress { color: var(--accent); } .c2-detail-status.st-blocked { color: var(--red); } .c2-detail-status.st-deferred { color: var(--amber); }
 .c2-detail-close { background: transparent; border: 1px solid var(--c2-line); color: var(--text-dim); width: 28px; height: 28px; border-radius: 6px; cursor: pointer; }
 .c2-detail-close:hover { color: var(--text); border-color: var(--c2-line-2); }
 .c2-detail-title { font-family: var(--font-display); font-size: 20px; font-weight: 600; line-height: 1.25; margin: 0; text-wrap: balance; }
@@ -424,7 +492,7 @@
 .c2-rel:hover { border-color: var(--c2-line-2); }
 .c2-rel-id { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); }
 .c2-rel-t { flex: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.c2-rel.st-in_progress { border-left: 2px solid var(--accent); } .c2-rel.st-blocked { border-left: 2px solid var(--red); } .c2-rel.st-ready { border-left: 2px solid var(--green); }
+.c2-rel.st-in_progress { border-left: 2px solid var(--accent); } .c2-rel.st-blocked { border-left: 2px solid var(--red); } .c2-rel.st-ready { border-left: 2px solid var(--green); } .c2-rel.st-deferred { border-left: 2px solid var(--amber); }
 
 .c2-edit { display: flex; flex-direction: column; gap: 9px; }
 .c2-edit-row { display: flex; align-items: center; gap: 6px; }
@@ -467,12 +535,18 @@
   .c2-brand-name { max-width: 46vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .c2-brand-sub { display: none; }
   .c2-omni { order: 3; flex-basis: 100%; max-width: none; }
+  .c2-hublink { min-width: 44px; min-height: 44px; }
   .c2-header-right { gap: 6px; }
   .c2-classic { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; padding: 6px 10px; }
   .c2-classic .c2-btn-label { display: none; }
   .c2-pulse-toggle { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 6px 12px; }
   .c2-sync { display: inline-flex; align-items: center; min-height: 44px; padding: 6px 8px; }
   .c2-header-echo { flex-wrap: wrap; row-gap: 4px; }
+
+  /* ---- theme switcher: header trigger gives way to the pulse-drawer copy - */
+  .c2-themesw-header { display: none; }
+  .c2-themesw-pulse { display: flex; flex-direction: column; gap: 7px; }
+  .c2-themesw-pulse .c2-themesw-btn { min-width: 44px; min-height: 44px; }
 
   /* ---- pulse: compact inline strip stays visible; full rail is a drawer -- */
   .c2 { grid-template-rows: auto auto minmax(0, 1fr); }
@@ -494,6 +568,18 @@
   .c2-pulse-strip-item.tone-purple .c2-pulse-strip-v { color: var(--purple); }
 
   .c2-body { grid-template-columns: minmax(0, 1fr); }
+  /* .c2-pulse's z-index:36 below only wins against ITS OWN siblings inside
+     .c2-body — .c2-body is a direct .c2 child at z-index:1 (from `.c2 > *`),
+     while the drawer's .c2-scrim.mobile is a SEPARATE direct .c2 child at
+     z-index:30. A descendant's z-index can never outrank a sibling of its
+     ancestor; the ancestor itself has to win that comparison first. Net
+     effect (found while wiring the drawer's new theme-switch/session
+     controls): every tap inside the open drawer was silently landing on the
+     scrim underneath instead of the drawer's own buttons — same stacking-
+     context class of bug as the header/omnibar fix above. Bumping .c2-body's
+     z-index only while the drawer is open (scoped via the existing
+     .c2.pulse-open hook) fixes it without touching desktop layout at all. */
+  .c2.pulse-open .c2-body { position: relative; z-index: 32; }
   .c2-pulse {
     position: absolute; z-index: 36; top: 0; bottom: 0; left: 0; width: min(320px, 88vw);
     padding-bottom: calc(16px + env(safe-area-inset-bottom));

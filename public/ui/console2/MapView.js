@@ -4,9 +4,9 @@
 // stream chain; the longest blocking path (critical chain) is always emphasized.
 import { html } from 'htm/preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { store, selectIssue, effStatus } from '../store.js';
+import { store, selectIssue } from '../store.js';
 import { graphLayout } from './derive.js';
-import { TYPE_GLYPH } from './ui.js';
+import { TYPE_GLYPH, glyphStatus, STATUS_GLYPH_CHAR, STATUS_GLYPH_LABEL } from './ui.js';
 
 const NODE_W = 168, NODE_H = 54;
 const ZOOM_MIN = 0.3, ZOOM_MAX = 2.4;
@@ -126,7 +126,12 @@ export function MapView() {
   };
 
   const node = (n) => {
-    const s = effStatus(n.issue);
+    // Status determines both the node's outline color (existing .c2-node.st-*
+    // rules) AND a shape-distinct glyph in the top-right corner (colorblind
+    // safety — never color alone). glyphStatus splits effStatus's plain
+    // "open" into ready/deferred so nodes actually get distinguished; closed
+    // issues never reach here (graphLayout only lays out non-closed issues).
+    const s = glyphStatus(n.issue);
     const onChain = criticalChain.has(n.id);
     const lit = highlight && highlight.has(n.id);
     const dim = highlight && !lit;
@@ -141,6 +146,7 @@ export function MapView() {
         <text x="12" y="21" class="c2-node-glyph">${TYPE_GLYPH[n.issue.issue_type] || '●'}</text>
         <text x="30" y="21" class="c2-node-id">${n.id}</text>
         <text x="12" y="39" class="c2-node-title">${(n.issue.title || '').slice(0, 22)}</text>
+        <text x=${w - 16} y="15" class=${'c2-node-mark st-' + s}>${STATUS_GLYPH_CHAR[s] || STATUS_GLYPH_CHAR.open}<title>${STATUS_GLYPH_LABEL[s] || s}</title></text>
       </g>`;
   };
 
