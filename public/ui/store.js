@@ -1,0 +1,377 @@
+// store.js — global application state as signals plus the actions that mutate
+// it. Everything reactive lives here; components read signals and call actions.
+
+import { signal, computed } from '@preact/signals';
+import { apiGet, apiGetRaw, apiPost, AuthError } from './api.js';
+
+const lsGet = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* ignore */ } };
+
+export const store = {
+  // routing
+  route: signal(parseHash()),
+
+  // meta / mode
+  mode: signal('hub'),
+  meta: signal(null),            // hub-root or project meta
+  projects: signal({}),          // hub registry
+  projectId: signal(null),
+
+  // issues
+  issues: signal([]),
+  issuesLoading: signal(false),
+  issuesError: signal(null),
+  generatedAt: signal(null),
+
+  // filters + view controls
+  filters: signal({ status: [], priority: [], type: [], label: [] }),
+  search: signal(''),
+  groupEpic: signal(true),
+  readyOnly: signal(false),
+  sort: signal({ key: 'priority', dir: 1 }),
+  selectedId: signal(null),
+  collapsedIssueGroups: signal(new Set(lsGet('bd_issue_groups_collapsed', []))),
+
+  // comments (per selected issue)
+  comments: signal([]),
+  commentsLoading: signal(false),
+
+  // docs
+  docs: signal([]),
+  docsLoading: signal(false),
+  docFilter: signal(''),
+  selectedDocPath: signal(null),
+  docContent: signal(null),
+  docLoading: signal(false),
+  collapsedDocGroups: signal(new Set(lsGet('bd_docs_collapsed', []))),
+
+  // theme
+  themePreset: signal(localStorage.getItem('bd_theme_preset') || 'default'),
+  themeScheme: signal(localStorage.getItem('bd_theme_scheme') || 'auto'),
+
+  // ui chrome
+  toasts: signal([]),
+  tokenDialogOpen: signal(false),
+  quickOpen: signal(false),
+  mobileFiltersOpen: signal(false),
+};
+
+// ---------------------------------------------------------------------------
+// Derived issue graph helpers (pure over the current issues list)
+// ---------------------------------------------------------------------------
+export const byId = computed(() => {
+  const m = new Map();
+  for (const i of store.issues.value) m.set(i.id, i);
+  return m;
+});
+
+export function parentOf(issue) {
+  const p = (issue.dependencies || []).find((d) => d.type === 'parent-child');
+  return p ? p.depends_on_id : null;
+}
+export function blockersOf(issue) {
+  const out = new Set();
+  for (const b of store.issues.value) {
+    if (b.id === issue.id) continue;
+    if ((b.dependencies || []).some((d) => d.type === 'blocks' && d.depends_on_id === issue.id)) out.add(b.id);
+  }
+  for (const d of issue.dependencies || []) {
+    if (d.type === 'depends') out.add(d.depends_on_id);
+  }
+  return [...out];
+}
+export function openBlockersOf(issue) {
+  const m = byId.value;
+  return blockersOf(issue).filter((id) => { const b = m.get(id); return b && b.status !== 'closed'; });
+}
+export function effStatus(issue) {
+  if (issue.status === 'open' && openBlockersOf(issue).length > 0) return 'blocked';
+  return issue.status;
+}
+export function isReady(issue) {
+  return issue.status === 'open' && openBlockersOf(issue).length === 0;
+}
+export function childrenOf(id) {
+  return store.issues.value.filter((i) => parentOf(i) === id);
+}
+export function blocksList(id) {
+  return store.issues.value.filter((i) => blockersOf(i).includes(id));
+}
+
+export const PRI_LABEL = ['P0', 'P1', 'P2', 'P3', 'P4'];
+const STATUS_ORDER = { in_progress: 0, blocked: 1, open: 2, closed: 3 };
+
+// ---------------------------------------------------------------------------
+// Filtering / sorting / grouping — a single computed feeding the list.
+// ---------------------------------------------------------------------------
+function passesFilters(i) {
+  const f = store.filters.value;
+  if (f.status.length && !f.status.includes(effStatus(i))) return false;
+  if (f.priority.length && !f.priority.includes(i.priority)) return false;
+  if (f.type.length && !f.type.includes(i.issue_type)) return false;
+  if (f.label.length && !(i.labels || []).some((l) => f.label.includes(l))) return false;
+  if (store.readyOnly.value && !isReady(i)) return false;
+  const q = store.search.value.trim().toLowerCase();
+  if (q && !(`${i.id} ${i.title} ${i.description || ''}`.toLowerCase().includes(q))) return false;
+  return true;
+}
+function sortIssues(list) {
+  const { key, dir } = store.sort.value;
+  return list.slice().sort((a, b) => {
+    let av, bv;
+    if (key === 'status') { av = STATUS_ORDER[effStatus(a)]; bv = STATUS_ORDER[effStatus(b)]; }
+    else if (key === 'priority') { av = a.priority; bv = b.priority; }
+    else { av = a[key] || ''; bv = b[key] || ''; }
+    if (av < bv) return -dir;
+    if (av > bv) return dir;
+    return a.id.localeCompare(b.id);
+  });
+}
+
+// Produces a flat list of render rows: {kind:'group'|'issue', ...}
+export const listRows = computed(() => {
+  const shown = store.issues.value.filter(passesFilters);
+  if (!store.groupEpic.value) {
+    return sortIssues(shown).map((i) => ({ kind: 'issue', issue: i }));
+  }
+  const rows = [];
+  const collapsed = store.collapsedIssueGroups.value;
+  const childMap = new Map();
+  for (const i of shown) {
+    const p = parentOf(i);
+    if (p) { if (!childMap.has(p)) childMap.set(p, []); childMap.get(p).push(i); }
+  }
+  const rendered = new Set();
+  const epics = sortIssues(shown.filter((i) => i.issue_type === 'epic'));
+  for (const e of epics) {
+    const kids = sortIssues(childMap.get(e.id) || []);
+    const key = 'epic:' + e.id;
+    rows.push({ kind: 'group', key, title: e.title, epic: e, count: kids.length });
+    rendered.add(e.id);
+    if (!collapsed.has(key)) for (const k of kids) { rows.push({ kind: 'issue', issue: k, indent: true }); rendered.add(k.id); }
+  }
+  const orphans = sortIssues(shown.filter((i) => !rendered.has(i.id) && !parentOf(i) && i.issue_type !== 'epic'));
+  if (orphans.length) {
+    const key = 'standalone';
+    rows.push({ kind: 'group', key, title: 'Standalone', count: orphans.length });
+    if (!collapsed.has(key)) for (const o of orphans) { rows.push({ kind: 'issue', issue: o }); rendered.add(o.id); }
+  }
+  const leftover = sortIssues(shown.filter((i) => !rendered.has(i.id)));
+  for (const o of leftover) rows.push({ kind: 'issue', issue: o });
+  return rows;
+});
+
+export const visibleIssues = computed(() => listRows.value.filter((r) => r.kind === 'issue').map((r) => r.issue));
+
+// Facet counts for filter chips.
+export const facets = computed(() => {
+  const count = (fn) => {
+    const m = new Map();
+    for (const i of store.issues.value) for (const v of [].concat(fn(i))) { if (v == null) continue; m.set(v, (m.get(v) || 0) + 1); }
+    return m;
+  };
+  return {
+    status: count((i) => effStatus(i)),
+    priority: count((i) => i.priority),
+    type: count((i) => i.issue_type),
+    label: count((i) => i.labels || []),
+  };
+});
+
+export const tally = computed(() => {
+  const t = { open: 0, in_progress: 0, blocked: 0, closed: 0 };
+  for (const i of store.issues.value) { const s = effStatus(i); if (t[s] != null) t[s]++; }
+  return t;
+});
+
+// ---------------------------------------------------------------------------
+// Routing
+// ---------------------------------------------------------------------------
+export function parseHash() {
+  const h = (location.hash || '').replace(/^#/, '');
+  const parts = h.split('/').filter(Boolean); // ['p','id','docs']
+  if (parts[0] === 'p' && parts[1]) {
+    return { view: 'project', projectId: decodeURIComponent(parts[1]), tab: parts[2] === 'docs' ? 'docs' : 'issues' };
+  }
+  return { view: 'hub' };
+}
+export function navigate(hash) { if (location.hash !== hash) location.hash = hash; }
+
+// ---------------------------------------------------------------------------
+// Toasts
+// ---------------------------------------------------------------------------
+let toastSeq = 0;
+export function toast(message, kind = 'ok', timeout = 3200) {
+  const id = ++toastSeq;
+  store.toasts.value = [...store.toasts.value, { id, message, kind }];
+  if (timeout) setTimeout(() => dismissToast(id), timeout);
+  return id;
+}
+export function dismissToast(id) {
+  store.toasts.value = store.toasts.value.filter((t) => t.id !== id);
+}
+
+// ---------------------------------------------------------------------------
+// Filter actions
+// ---------------------------------------------------------------------------
+export function toggleFilter(kind, value) {
+  const f = store.filters.value;
+  const has = f[kind].includes(value);
+  store.filters.value = { ...f, [kind]: has ? f[kind].filter((v) => v !== value) : [...f[kind], value] };
+}
+export function clearFilters() {
+  store.filters.value = { status: [], priority: [], type: [], label: [] };
+  store.search.value = '';
+  store.readyOnly.value = false;
+}
+export function setSort(key) {
+  const s = store.sort.value;
+  store.sort.value = { key, dir: s.key === key ? -s.dir : 1 };
+}
+export function toggleIssueGroup(key) {
+  const set = new Set(store.collapsedIssueGroups.value);
+  set.has(key) ? set.delete(key) : set.add(key);
+  store.collapsedIssueGroups.value = set;
+  lsSet('bd_issue_groups_collapsed', [...set]);
+}
+export function toggleDocGroup(name) {
+  const set = new Set(store.collapsedDocGroups.value);
+  set.has(name) ? set.delete(name) : set.add(name);
+  store.collapsedDocGroups.value = set;
+  lsSet('bd_docs_collapsed', [...set]);
+}
+
+// ---------------------------------------------------------------------------
+// Data loading
+// ---------------------------------------------------------------------------
+export async function loadBootMeta() {
+  try {
+    const m = await apiGetRaw('/api/meta');
+    store.mode.value = m.mode || 'hub';
+    store.meta.value = m;
+  } catch (e) { /* server unreachable */ }
+}
+
+export async function loadHub() {
+  try {
+    const data = await apiGetRaw('/api/projects');
+    store.projects.value = data.projects || {};
+  } catch (e) { toast('Failed to load projects: ' + e.message, 'err'); }
+}
+
+// Per-project card stats for the hub.
+export async function loadProjectStats(id) {
+  const data = await apiGetRaw('/api/p/' + encodeURIComponent(id) + '/issues');
+  const issues = data.issues || [];
+  const t = { open: 0, in_progress: 0, blocked: 0, closed: 0, total: issues.length };
+  const idset = new Map(issues.map((i) => [i.id, i]));
+  for (const i of issues) {
+    let s = i.status;
+    if (s === 'open') {
+      const blocked = issues.some((b) => b.status !== 'closed' && (
+        (b.dependencies || []).some((d) => d.type === 'blocks' && d.depends_on_id === i.id) ||
+        (i.dependencies || []).some((d) => d.type === 'depends' && d.depends_on_id === b.id)
+      ));
+      if (blocked) s = 'blocked';
+    }
+    if (t[s] != null) t[s]++;
+  }
+  return t;
+}
+
+export async function loadProjectMeta() {
+  try {
+    const m = await apiGet('/api/meta');
+    store.meta.value = m;
+  } catch (e) { /* keep prior meta */ }
+}
+
+export async function loadIssues({ force = false } = {}) {
+  store.issuesLoading.value = true;
+  store.issuesError.value = null;
+  try {
+    const data = await apiGet('/api/issues' + (force ? '?refresh=1' : ''));
+    store.issues.value = data.issues || [];
+    store.generatedAt.value = data.generatedAt;
+    if (store.meta.value) store.meta.value = { ...store.meta.value, export: data.export };
+  } catch (e) {
+    store.issuesError.value = e.message;
+    toast(e.message, 'err');
+  } finally {
+    store.issuesLoading.value = false;
+  }
+}
+
+export async function loadDocs() {
+  store.docsLoading.value = true;
+  try {
+    const data = await apiGet('/api/docs');
+    store.docs.value = data.docs || [];
+  } catch (e) { toast('Failed to load docs: ' + e.message, 'err'); }
+  finally { store.docsLoading.value = false; }
+}
+
+export async function openDoc(path) {
+  store.selectedDocPath.value = path;
+  store.docLoading.value = true;
+  store.docContent.value = null;
+  try {
+    const data = await apiGet('/api/doc?path=' + encodeURIComponent(path));
+    store.docContent.value = data.content || '';
+  } catch (e) { store.docContent.value = null; toast('Could not load doc', 'err'); }
+  finally { store.docLoading.value = false; }
+}
+
+// ---------------------------------------------------------------------------
+// Issue selection + comments
+// ---------------------------------------------------------------------------
+export async function selectIssue(id) {
+  store.selectedId.value = id;
+  if (!id) return;
+  store.comments.value = [];
+  store.commentsLoading.value = true;
+  try {
+    const data = await apiGet('/api/comments?id=' + encodeURIComponent(id));
+    if (store.selectedId.value === id) store.comments.value = data.comments || [];
+  } catch { /* ignore */ }
+  finally { store.commentsLoading.value = false; }
+}
+export function selectAdjacent(delta) {
+  const list = visibleIssues.value;
+  if (!list.length) return;
+  const idx = list.findIndex((i) => i.id === store.selectedId.value);
+  const next = idx === -1 ? 0 : Math.min(Math.max(idx + delta, 0), list.length - 1);
+  selectIssue(list[next].id);
+}
+
+// ---------------------------------------------------------------------------
+// Writes
+// ---------------------------------------------------------------------------
+function withAuth(fn) {
+  return fn().catch((e) => {
+    if (e instanceof AuthError) { store.tokenDialogOpen.value = true; toast('A write token is required.', 'err'); }
+    throw e;
+  });
+}
+
+export async function addComment(id, text) {
+  const data = await withAuth(() => apiPost('/api/comment', { id, text }));
+  store.comments.value = data.comments || [];
+  toast('Comment added to ' + id);
+}
+
+export async function quickCapture(body) {
+  const data = await withAuth(() => apiPost('/api/quick', body));
+  await loadIssues();
+  if (data.id) await selectIssue(data.id);
+  toast('Captured ' + data.id);
+  return data.id;
+}
+
+export async function editIssue(payload, successMessage) {
+  const id = payload.id;
+  await withAuth(() => apiPost('/api/edit', payload));
+  await loadIssues();
+  if (id) await selectIssue(id);
+  if (successMessage) toast(successMessage);
+}
