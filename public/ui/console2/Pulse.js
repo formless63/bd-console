@@ -6,7 +6,30 @@ import { c2 } from './state.js';
 import { pulse, AGE_AMBER_H, AGE_RED_H, ageMs } from './derive.js';
 import { Corners, PRI_LABEL } from './ui.js';
 
-function focus(lane) { c2.canvasMode.value = 'flow'; c2.laneFocus.value = lane; }
+function focus(lane) { c2.canvasMode.value = 'flow'; c2.laneFocus.value = lane; c2.pulseOpen.value = false; }
+
+// Compact always-visible summary strip for narrow viewports — the Pulse rail
+// itself moves behind a drawer there, but a 4-stat readout stays inline so
+// "see pulse summary" doesn't require an extra tap. Same tap targets jump
+// straight to the matching Flow lane, same as the full rail's stat tiles.
+export function PulseStrip() {
+  const p = pulse.value;
+  return html`
+    <div class="c2-pulse-strip" aria-hidden=${false}>
+      <button class="c2-pulse-strip-item tone-green" onClick=${() => focus('ready')}>
+        <span class="c2-pulse-strip-v">${p.ready}</span><span class="c2-pulse-strip-k">Ready</span>
+      </button>
+      <button class="c2-pulse-strip-item tone-accent" onClick=${() => focus('in_progress')}>
+        <span class="c2-pulse-strip-v">${p.inProgress.length}</span><span class="c2-pulse-strip-k">Active</span>
+      </button>
+      <button class="c2-pulse-strip-item tone-red" onClick=${() => focus('blocked')}>
+        <span class="c2-pulse-strip-v">${p.blocked.length}</span><span class="c2-pulse-strip-k">Blocked</span>
+      </button>
+      <button class="c2-pulse-strip-item tone-purple" onClick=${() => focus('triage')}>
+        <span class="c2-pulse-strip-v">${p.triage}</span><span class="c2-pulse-strip-k">Triage</span>
+      </button>
+    </div>`;
+}
 
 function Sparkline({ data }) {
   const w = 132, h = 34, max = Math.max(1, ...data);
@@ -57,7 +80,10 @@ export function Pulse() {
 
   return html`
     <aside class="c2-pulse">
-      <div class="c2-pulse-head"><span class="c2-hud-label">Pulse</span></div>
+      <div class="c2-pulse-head">
+        <span class="c2-hud-label">Pulse</span>
+        <button class="c2-pulse-close" aria-label="Close pulse rail" title="Close" onClick=${() => (c2.pulseOpen.value = false)}>✕</button>
+      </div>
 
       <div class="c2-stat-grid">
         ${Stat({ label: 'Ready', value: p.ready, tone: 'green', onClick: () => focus('ready') })}

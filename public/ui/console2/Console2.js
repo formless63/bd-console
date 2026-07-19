@@ -24,7 +24,7 @@ effect(() => {
 import { c2 } from './state.js';
 import { pulse } from './derive.js';
 import { Omnibar } from './Omnibar.js';
-import { Pulse } from './Pulse.js';
+import { Pulse, PulseStrip } from './Pulse.js';
 import { Flow } from './Flow.js';
 import { MapView } from './MapView.js';
 import { Docs2 } from './Docs2.js';
@@ -64,8 +64,12 @@ function Header() {
         <${Omnibar} />
         <div class="c2-header-right">
           <span class=${'c2-sync sync-' + syncState} title=${'Issue export: ' + syncState}>${syncState}</span>
-          <button class="c2-pulse-toggle" onClick=${() => (c2.pulseOpen.value = !c2.pulseOpen.value)}>Pulse</button>
-          <a class="c2-classic" href=${'#/p/' + encodeURIComponent(pid || '')} title="Open the classic project view">classic view →</a>
+          <button class="c2-pulse-toggle" aria-label="Toggle pulse rail" title="Pulse" onClick=${() => (c2.pulseOpen.value = !c2.pulseOpen.value)}>
+            <span class="c2-icon" aria-hidden="true">◈</span><span class="c2-btn-label">Pulse</span>
+          </button>
+          <a class="c2-classic" href=${'#/p/' + encodeURIComponent(pid || '')} title="Open the classic project view">
+            <span class="c2-btn-label">classic view </span><span class="c2-icon" aria-hidden="true">→</span>
+          </a>
         </div>
       </div>
       <div class="c2-header-echo">
@@ -119,6 +123,7 @@ export function Console2() {
   return html`
     <div class=${'c2' + (detailOpen ? ' detail-open' : '') + (c2.pulseOpen.value ? ' pulse-open' : '')} data-c2>
       <${Header} />
+      <${PulseStrip} />
       <div class="c2-body">
         <${Pulse} />
         <${Canvas} />

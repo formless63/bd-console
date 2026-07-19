@@ -162,6 +162,11 @@
 .c2-pulse { display: flex; flex-direction: column; gap: 14px; padding: 16px 14px; overflow-y: auto;
   border-right: 1px solid var(--c2-line); background: color-mix(in srgb, var(--surface) 30%, transparent); }
 .c2-pulse-head { margin-bottom: -4px; }
+.c2-pulse-close { display: none; }
+/* Compact 4-up summary strip — lives above the body grid, always mounted but
+   only shown at the mobile breakpoint (the full Pulse rail is visible inline
+   on desktop already, so a second summary there would be redundant). */
+.c2-pulse-strip { display: none; }
 .c2-stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .c2-stat { position: relative; display: flex; flex-direction: column; gap: 2px; align-items: flex-start;
   padding: 12px 12px 10px; background: var(--c2-glass); border: 1px solid var(--c2-line);
@@ -313,16 +318,19 @@
 /* ==========================================================================
    Map (SVG DAG)
    ========================================================================== */
-.c2-map { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.c2-map { position: relative; display: flex; flex-direction: column; min-height: 0; height: 100%; }
 .c2-map-toolbar { display: flex; align-items: center; gap: 12px; padding: 8px 16px; }
 .c2-map-legend { font-size: 11px; color: var(--text-faint); display: inline-flex; align-items: center; gap: 6px; }
 .c2-map-legend .lg { width: 14px; height: 2px; display: inline-block; }
 .c2-map-legend .lg.crit { background: var(--c2-synergy); }
-.c2-map-svg { flex: 1; min-height: 0; width: 100%; cursor: grab; background:
+.c2-map-svg { flex: 1; min-height: 0; width: 100%; cursor: grab; touch-action: none; background:
   repeating-linear-gradient(0deg, transparent, transparent 31px, color-mix(in srgb, var(--c2-line) 40%, transparent) 32px),
   repeating-linear-gradient(90deg, transparent, transparent 31px, color-mix(in srgb, var(--c2-line) 40%, transparent) 32px); }
 .c2-map-svg:active { cursor: grabbing; }
 .c2-map-empty { padding: 40px; text-align: center; color: var(--text-faint); }
+/* Touch pinch/pan fallback buttons — hidden on desktop (mouse wheel + drag
+   already cover it there), shown at the mobile breakpoint below. */
+.c2-map-zoombtns { display: none; }
 
 .c2-edge { stroke: var(--c2-line-2); stroke-width: 1.4; fill: none; opacity: 0.8; transition: opacity 0.15s; }
 .c2-edge.dim { opacity: 0.12; }
@@ -366,6 +374,15 @@
   font-family: var(--font-display); font-size: 12px; font-weight: 600; padding: 6px 12px;
   background: var(--c2-synergy); color: #fff; border: 0; border-radius: 8px; cursor: pointer;
   box-shadow: 0 4px 14px color-mix(in srgb, var(--c2-synergy) 45%, transparent); animation: c2clifade 0.15s var(--ease); }
+
+/* Manual promote fallback (touch-selection is fiddly on phones) — its trigger
+   button is mobile-only (see responsive block), so this only ever renders
+   when a user on a small viewport opens it; no desktop visual footprint. */
+.c2-promote-form { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; padding: 12px;
+  background: color-mix(in srgb, var(--c2-synergy) 8%, var(--c2-glass-3)); backdrop-filter: var(--c2-blur);
+  border: 1px solid color-mix(in srgb, var(--c2-synergy) 34%, var(--c2-line-2)); border-radius: var(--c2-r-card); }
+.c2-promote-form .c2-edit-row { justify-content: space-between; }
+.c2-doctree-close, .c2-doctree-toggle, .c2-promote-toggle { display: none; }
 
 /* Markdown */
 .c2-md { font-family: var(--font-body); font-size: 14px; line-height: 1.65; color: var(--text); max-width: 72ch; }
@@ -433,21 +450,143 @@
 .c2-boot-err { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); z-index: 50; padding: 8px 14px; background: var(--elevated); border: 1px solid var(--red); border-radius: 8px; font-size: 12px; }
 
 /* ==========================================================================
-   Responsive — rails collapse to drawers/tabs at narrow widths
+   Responsive — everything above this line renders identically regardless of
+   viewport (desktop, verified at 1280px, is untouched by this query). At
+   <=768px the three-column grid collapses to one column, the Pulse rail and
+   Doc tree become off-canvas drawers, Detail becomes a full-screen sheet,
+   Flow lanes become horizontally swipeable scroll-snap columns, and every
+   interactive control grows to a >=44px tap target.
    ========================================================================== */
-@media (max-width: 900px) {
-  .c2-header-top { flex-wrap: wrap; }
+@media (max-width: 768px) {
+  html, body { overflow-x: hidden; }
+
+  /* ---- header: wrap + condense to icon + short label ---------------------- */
+  .c2-header { padding: calc(10px + env(safe-area-inset-top)) 12px 8px; gap: 6px; }
+  .c2-header-top { flex-wrap: wrap; gap: 8px; }
+  .c2-brand { min-width: 0; flex: 1 1 auto; }
+  .c2-brand-name { max-width: 46vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .c2-brand-sub { display: none; }
   .c2-omni { order: 3; flex-basis: 100%; max-width: none; }
-  .c2-brand { min-width: 0; }
-}
-@media (max-width: 720px) {
-  .c2-body { grid-template-columns: 1fr; }
-  .c2-pulse { position: absolute; z-index: 36; top: 0; bottom: 0; left: 0; width: min(300px, 88vw);
-    transform: translateX(-102%); transition: transform 0.2s var(--ease); background: var(--c2-glass-3); backdrop-filter: var(--c2-blur); }
+  .c2-header-right { gap: 6px; }
+  .c2-classic { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; padding: 6px 10px; }
+  .c2-classic .c2-btn-label { display: none; }
+  .c2-pulse-toggle { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 6px 12px; }
+  .c2-sync { display: inline-flex; align-items: center; min-height: 44px; padding: 6px 8px; }
+  .c2-header-echo { flex-wrap: wrap; row-gap: 4px; }
+
+  /* ---- pulse: compact inline strip stays visible; full rail is a drawer -- */
+  .c2 { grid-template-rows: auto auto minmax(0, 1fr); }
+  .c2-pulse-strip {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
+    padding: 8px 12px; border-bottom: 1px solid var(--c2-line);
+    background: color-mix(in srgb, var(--surface) 40%, transparent); backdrop-filter: var(--c2-blur);
+  }
+  .c2-pulse-strip-item {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+    min-height: 44px; padding: 6px 4px; background: var(--c2-glass); border: 1px solid var(--c2-line);
+    border-radius: 10px; cursor: pointer; color: var(--text);
+  }
+  .c2-pulse-strip-v { font-family: var(--font-display); font-size: 16px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+  .c2-pulse-strip-k { font-family: var(--font-display); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-faint); }
+  .c2-pulse-strip-item.tone-green .c2-pulse-strip-v { color: var(--green); }
+  .c2-pulse-strip-item.tone-accent .c2-pulse-strip-v { color: var(--accent); }
+  .c2-pulse-strip-item.tone-red .c2-pulse-strip-v { color: var(--red); }
+  .c2-pulse-strip-item.tone-purple .c2-pulse-strip-v { color: var(--purple); }
+
+  .c2-body { grid-template-columns: minmax(0, 1fr); }
+  .c2-pulse {
+    position: absolute; z-index: 36; top: 0; bottom: 0; left: 0; width: min(320px, 88vw);
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
+    padding-left: calc(14px + env(safe-area-inset-left));
+    transform: translateX(-102%); transition: transform 0.2s var(--ease);
+    background: var(--c2-glass-3); backdrop-filter: var(--c2-blur); box-shadow: var(--shadow-lg);
+  }
   .c2.pulse-open .c2-pulse { transform: none; }
-  .c2-pulse-toggle { display: inline-block; font-family: var(--font-display); font-size: 11px; padding: 5px 10px; background: var(--surface); border: 1px solid var(--c2-line); color: var(--text-dim); border-radius: 6px; cursor: pointer; }
+  .c2-pulse-head { display: flex; align-items: center; justify-content: space-between; }
+  .c2-pulse-close {
+    display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px;
+    background: transparent; border: 1px solid var(--c2-line); color: var(--text-dim); border-radius: 8px; cursor: pointer;
+  }
   .c2-scrim.mobile { display: block; }
-  .c2-detail { width: 100vw; }
-  .c2-docs { grid-template-columns: 1fr; }
-  .c2-doctree { position: absolute; z-index: 5; background: var(--c2-glass-3); backdrop-filter: var(--c2-blur); max-width: 240px; }
+
+  /* ---- canvas: stop every flex/grid child from forcing horizontal overflow */
+  .c2-canvas, .c2-canvas-body, .c2-canvas-body > *, .c2-flow, .c2-map, .c2-docs, .c2-doc-main { min-width: 0; }
+  .c2-segmented { margin: 10px 12px 4px; }
+  .c2-seg { padding: 8px 14px; min-height: 44px; }
+
+  /* ---- flow lanes: horizontally swipeable, scroll-snapped columns -------- */
+  .c2-lanes {
+    grid-auto-columns: minmax(86vw, 1fr); gap: 10px; padding: 0 12px 14px;
+    scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch;
+  }
+  .c2-lane { min-width: 0; scroll-snap-align: start; scroll-snap-stop: always; }
+  .c2-epicrows { padding: 0 12px 14px; }
+  .c2-epicrow-body { grid-template-columns: 1fr; }
+  /* Hover-only quick actions are unreachable on touch. Tap opens the full
+     Detail sheet instead, which carries the same claim/start/close/defer
+     actions in its Edit field — the sanctioned "tap = detail" pattern. */
+  .c2-card-actions { display: none !important; }
+  .c2-card { padding: 12px 13px; }
+
+  /* ---- map: fills the viewport width; zoom buttons as a touch fallback --- */
+  .c2-map-toolbar { padding: 8px 12px; flex-wrap: wrap; row-gap: 6px; }
+  .c2-map-legend { display: none; }
+  .c2-map-zoombtns {
+    display: flex; flex-direction: column; gap: 8px; position: absolute; z-index: 5;
+    right: calc(12px + env(safe-area-inset-right)); bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+  .c2-map-zoombtn {
+    width: 44px; height: 44px; border-radius: 10px; font-size: 20px; line-height: 1;
+    background: var(--c2-glass-3); backdrop-filter: var(--c2-blur); border: 1px solid var(--c2-line-2);
+    color: var(--text); cursor: pointer; box-shadow: inset 0 1px 0 var(--c2-rim);
+  }
+
+  /* ---- docs: tree becomes a drawer/picker; editor stays full-width ------- */
+  .c2-docs { grid-template-columns: minmax(0, 1fr); }
+  .c2-doctree {
+    position: absolute; z-index: 36; top: 0; bottom: 0; left: 0; width: min(300px, 86vw);
+    max-width: none; transform: translateX(-102%); transition: transform 0.2s var(--ease);
+    background: var(--c2-glass-3); backdrop-filter: var(--c2-blur); box-shadow: var(--shadow-lg);
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
+  }
+  .c2-doctree.open { transform: none; }
+  .c2-doctree-bar { display: flex; align-items: center; gap: 8px; }
+  .c2-doctree-close {
+    display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; flex: none;
+    background: transparent; border: 1px solid var(--c2-line); color: var(--text-dim); border-radius: 8px; cursor: pointer;
+  }
+  .c2-doc-item { min-height: 44px; justify-content: center; }
+  .c2-doctree-toggle, .c2-promote-toggle { display: inline-flex; align-items: center; min-height: 44px; }
+  .c2-doc-bar { flex-wrap: wrap; row-gap: 6px; }
+  .c2-doc-path { min-width: 100%; order: 3; }
+  .c2-doc-reader, .c2-doc-textarea { padding: 14px 16px; }
+  .c2-doc-editor:has(.c2-doc-livepreview) { grid-template-columns: 1fr; }
+  .c2-doc-livepreview { display: none; }
+
+  /* ---- detail: full-screen sheet with an obviously large close affordance  */
+  .c2-detail { width: 100vw; padding-bottom: env(safe-area-inset-bottom); }
+  .c2-detail-inner { padding: calc(12px + env(safe-area-inset-top)) 16px calc(40px + env(safe-area-inset-bottom)); }
+  .c2-detail-close { width: 44px; height: 44px; }
+  .c2-detail-title { font-size: 19px; }
+
+  /* ---- omnibar: full-width row, top-anchored suggestions, tappable rows -- */
+  .c2-omni-drop { max-height: 60vh; }
+  .c2-omni-row { min-height: 44px; padding: 10px; }
+  .c2-omni-field { padding: 10px 14px; }
+  .c2-omni-input { min-height: 44px; }
+
+  /* ---- generic >=44px tap-target floor for every remaining small control - */
+  .c2-mini, .c2-chip.removable, .c2-age-row, .c2-pribar, .c2-stat, .c2-rel,
+  .c2-cli-copy, .c2-cli-x, .c2-edit-input, .c2-docfilter, .c2-omni-mode, .c2-toggle {
+    min-height: 44px;
+  }
+  .c2-mini, .c2-chip.removable { padding: 8px 12px; }
+  .c2-mini { min-width: 44px; }
+  .c2-pribar { grid-template-columns: 30px 1fr 26px; }
+}
+
+@media (max-width: 400px) {
+  .c2-brand-name { max-width: 34vw; }
+  .c2-lanes { grid-auto-columns: minmax(82vw, 1fr); }
+  .c2-pulse-strip { grid-template-columns: repeat(2, 1fr); }
 }

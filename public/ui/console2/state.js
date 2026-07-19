@@ -12,6 +12,9 @@ export const c2 = {
   epicGroup: signal(false),      // Flow: regroup lanes into epic rows
   laneFocus: signal(null),       // Pulse click → focus a lane/status bucket
 
+  docTreeOpen: signal(false),    // mobile: doc tree shown as a drawer
+  promoteOpen: signal(false),    // mobile: manual "promote…" excerpt form visible
+
   omniOpen: signal(false),       // command palette / omnibar dropdown visible
   omniValue: signal(''),
   lastCli: signal(null),         // { cmd, label } — teaches the terminal equivalent

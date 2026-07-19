@@ -3,12 +3,16 @@
 // wheel+drag transform, no libraries. Hovering a node lights its full up/down
 // stream chain; the longest blocking path (critical chain) is always emphasized.
 import { html } from 'htm/preact';
-import { useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { store, selectIssue, effStatus } from '../store.js';
 import { graphLayout } from './derive.js';
 import { TYPE_GLYPH } from './ui.js';
 
 const NODE_W = 168, NODE_H = 54;
+const ZOOM_MIN = 0.3, ZOOM_MAX = 2.4;
+
+function dist(t0, t1) { return Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY); }
+function mid(t0, t1) { return { x: (t0.clientX + t1.clientX) / 2, y: (t0.clientY + t1.clientY) / 2 }; }
 
 function chainFrom(id, edges) {
   // gather up + downstream reachable from id
@@ -37,6 +41,7 @@ export function MapView() {
   const [view, setView] = useState({ x: 0, y: 0, k: 1 });
   const [hover, setHover] = useState(null);
   const drag = useRef(null);
+  const pinch = useRef(null);
   const svgRef = useRef(null);
 
   const highlight = hover ? chainFrom(hover, edges) : null;
@@ -44,7 +49,7 @@ export function MapView() {
   const onWheel = (e) => {
     e.preventDefault();
     const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-    setView((v) => ({ ...v, k: Math.min(2.4, Math.max(0.3, v.k * factor)) }));
+    setView((v) => ({ ...v, k: Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, v.k * factor)) }));
   };
   const onDown = (e) => { drag.current = { x: e.clientX, y: e.clientY, ox: view.x, oy: view.y }; };
   const onMove = (e) => {
@@ -53,6 +58,57 @@ export function MapView() {
   };
   const onUp = () => { drag.current = null; };
   const reset = () => setView({ x: 0, y: 0, k: 1 });
+  const zoomBy = (factor) => setView((v) => ({ ...v, k: Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, v.k * factor)) }));
+
+  // Touch: single-finger drag pans, two-finger pinch zooms. Registered via a
+  // manual effect (not onTouchX props) so we can pass { passive: false } —
+  // that's required to preventDefault() and stop the page from scrolling
+  // under the gesture; JSX's onTouchMove is passive by default in Preact.
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const touchStart = (e) => {
+      if (e.touches.length === 1) {
+        const t = e.touches[0];
+        drag.current = { x: t.clientX, y: t.clientY, ox: view.x, oy: view.y };
+        pinch.current = null;
+      } else if (e.touches.length === 2) {
+        drag.current = null;
+        pinch.current = { d0: dist(e.touches[0], e.touches[1]), k0: view.k, ox: view.x, oy: view.y, m0: mid(e.touches[0], e.touches[1]) };
+      }
+    };
+    const touchMove = (e) => {
+      if (e.touches.length === 2 && pinch.current) {
+        e.preventDefault();
+        const d1 = dist(e.touches[0], e.touches[1]);
+        const k = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, pinch.current.k0 * (d1 / (pinch.current.d0 || 1))));
+        setView((v) => ({ ...v, k }));
+      } else if (e.touches.length === 1 && drag.current) {
+        e.preventDefault();
+        const t = e.touches[0];
+        setView((v) => ({ ...v, x: drag.current.ox + (t.clientX - drag.current.x), y: drag.current.oy + (t.clientY - drag.current.y) }));
+      }
+    };
+    const touchEnd = (e) => {
+      if (e.touches.length === 0) { drag.current = null; pinch.current = null; }
+      else if (e.touches.length === 1) {
+        // dropped from pinch to single-finger — restart drag baseline cleanly
+        const t = e.touches[0];
+        drag.current = { x: t.clientX, y: t.clientY, ox: view.x, oy: view.y };
+        pinch.current = null;
+      }
+    };
+    el.addEventListener('touchstart', touchStart, { passive: true });
+    el.addEventListener('touchmove', touchMove, { passive: false });
+    el.addEventListener('touchend', touchEnd, { passive: true });
+    el.addEventListener('touchcancel', touchEnd, { passive: true });
+    return () => {
+      el.removeEventListener('touchstart', touchStart);
+      el.removeEventListener('touchmove', touchMove);
+      el.removeEventListener('touchend', touchEnd);
+      el.removeEventListener('touchcancel', touchEnd);
+    };
+  }, [view.x, view.y, view.k]);
 
   if (nodes.length === 0) {
     return html`<div class="c2-map"><div class="c2-map-empty">No open issues to map.</div></div>`;
@@ -94,6 +150,10 @@ export function MapView() {
         <span class="c2-hud-label">Dependency map</span>
         <span class="c2-map-legend"><i class="lg crit"></i> critical chain · scroll to zoom · drag to pan</span>
         <button class="c2-mini" onClick=${reset}>reset view</button>
+      </div>
+      <div class="c2-map-zoombtns">
+        <button class="c2-map-zoombtn" aria-label="Zoom in" onClick=${() => zoomBy(1.25)}>+</button>
+        <button class="c2-map-zoombtn" aria-label="Zoom out" onClick=${() => zoomBy(1 / 1.25)}>−</button>
       </div>
       <svg ref=${svgRef} class="c2-map-svg" onWheel=${onWheel} onMouseDown=${onDown} onMouseMove=${onMove} onMouseUp=${onUp} onMouseLeave=${onUp}>
         <defs>
