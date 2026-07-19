@@ -182,46 +182,33 @@ async function upsertGuideFile(path, createIfMissing, dryRun) {
 }
 
 import { fileURLToPath } from 'node:url';
-import { mkdir } from 'node:fs/promises';
+import { SERVICE_NAME, serviceUnitPath, renderServiceUnit, installAndStartService } from '../lib/systemd.mjs';
 
 // bd-console now runs as a single Global Hub daemon (not one instance per
 // repo), so this installs one shared systemd user service that runs the hub
 // server; the workspace being initialized is registered with that hub
-// separately (see the `add` call in main()).
+// separately (see the `add` call in main()). The actual unit rendering and
+// systemctl orchestration lives in lib/systemd.mjs (shared with `bd-console
+// start`'s persist-by-default path) — this is now a thin delegator that
+// keeps --install-service working.
 async function installSystemService(dryRun) {
   if (process.platform !== 'linux') {
     return { error: 'systemd service installation is only supported on Linux.' };
   }
   const __dirname = dirname(fileURLToPath(import.meta.url));
   const serveJs = resolve(join(__dirname, '..', 'serve.mjs'));
-  const serviceName = 'bd-console.service';
 
-  const unitFile = `[Unit]
-Description=bd-console Global Hub
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=${process.execPath} ${serveJs}
-Restart=on-failure
-RestartSec=3
-
-[Install]
-WantedBy=default.target
-`;
-
-  const systemdDir = join(process.env.HOME, '.config', 'systemd', 'user');
-  const servicePath = join(systemdDir, serviceName);
-  
-  if (!dryRun) {
-    await mkdir(systemdDir, { recursive: true });
-    await writeFile(servicePath, unitFile, 'utf8');
-    const daemonReload = await runCmd('systemctl', ['--user', 'daemon-reload']);
-    if (!daemonReload.ok) return { error: `daemon-reload failed: ${daemonReload.stderr}` };
-    const enableStart = await runCmd('systemctl', ['--user', 'enable', '--now', serviceName]);
-    if (!enableStart.ok) return { error: `enable failed: ${enableStart.stderr}` };
+  if (dryRun) {
+    return {
+      serviceName: SERVICE_NAME,
+      servicePath: serviceUnitPath(),
+      unitText: renderServiceUnit({ execPath: process.execPath, serveEntry: serveJs })
+    };
   }
-  return { serviceName, servicePath };
+
+  const result = await installAndStartService({ execPath: process.execPath, serveEntry: serveJs });
+  if (!result.ok) return { error: `${result.step} failed: ${result.error}` };
+  return { serviceName: SERVICE_NAME, servicePath: result.unitPath };
 }
 
 async function main() {

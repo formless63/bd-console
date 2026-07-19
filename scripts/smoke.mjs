@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import net from 'node:net';
+import { renderServiceUnit } from '../lib/systemd.mjs';
 
 function run(cmd, args, options = {}) {
   return execFileSync(cmd, args, {
@@ -56,7 +57,12 @@ mkdirSync(repoDir, { recursive: true });
 // Isolate the hub registry/config from the real ~/.config/bd-console.
 const env = { ...process.env, BD_CONSOLE_CONFIG_DIR: configDir };
 
+function isPidAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
 let server;
+let daemonPid; // tracked so `finally` can always clean it up, even on assertion failure
 
 try {
   run('git', ['init'], { cwd: repoDir });
@@ -175,6 +181,89 @@ try {
   const unknown = await fetch(`http://127.0.0.1:${port}/api/p/does-not-exist/issues`);
   assert(unknown.status === 404, 'unknown project id should 404');
 
+  // --- daemon lifecycle: `start` always supersedes (Feature 1) --------------
+  // BD_CONSOLE_PERSIST=0 is mandatory here: it forces the plain-spawn path so
+  // this test never touches systemd/systemctl on the real machine.
+  const daemonConfigDir = join(tempRoot, 'daemon-config');
+  mkdirSync(daemonConfigDir, { recursive: true });
+  const daemonEnv = { ...process.env, BD_CONSOLE_CONFIG_DIR: daemonConfigDir, BD_CONSOLE_PERSIST: '0' };
+  const daemonPort = await getPort();
+  const daemonPidPath = join(daemonConfigDir, 'console.pid');
+
+  function runServeCommand(args) {
+    return execFileSync(process.execPath, [serverEntry, ...args, '--host', '127.0.0.1', '--port', String(daemonPort)], {
+      cwd: process.cwd(),
+      env: daemonEnv,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+  }
+
+  runServeCommand(['start']);
+  assert(existsSync(daemonPidPath), 'daemon `start` did not write a pid file');
+  const daemonPid1 = Number(readFileSync(daemonPidPath, 'utf8').trim());
+  daemonPid = daemonPid1;
+  assert(isPidAlive(daemonPid1), 'daemon `start` pid is not alive');
+  const daemonMeta1 = await fetch(`http://127.0.0.1:${daemonPort}/api/meta`).then((r) => r.json());
+  assert(daemonMeta1.mode === 'hub', 'daemon /api/meta should report hub mode');
+  assert(daemonMeta1.pid === daemonPid1, 'hub /api/meta pid did not match the pid file after first start');
+
+  // Running `start` again must supersede — never silently no-op.
+  runServeCommand(['start']);
+  const daemonPid2 = Number(readFileSync(daemonPidPath, 'utf8').trim());
+  daemonPid = daemonPid2;
+  assert(daemonPid2 !== daemonPid1, 'supersede did not replace the running daemon (pid unchanged)');
+  assert(!isPidAlive(daemonPid1), 'previous daemon process is still alive after supersede');
+  assert(isPidAlive(daemonPid2), 'superseding daemon pid is not alive');
+  const daemonMeta2 = await fetch(`http://127.0.0.1:${daemonPort}/api/meta`).then((r) => r.json());
+  assert(daemonMeta2.pid === daemonPid2, 'hub /api/meta pid did not match the pid file after supersede');
+
+  runServeCommand(['stop']);
+  assert(!isPidAlive(daemonPid2), 'daemon still running after `stop`');
+  daemonPid = null;
+
+  console.log(`smoke ok (daemon supersede): ${daemonPid1} -> ${daemonPid2}`);
+
+  // --- systemd unit-file generation (Feature 2) ------------------------------
+  // Pure text generation only — no systemctl calls, nothing installed, safe
+  // to run unconditionally.
+  const unitText = renderServiceUnit({
+    execPath: '/usr/bin/node',
+    serveEntry: '/opt/bd-console/serve.mjs',
+    forwardArgs: ['--port', '4180']
+  });
+  assert(unitText.includes('ExecStart=/usr/bin/node /opt/bd-console/serve.mjs --port 4180'), 'unit file ExecStart mismatch');
+  assert(unitText.includes('Restart=on-failure'), 'unit file missing Restart=on-failure');
+  assert(unitText.includes('WantedBy=default.target'), 'unit file missing WantedBy=default.target');
+  assert(unitText.includes('[Service]') && unitText.includes('[Install]'), 'unit file missing expected sections');
+
+  console.log('smoke ok (systemd unit-file generation)');
+
+  // --- `update --dry-run` (Feature 3) -----------------------------------
+  // Never runs a real update against this working tree — --dry-run only
+  // detects the install flavor and prints the commands it WOULD run.
+  // BD_CONSOLE_SYSTEMD_DIR isolates the read-only systemd unit check that
+  // `update` performs (via daemonStatus) from the real machine's units.
+  const updateSystemdDir = join(tempRoot, 'update-systemd');
+  mkdirSync(updateSystemdDir, { recursive: true });
+  const updateEnv = {
+    ...process.env,
+    BD_CONSOLE_CONFIG_DIR: join(tempRoot, 'update-config'),
+    BD_CONSOLE_SYSTEMD_DIR: updateSystemdDir,
+    BD_CONSOLE_PERSIST: '0'
+  };
+  const dryRunOut = execFileSync(process.execPath, [serverEntry, 'update', '--dry-run'], {
+    cwd: process.cwd(),
+    env: updateEnv,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  assert(dryRunOut.includes('detected flavor: git-clone'), `update --dry-run did not detect git-clone flavor:\n${dryRunOut}`);
+  assert(dryRunOut.includes('pull --ff-only'), `update --dry-run did not print the planned git pull command:\n${dryRunOut}`);
+  assert(dryRunOut.includes('current version:'), `update --dry-run did not print the current version:\n${dryRunOut}`);
+
+  console.log('smoke ok (update --dry-run)');
+
   console.log(`smoke ok: ${seedId}, ${quickRes.id}`);
 } catch (err) {
   console.error(`smoke failed: ${err.message}`);
@@ -183,6 +272,9 @@ try {
   if (server && !server.killed) {
     server.kill('SIGTERM');
     await new Promise((resolveP) => server.once('exit', () => resolveP()));
+  }
+  if (daemonPid && isPidAlive(daemonPid)) {
+    try { process.kill(daemonPid, 'SIGKILL'); } catch { /* already gone */ }
   }
   rmSync(tempRoot, { recursive: true, force: true });
 }
