@@ -651,9 +651,12 @@ try {
   const unitText = renderServiceUnit({
     execPath: '/usr/bin/node',
     serveEntry: '/opt/bd-console/serve.mjs',
-    forwardArgs: ['--port', '4180']
+    forwardArgs: ['--port', '4180'],
+    path: '/usr/bin:/home/user/.local/bin'
   });
   assert(unitText.includes('ExecStart=/usr/bin/node /opt/bd-console/serve.mjs --port 4180'), 'unit file ExecStart mismatch');
+  assert(unitText.includes('Environment="PATH=/usr/bin:/home/user/.local/bin"'),
+    'unit file must embed the invoking PATH so the daemon can find bd/tmux under systemd');
   assert(unitText.includes('Restart=on-failure'), 'unit file missing Restart=on-failure');
   assert(unitText.includes('WantedBy=default.target'), 'unit file missing WantedBy=default.target');
   assert(unitText.includes('[Service]') && unitText.includes('[Install]'), 'unit file missing expected sections');
