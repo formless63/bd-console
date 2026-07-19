@@ -63,6 +63,7 @@ function isPidAlive(pid) {
 
 let server;
 let daemonPid; // tracked so `finally` can always clean it up, even on assertion failure
+let firstRunPid; // ditto, for the non-TTY first-run daemon test
 
 try {
   run('git', ['init'], { cwd: repoDir });
@@ -181,6 +182,61 @@ try {
   const unknown = await fetch(`http://127.0.0.1:${port}/api/p/does-not-exist/issues`);
   assert(unknown.status === 404, 'unknown project id should 404');
 
+  // --- rich issue creation + epic targets (Feature 2) ------------------------
+  const epicRes = await fetch(p('/create'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title: 'Smoke epic', type: 'epic' })
+  }).then((r) => r.json());
+  assert(epicRes.ok && epicRes.id, `create epic failed: ${JSON.stringify(epicRes)}`);
+  assert(epicRes.issue && epicRes.issue.issue_type === 'epic', 'created epic issue_type mismatch');
+
+  const childRes = await fetch(p('/create'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      title: 'Smoke child bug',
+      type: 'bug',
+      priority: 1,
+      labels: ['smoke', 'triage'],
+      acceptance: 'it works',
+      parent: epicRes.id
+    })
+  }).then((r) => r.json());
+  assert(childRes.ok && childRes.id, `create child bug failed: ${JSON.stringify(childRes)}`);
+  assert(childRes.issue.issue_type === 'bug', 'created child issue_type mismatch');
+  assert(childRes.issue.priority === 1, 'created child priority mismatch');
+  assert((childRes.issue.labels || []).includes('smoke') && (childRes.issue.labels || []).includes('triage'), 'created child labels mismatch');
+
+  const epicsList = await fetch(p('/epics')).then((r) => r.json());
+  assert(epicsList.epics.some((e) => e.id === epicRes.id), '/api/p/<id>/epics missing created epic');
+
+  const badType = await fetch(p('/create'), {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title: 'bad type', type: 'nonsense' })
+  });
+  assert(badType.status === 400, `bad type should 400, got ${badType.status}`);
+
+  const badPriority = await fetch(p('/create'), {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title: 'bad priority', priority: 9 })
+  });
+  assert(badPriority.status === 400, `bad priority should 400, got ${badPriority.status}`);
+
+  const badParent = await fetch(p('/create'), {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title: 'bad parent', parent: 'not a valid id!' })
+  });
+  assert(badParent.status === 400, `bad parent should 400, got ${badParent.status}`);
+
+  const noTitle = await fetch(p('/create'), {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title: '   ' })
+  });
+  assert(noTitle.status === 400, `empty title should 400, got ${noTitle.status}`);
+
+  console.log(`smoke ok (create + epics): epic=${epicRes.id}, child=${childRes.id}`);
+
   // --- daemon lifecycle: `start` always supersedes (Feature 1) --------------
   // BD_CONSOLE_PERSIST=0 is mandatory here: it forces the plain-spawn path so
   // this test never touches systemd/systemctl on the real machine.
@@ -264,6 +320,111 @@ try {
 
   console.log('smoke ok (update --dry-run)');
 
+  // --- `bd-console settings` set/list/unset round-trip (Feature 1) -----------
+  const settingsConfigDir = join(tempRoot, 'settings-config');
+  const settingsSystemdDir = join(tempRoot, 'settings-systemd');
+  mkdirSync(settingsConfigDir, { recursive: true });
+  mkdirSync(settingsSystemdDir, { recursive: true });
+  const settingsEnv = {
+    ...process.env,
+    BD_CONSOLE_CONFIG_DIR: settingsConfigDir,
+    BD_CONSOLE_SYSTEMD_DIR: settingsSystemdDir
+  };
+
+  function runSettings(args) {
+    return execFileSync(process.execPath, [serverEntry, 'settings', ...args], {
+      cwd: process.cwd(),
+      env: settingsEnv,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+  }
+
+  runSettings(['set', 'host', '10.1.2.3']);
+  runSettings(['set', 'port', '9191']);
+  runSettings(['set', 'token', 'sekret-token-value']);
+  runSettings(['set', 'persist', 'false']);
+
+  const settingsListOut = runSettings(['list']);
+  assert(settingsListOut.includes('10.1.2.3'), `settings list missing host round-trip:\n${settingsListOut}`);
+  assert(settingsListOut.includes('9191'), `settings list missing port round-trip:\n${settingsListOut}`);
+  assert(/token\s+set \(sekr\.\.\.\)/.test(settingsListOut), `settings list did not mask the token:\n${settingsListOut}`);
+  assert(!settingsListOut.includes('sekret-token-value'), 'settings list leaked the full token value');
+  assert(/persist\s+false/.test(settingsListOut), `settings list missing persist round-trip:\n${settingsListOut}`);
+  assert(/\bconfig\b/.test(settingsListOut), `settings list did not report "config" as a source:\n${settingsListOut}`);
+
+  const settingsConfigPath = join(settingsConfigDir, 'config.json');
+  const settingsConfig1 = JSON.parse(readFileSync(settingsConfigPath, 'utf8'));
+  assert(settingsConfig1.host === '10.1.2.3', 'settings set host did not persist to config.json');
+  assert(settingsConfig1.port === 9191, 'settings set port did not persist to config.json');
+  assert(settingsConfig1.token === 'sekret-token-value', 'settings set token did not persist to config.json');
+  assert(settingsConfig1.persist === false, 'settings set persist did not persist to config.json');
+
+  runSettings(['unset', 'token']);
+  const settingsConfig2 = JSON.parse(readFileSync(settingsConfigPath, 'utf8'));
+  assert(!('token' in settingsConfig2), 'settings unset token did not remove the key');
+  assert(settingsConfig2.host === '10.1.2.3', 'settings unset token should not disturb other keys');
+
+  let badSetFailed = false;
+  try {
+    runSettings(['set', 'port', '99999']);
+  } catch {
+    badSetFailed = true;
+  }
+  assert(badSetFailed, 'settings set with an out-of-range port should fail');
+
+  console.log('smoke ok (settings set/list/unset round-trip)');
+
+  // --- non-TTY first run applies 0.0.0.0:4180 defaults (Feature 1) -----------
+  // isFirstRun requires no --host/--port flags and no BD_CONSOLE_HOST/PORT env,
+  // which means this necessarily binds the *real* default port (4180) — there
+  // is no way to redirect it without defeating the first-run condition being
+  // tested. Isolated via a fresh BD_CONSOLE_CONFIG_DIR/SYSTEMD_DIR either way.
+  const firstRunConfigDir = join(tempRoot, 'first-run-config');
+  const firstRunSystemdDir = join(tempRoot, 'first-run-systemd');
+  mkdirSync(firstRunConfigDir, { recursive: true });
+  mkdirSync(firstRunSystemdDir, { recursive: true });
+  const firstRunEnv = {
+    ...process.env,
+    BD_CONSOLE_CONFIG_DIR: firstRunConfigDir,
+    BD_CONSOLE_SYSTEMD_DIR: firstRunSystemdDir,
+    BD_CONSOLE_PERSIST: '0'
+  };
+  const firstRunLogPath = join(firstRunConfigDir, 'console.log');
+  const firstRunPidPath = join(firstRunConfigDir, 'console.pid');
+
+  const preCheck = await fetch('http://127.0.0.1:4180/api/meta', { signal: AbortSignal.timeout(500) }).catch(() => null);
+  assert(!preCheck, 'port 4180 already answering before the first-run test — cannot verify the default bind');
+
+  execFileSync(process.execPath, [serverEntry, 'start'], {
+    cwd: process.cwd(),
+    env: firstRunEnv,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  firstRunPid = Number(readFileSync(firstRunPidPath, 'utf8').trim());
+
+  const firstRunLog = readFileSync(firstRunLogPath, 'utf8');
+  assert(firstRunLog.includes('first run detected'), `first-run log missing the default-applied line:\n${firstRunLog}`);
+  assert(firstRunLog.includes('0.0.0.0:4180'), `first-run log did not mention the applied 0.0.0.0:4180 default:\n${firstRunLog}`);
+  assert(firstRunLog.includes("bd-console settings"), `first-run log did not point at 'bd-console settings':\n${firstRunLog}`);
+
+  await waitFor('http://127.0.0.1:4180/api/meta');
+  const firstRunMeta = await fetch('http://127.0.0.1:4180/api/meta').then((r) => r.json());
+  assert(firstRunMeta.mode === 'hub', 'first-run default-bind server did not answer /api/meta on 4180');
+  assert(firstRunMeta.port === 4180, 'first-run default-bind server reported an unexpected port');
+  assert(firstRunMeta.writable === true, 'first-run default-bind server should keep writes open (no token)');
+
+  execFileSync(process.execPath, [serverEntry, 'stop'], {
+    cwd: process.cwd(),
+    env: firstRunEnv,
+    stdio: 'ignore'
+  });
+  assert(!isPidAlive(firstRunPid), 'first-run daemon still running after `stop`');
+  firstRunPid = null;
+
+  console.log('smoke ok (non-TTY first-run defaults + log line)');
+
   console.log(`smoke ok: ${seedId}, ${quickRes.id}`);
 } catch (err) {
   console.error(`smoke failed: ${err.message}`);
@@ -275,6 +436,9 @@ try {
   }
   if (daemonPid && isPidAlive(daemonPid)) {
     try { process.kill(daemonPid, 'SIGKILL'); } catch { /* already gone */ }
+  }
+  if (firstRunPid && isPidAlive(firstRunPid)) {
+    try { process.kill(firstRunPid, 'SIGKILL'); } catch { /* already gone */ }
   }
   rmSync(tempRoot, { recursive: true, force: true });
 }

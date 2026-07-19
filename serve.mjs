@@ -14,6 +14,14 @@
  *   bd-console add .           # register the project at (or above) cwd
  *   bd-console remove <id>     # unregister a project
  *   bd-console list            # list registered projects
+ *   bd-console settings        # view/edit host, port, token, persist
+ *
+ * First run (bare foreground run or `start`, when no config.json exists yet
+ * and no --host/--port/env override was given): with a TTY this walks
+ * through an interactive setup (see lib/settings.mjs); without one (systemd,
+ * scripts) it logs one line and applies the defaults below. This exists
+ * because the fallback default bind is 0.0.0.0 (not just 127.0.0.1) and that
+ * should never be assumed silently on a box's very first run.
  *
  * `start` semantics: it ALWAYS supersedes any existing deployment rather than
  * silently no-oping — it stops a previous plain daemon (pid file), stops an
@@ -45,7 +53,8 @@
  * precedence: CLI flags (--port, --host) > env vars (BD_CONSOLE_PORT,
  * BD_CONSOLE_HOST, BD_CONSOLE_TOKEN, BD_CONSOLE_PERSIST) > the global config
  * file (~/.config/bd-console/config.json, or BD_CONSOLE_CONFIG_DIR/config.json)
- * > defaults (127.0.0.1:4180, persist auto-detected).
+ * > defaults (0.0.0.0:4180, persist auto-detected). Use `bd-console settings`
+ * to inspect the effective value + source of each and edit them.
  *
  * A per-project `bd-console.json` at a registered workspace's root may still
  * set `docRoots` to scope the docs tree for that project.
@@ -66,9 +75,10 @@ import {
 } from './lib/daemon.mjs';
 import { runUpdate, DirtyWorkTreeError } from './lib/update.mjs';
 import { createRequestHandler } from './lib/routes.mjs';
+import { maybeFirstRunSetup, runSettingsCommand } from './lib/settings.mjs';
 
 // --- args -------------------------------------------------------------------
-const COMMANDS = new Set(['start', 'stop', 'status', 'add', 'remove', 'list', 'update']);
+const COMMANDS = new Set(['start', 'stop', 'status', 'add', 'remove', 'list', 'update', 'settings']);
 
 function parseArgs(argv) {
   const out = { command: null, positional: [], port: null, host: null, forward: [], dryRun: false };
@@ -131,6 +141,23 @@ if (ARGS.command === 'add') {
     console.log(`  ${id}: ${p.path}`);
   }
   process.exit(0);
+} else if (ARGS.command === 'settings') {
+  try {
+    await runSettingsCommand(ARGS.positional);
+    process.exit(0);
+  } catch (e) {
+    console.error(`bd-console: ${e.message}`);
+    process.exit(1);
+  }
+}
+
+// --- first-run setup ------------------------------------------------------
+// Only the CLI paths that actually lead to serving traffic (bare foreground
+// run, `start`) trigger this — never add/remove/list/settings/update. May
+// write config.json (interactive TTY path), which the resolveSettings()
+// call right below will then pick up.
+if (ARGS.command === null || ARGS.command === 'start') {
+  await maybeFirstRunSetup({ argsHost: ARGS.host, argsPort: ARGS.port });
 }
 
 // --- effective settings -------------------------------------------------
