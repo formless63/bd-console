@@ -87,6 +87,10 @@ try {
   mkdirSync(join(repoDir, 'docs'));
   writeFileSync(join(repoDir, 'docs', 'plan.md'), '# Plan\n\n- item\n');
 
+  // A real commit so lib/git.mjs's getGitInsights() has a lastCommit to report.
+  run('git', ['add', '-A'], { cwd: repoDir });
+  run('git', ['commit', '-m', 'initial commit'], { cwd: repoDir });
+
   run('bd', ['init'], { cwd: repoDir });
   const seedId = trimLastLine(run('bd', ['create', '--silent', '--type', 'task', '-p', '2', '--labels', 'triage', '--title', 'Seed issue'], { cwd: repoDir }));
   run('bd', ['export', '-o', '.beads/issues.jsonl'], { cwd: repoDir });
@@ -388,12 +392,222 @@ try {
     console.log(`smoke ok (scheduler CRUD + tick-driven failure): future=${futureJobId}, due=${dueJobId}`);
   }
 
+  // --- settings API ------------------------------------------------------------
+  const settingsGet0 = await fetch(`http://127.0.0.1:${port}/api/settings`).then((r) => r.json());
+  assert(settingsGet0.settings, '/api/settings GET missing settings object');
+  assert(settingsGet0.settings.host.value === '127.0.0.1', `settings host mismatch: ${JSON.stringify(settingsGet0.settings.host)}`);
+  assert(settingsGet0.settings.host.source === 'flag', `settings host source should be 'flag' (--host was passed), got ${settingsGet0.settings.host.source}`);
+  assert(settingsGet0.settings.port.value === port, `settings port mismatch: ${JSON.stringify(settingsGet0.settings.port)}`);
+  assert(settingsGet0.settings.port.source === 'flag', `settings port source should be 'flag' (--port was passed), got ${settingsGet0.settings.port.source}`);
+  assert(settingsGet0.settings.token.set === false && settingsGet0.settings.token.masked === null, 'settings token should start unset');
+  assert(settingsGet0.configPath === join(configDir, 'config.json'), `settings configPath mismatch: ${settingsGet0.configPath}`);
+  assert(/restart/i.test(settingsGet0.note || ''), 'settings note should mention restart');
+
+  const settingsBadKey = await fetch(`http://127.0.0.1:${port}/api/settings`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ host: '9.9.9.9' })
+  });
+  assert(settingsBadKey.status === 400, `settings POST with a host key should 400, got ${settingsBadKey.status}`);
+
+  const settingsSetTok = await fetch(`http://127.0.0.1:${port}/api/settings`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token: 'sekret-http-token' })
+  }).then((r) => r.json());
+  assert(settingsSetTok.ok && settingsSetTok.restartRequired === true, `settings token set failed: ${JSON.stringify(settingsSetTok)}`);
+
+  const settingsConfigAfterSet = JSON.parse(readFileSync(join(configDir, 'config.json'), 'utf8'));
+  assert(settingsConfigAfterSet.token === 'sekret-http-token', 'settings POST token did not persist to config.json');
+
+  const settingsGet1 = await fetch(`http://127.0.0.1:${port}/api/settings`).then((r) => r.json());
+  assert(settingsGet1.settings.token.set === true, 'settings token.set should be true after POST');
+  assert(settingsGet1.settings.token.masked === 'sekr…', `settings token.masked mismatch: ${settingsGet1.settings.token.masked}`);
+
+  const settingsClearTok = await fetch(`http://127.0.0.1:${port}/api/settings`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token: null })
+  }).then((r) => r.json());
+  assert(settingsClearTok.ok, `settings token clear failed: ${JSON.stringify(settingsClearTok)}`);
+
+  const settingsConfigAfterClear = JSON.parse(readFileSync(join(configDir, 'config.json'), 'utf8'));
+  assert(!('token' in settingsConfigAfterClear), 'settings POST token:null did not clear the key');
+
+  console.log('smoke ok (settings API: GET shape + POST token set/clear round-trip + 400 on host)');
+
+  // --- saved prompts API ---------------------------------------------------------
+  const promptsGet0 = await fetch(`http://127.0.0.1:${port}/api/prompts`);
+  assert(promptsGet0.status === 200 || promptsGet0.status === 501, `/api/prompts GET unexpected status ${promptsGet0.status}`);
+  const promptsAvailable = promptsGet0.status === 200;
+  assert(promptsAvailable === schedAvailable, 'prompts availability should match scheduler (node:sqlite) availability');
+
+  if (!promptsAvailable) {
+    const body = await promptsGet0.json();
+    assert(/node/i.test(body.error || ''), '/api/prompts 501 should explain the Node version requirement');
+    console.log('smoke ok (prompts: node:sqlite unavailable -> 501, skipping CRUD checks)');
+  } else {
+    const createP1 = await fetch(`http://127.0.0.1:${port}/api/prompts`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Smoke Prompt 1', prompt: 'do the first thing' })
+    }).then((r) => r.json());
+    assert(createP1.ok && createP1.id, `create prompt 1 failed: ${JSON.stringify(createP1)}`);
+
+    const createP2 = await fetch(`http://127.0.0.1:${port}/api/prompts`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Smoke Prompt 2', prompt: 'do the second thing' })
+    }).then((r) => r.json());
+    assert(createP2.ok && createP2.id, `create prompt 2 failed: ${JSON.stringify(createP2)}`);
+
+    const listP0 = await fetch(`http://127.0.0.1:${port}/api/prompts`).then((r) => r.json());
+    const p1 = listP0.prompts.find((x) => x.id === createP1.id);
+    const p2 = listP0.prompts.find((x) => x.id === createP2.id);
+    assert(p1 && p1.name === 'Smoke Prompt 1' && p1.prompt === 'do the first thing' && p1.last_used_at == null, 'prompt 1 shape mismatch');
+    assert(p2 && p2.last_used_at == null, 'prompt 2 shape mismatch');
+    // Both unused so far: most-recently-created (p2) should sort first.
+    assert(
+      listP0.prompts.findIndex((x) => x.id === createP2.id) < listP0.prompts.findIndex((x) => x.id === createP1.id),
+      'prompts list should order newest-created first when unused'
+    );
+
+    const useP1 = await fetch(`http://127.0.0.1:${port}/api/prompts/used`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: createP1.id })
+    }).then((r) => r.json());
+    assert(useP1.ok, `prompt used-stamping failed: ${JSON.stringify(useP1)}`);
+
+    const listP1 = await fetch(`http://127.0.0.1:${port}/api/prompts`).then((r) => r.json());
+    const p1After = listP1.prompts.find((x) => x.id === createP1.id);
+    assert(typeof p1After.last_used_at === 'number', 'prompt last_used_at was not stamped');
+    assert(
+      listP1.prompts.findIndex((x) => x.id === createP1.id) < listP1.prompts.findIndex((x) => x.id === createP2.id),
+      'a just-used prompt should sort before an unused, older-created one'
+    );
+
+    const badCreate = await fetch(`http://127.0.0.1:${port}/api/prompts`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: '  ', prompt: 'x' })
+    });
+    assert(badCreate.status === 400, `prompt create with an empty name should 400, got ${badCreate.status}`);
+
+    const deleteP2 = await fetch(`http://127.0.0.1:${port}/api/prompts/delete`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: createP2.id })
+    }).then((r) => r.json());
+    assert(deleteP2.ok, `prompt delete failed: ${JSON.stringify(deleteP2)}`);
+
+    const listP2 = await fetch(`http://127.0.0.1:${port}/api/prompts`).then((r) => r.json());
+    assert(!listP2.prompts.some((x) => x.id === createP2.id), 'deleted prompt still present in list');
+
+    console.log(`smoke ok (prompts CRUD + used-stamping + delete): ${createP1.id}, ${createP2.id}`);
+  }
+
+  // --- git insights: fabricated temp repo (no remote) ---------------------------
+  const gitFake = await fetch(p('/git')).then((r) => r.json());
+  assert(gitFake.git, '/api/p/<id>/git should return git insights for the fabricated repo');
+  assert(typeof gitFake.git.branch === 'string' && gitFake.git.branch, 'fabricated repo git insights missing branch');
+  assert(gitFake.git.lastCommit && typeof gitFake.git.lastCommit.hash === 'string' && gitFake.git.lastCommit.hash,
+    'fabricated repo git insights missing lastCommit');
+  assert(typeof gitFake.git.lastCommit.time === 'number', 'fabricated repo lastCommit.time should be a numeric epoch');
+  assert(gitFake.git.webUrl === null, 'fabricated repo (no remote) should have webUrl: null');
+  assert(gitFake.git.remoteUrl === null, 'fabricated repo (no remote) should have remoteUrl: null');
+
+  const projectsWithGit = await fetch(`http://127.0.0.1:${port}/api/projects?git=1`).then((r) => r.json());
+  assert(projectsWithGit.projects[projectId] && projectsWithGit.projects[projectId].git, '/api/projects?git=1 missing git key for registered project');
+  assert(projectsWithGit.projects[projectId].path === repoDir, '/api/projects?git=1 should preserve the path field');
+
+  const projectsNoGit = await fetch(`http://127.0.0.1:${port}/api/projects`).then((r) => r.json());
+  assert(!('git' in (projectsNoGit.projects[projectId] || {})), 'plain /api/projects should not include a git key');
+
+  console.log('smoke ok (git insights: fabricated repo, no remote)');
+
+  // Register THIS bd-console working repo in an isolated, temporary
+  // registry/server to verify webUrl parsing against a real remote. We only
+  // assert what `git remote get-url origin` on this checkout independently
+  // reports — never a hardcoded host/owner.
+  let selfOriginUrl = null;
+  try { selfOriginUrl = run('git', ['remote', 'get-url', 'origin'], { cwd: process.cwd() }).trim(); } catch { /* no origin configured */ }
+
+  if (selfOriginUrl) {
+    const gitProbeConfigDir = join(tempRoot, 'git-probe-config');
+    mkdirSync(gitProbeConfigDir, { recursive: true });
+    writeFileSync(
+      join(gitProbeConfigDir, 'registry.json'),
+      JSON.stringify({ projects: { selfrepo: { path: process.cwd() } } }, null, 2)
+    );
+    const gitProbePort = await getPort();
+    const gitProbeEnv = { ...process.env, BD_CONSOLE_CONFIG_DIR: gitProbeConfigDir };
+    const gitProbeServer = spawn(process.execPath, [serverEntry, '--host', '127.0.0.1', '--port', String(gitProbePort)], {
+      cwd: process.cwd(),
+      env: gitProbeEnv,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    try {
+      await waitFor(`http://127.0.0.1:${gitProbePort}/api/meta`);
+      const selfGit = await fetch(`http://127.0.0.1:${gitProbePort}/api/p/selfrepo/git`).then((r) => r.json());
+      assert(selfGit.git, 'self-repo git insights missing');
+      assert(selfGit.git.remoteUrl === selfOriginUrl, 'self-repo remoteUrl should match `git remote get-url origin`');
+
+      const expectedWebUrl = (() => {
+        const sshMatch = selfOriginUrl.match(/^(?:ssh:\/\/)?git@([^:/]+)[:/](.+?)(?:\.git)?\/?$/);
+        const httpsMatch = !sshMatch && selfOriginUrl.match(/^https?:\/\/(?:[^@/]+@)?([^/]+)\/(.+?)(?:\.git)?\/?$/);
+        const m = sshMatch || httpsMatch;
+        if (!m) return null;
+        const [, host, ownerRepo] = m;
+        return ['github.com', 'gitlab.com', 'codeberg.org'].includes(host) ? `https://${host}/${ownerRepo}` : null;
+      })();
+      assert(selfGit.git.webUrl === expectedWebUrl, `self-repo webUrl mismatch: got ${selfGit.git.webUrl}, expected ${expectedWebUrl}`);
+
+      console.log(`smoke ok (git insights: self repo, webUrl=${selfGit.git.webUrl})`);
+    } finally {
+      gitProbeServer.kill('SIGTERM');
+      await new Promise((resolveP) => gitProbeServer.once('exit', () => resolveP()));
+    }
+  } else {
+    console.log('smoke skip (git insights: self repo has no origin remote)');
+  }
+
+  // --- doc editing ---------------------------------------------------------------
+  const docSaveRes = await fetch(p('/doc'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: 'docs/plan.md', content: '# Plan\n\n- item\n- edited by smoke\n' })
+  }).then((r) => r.json());
+  assert(docSaveRes.ok && docSaveRes.path === 'docs/plan.md' && typeof docSaveRes.mtime === 'number', `doc save failed: ${JSON.stringify(docSaveRes)}`);
+
+  const docReread = await fetch(p(`/doc?path=${encodeURIComponent('docs/plan.md')}`)).then((r) => r.json());
+  assert(docReread.content.includes('edited by smoke'), 'doc save did not persist (re-read mismatch)');
+
+  const docNewFile = await fetch(p('/doc'), {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: 'docs/new-from-smoke.md', content: '# New\n' })
+  }).then((r) => r.json());
+  assert(docNewFile.ok, `doc create-new-file failed: ${JSON.stringify(docNewFile)}`);
+  const docNewReread = await fetch(p(`/doc?path=${encodeURIComponent('docs/new-from-smoke.md')}`)).then((r) => r.json());
+  assert(docNewReread.content === '# New\n', 'newly created doc content mismatch on re-read');
+
+  const docTraversal = await fetch(p('/doc'), {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: '../outside.md', content: 'nope' })
+  });
+  assert(docTraversal.status >= 400 && docTraversal.status < 500, `doc traversal escape should 4xx, got ${docTraversal.status}`);
+
+  const docNonMd = await fetch(p('/doc'), {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: 'docs/notes.txt', content: 'nope' })
+  });
+  assert(docNonMd.status === 400, `doc non-.md path should 400, got ${docNonMd.status}`);
+
+  console.log('smoke ok (doc editing: save/reread + new-file + traversal/non-md rejection)');
+
   // --- daemon lifecycle: `start` always supersedes (Feature 1) --------------
   // BD_CONSOLE_PERSIST=0 is mandatory here: it forces the plain-spawn path so
   // this test never touches systemd/systemctl on the real machine.
   const daemonConfigDir = join(tempRoot, 'daemon-config');
   mkdirSync(daemonConfigDir, { recursive: true });
-  const daemonEnv = { ...process.env, BD_CONSOLE_CONFIG_DIR: daemonConfigDir, BD_CONSOLE_PERSIST: '0' };
+  const daemonSystemdDir = join(tempRoot, 'daemon-systemd');
+  mkdirSync(daemonSystemdDir, { recursive: true });
+  // BD_CONSOLE_SYSTEMD_DIR isolation matters even with PERSIST=0: the
+  // supersede step inspects the systemd unit, and it must see the temp dir's
+  // (nonexistent) unit, never the machine's real bd-console.service.
+  const daemonEnv = { ...process.env, BD_CONSOLE_CONFIG_DIR: daemonConfigDir, BD_CONSOLE_SYSTEMD_DIR: daemonSystemdDir, BD_CONSOLE_PERSIST: '0' };
   const daemonPort = await getPort();
   const daemonPidPath = join(daemonConfigDir, 'console.pid');
 
@@ -531,6 +745,28 @@ try {
   // which means this necessarily binds the *real* default port (4180) — there
   // is no way to redirect it without defeating the first-run condition being
   // tested. Isolated via a fresh BD_CONSOLE_CONFIG_DIR/SYSTEMD_DIR either way.
+  //
+  // SAFETY: if ANYTHING already holds 4180 (most likely a real bd-console
+  // deployment on this machine), SKIP this sub-test entirely. `start`'s
+  // supersede logic would otherwise kill the real daemon. A raw TCP connect
+  // is used, not an HTTP probe — a busy daemon that's slow to answer HTTP
+  // still accepts the connection, so this cannot race the way a fetch with a
+  // short timeout can. The systemd unit state is checked as a second signal.
+  const port4180Busy = await new Promise((resolveP) => {
+    const sock = net.connect({ port: 4180, host: '127.0.0.1', timeout: 1000 });
+    sock.once('connect', () => { sock.destroy(); resolveP(true); });
+    sock.once('timeout', () => { sock.destroy(); resolveP(true); }); // listening but slow — treat as busy
+    sock.once('error', () => resolveP(false));
+  });
+  let unitActive = false;
+  try {
+    execFileSync('systemctl', ['--user', 'is-active', '--quiet', 'bd-console.service'], { stdio: 'ignore' });
+    unitActive = true;
+  } catch { /* inactive, missing, or no systemd — all mean not active */ }
+
+  if (port4180Busy || unitActive) {
+    console.log('smoke skip (non-TTY first-run: port 4180 in use or bd-console.service active — skipping to avoid superseding a real deployment)');
+  } else {
   const firstRunConfigDir = join(tempRoot, 'first-run-config');
   const firstRunSystemdDir = join(tempRoot, 'first-run-systemd');
   mkdirSync(firstRunConfigDir, { recursive: true });
@@ -575,6 +811,7 @@ try {
   firstRunPid = null;
 
   console.log('smoke ok (non-TTY first-run defaults + log line)');
+  }
 
   console.log(`smoke ok: ${seedId}, ${quickRes.id}`);
 } catch (err) {

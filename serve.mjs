@@ -298,7 +298,7 @@ function isLocalOnlyHost(host) {
   return host === '127.0.0.1' || host === '::1' || host === 'localhost';
 }
 
-const handler = createRequestHandler({ host: HOST, port: PORT, token: TOKEN });
+const handler = createRequestHandler({ host: HOST, port: PORT, token: TOKEN, argsHost: ARGS.host, argsPort: ARGS.port });
 const server = createServer(handler);
 
 server.listen(PORT, HOST, () => {

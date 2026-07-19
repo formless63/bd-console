@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node serve.mjs",
     "init": "node scripts/init.mjs",
-    "check": "node --check serve.mjs && node --check public/app.js && node --check scripts/init.mjs && node --check scripts/smoke.mjs && node --check scripts/serve-static.mjs && node --check lib/paths.mjs && node --check lib/registry.mjs && node --check lib/config.mjs && node --check lib/bd.mjs && node --check lib/docs.mjs && node --check lib/routes.mjs && node --check lib/daemon.mjs && node --check lib/systemd.mjs && node --check lib/update.mjs && node --check lib/settings.mjs && node --check lib/tmux.mjs && node --check lib/schedule.mjs && for f in public/ui/*.js public/ui/components/*.js; do node --check \"$f\" || exit 1; done",
+    "check": "node --check serve.mjs && node --check public/app.js && node --check scripts/init.mjs && node --check scripts/smoke.mjs && node --check scripts/serve-static.mjs && node --check lib/paths.mjs && node --check lib/registry.mjs && node --check lib/config.mjs && node --check lib/bd.mjs && node --check lib/docs.mjs && node --check lib/routes.mjs && node --check lib/daemon.mjs && node --check lib/systemd.mjs && node --check lib/update.mjs && node --check lib/settings.mjs && node --check lib/tmux.mjs && node --check lib/schedule.mjs && node --check lib/git.mjs && for f in public/ui/*.js public/ui/components/*.js; do node --check \"$f\" || exit 1; done",
     "smoke": "node scripts/smoke.mjs",
     "docs:serve": "node scripts/serve-static.mjs site 4179"
   },
