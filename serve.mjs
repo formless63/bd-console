@@ -76,6 +76,7 @@ import {
 import { runUpdate, DirtyWorkTreeError } from './lib/update.mjs';
 import { createRequestHandler } from './lib/routes.mjs';
 import { maybeFirstRunSetup, runSettingsCommand } from './lib/settings.mjs';
+import { startSchedulerLoop } from './lib/schedule.mjs';
 
 // --- args -------------------------------------------------------------------
 const COMMANDS = new Set(['start', 'stop', 'status', 'add', 'remove', 'list', 'update', 'settings']);
@@ -301,4 +302,16 @@ server.listen(PORT, HOST, () => {
   if (!isLocalOnlyHost(HOST) && !TOKEN) {
     console.warn('  warning: writes are open on a non-localhost bind; set a token or bind to 127.0.0.1');
   }
+});
+
+// Prompt scheduler polling loop — only started for a server that's actually
+// serving traffic (this is the foreground path reached by a bare run, and by
+// the detached child `start` spawns; the add/remove/list/settings/update/
+// start/stop/status CLI commands all exit above before reaching here). A
+// no-op (resolves to null) when node:sqlite isn't available (Node < 22).
+// BD_CONSOLE_SCHED_INTERVAL overrides the default tick interval — used by
+// scripts/smoke.mjs so it doesn't have to wait 15s for a job to fire.
+const SCHED_INTERVAL_MS = Number(process.env.BD_CONSOLE_SCHED_INTERVAL) || 15000;
+startSchedulerLoop({ intervalMs: SCHED_INTERVAL_MS }).catch((err) => {
+  console.warn(`bd-console: scheduler loop failed to start — ${err.message}`);
 });

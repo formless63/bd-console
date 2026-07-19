@@ -55,10 +55,23 @@ const configDir = join(tempRoot, 'config');
 mkdirSync(repoDir, { recursive: true });
 
 // Isolate the hub registry/config from the real ~/.config/bd-console.
-const env = { ...process.env, BD_CONSOLE_CONFIG_DIR: configDir };
+// BD_CONSOLE_SCHED_INTERVAL shortens the scheduler's poll tick so the
+// scheduler smoke tests below don't have to wait out the 15s production
+// default.
+const env = { ...process.env, BD_CONSOLE_CONFIG_DIR: configDir, BD_CONSOLE_SCHED_INTERVAL: '200' };
 
 function isPidAlive(pid) {
   try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+// SIGTERM shutdown isn't instantaneous — give a stopped process a grace
+// window before asserting it's gone.
+async function waitForExit(pid, tries = 30) {
+  for (let i = 0; i < tries; i++) {
+    if (!isPidAlive(pid)) return true;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return !isPidAlive(pid);
 }
 
 let server;
@@ -237,6 +250,140 @@ try {
 
   console.log(`smoke ok (create + epics): epic=${epicRes.id}, child=${childRes.id}`);
 
+  // --- tmux sessions API (hub-level, not project-scoped) ---------------------
+  let tmuxPresent = true;
+  try {
+    execFileSync('tmux', ['-V'], { stdio: 'ignore' });
+  } catch {
+    tmuxPresent = false;
+  }
+
+  const tmuxRes = await fetch(`http://127.0.0.1:${port}/api/tmux`);
+  assert(tmuxRes.status === 200, `/api/tmux should 200, got ${tmuxRes.status}`);
+  const tmuxBody = await tmuxRes.json();
+  assert(typeof tmuxBody.available === 'boolean', '/api/tmux missing boolean available');
+  assert(Array.isArray(tmuxBody.sessions), '/api/tmux missing sessions array');
+
+  if (!tmuxPresent) {
+    assert(tmuxBody.available === false, '/api/tmux should report available:false when tmux binary is absent');
+    assert(tmuxBody.sessions.length === 0, '/api/tmux should report no sessions when tmux binary is absent');
+    console.log('smoke ok (tmux API: absent -> available:false)');
+  } else {
+    // tmux is present, but we never create/attach real sessions in smoke —
+    // just shape-check whatever the host's tmux server (if any) reports.
+    for (const s of tmuxBody.sessions) {
+      assert(typeof s.name === 'string', 'tmux session missing name');
+      assert(typeof s.created === 'number', 'tmux session missing numeric created');
+      assert(typeof s.attached === 'number', 'tmux session missing numeric attached');
+      assert(typeof s.windows === 'number', 'tmux session missing numeric windows');
+      assert(Array.isArray(s.panes), 'tmux session missing panes array');
+      for (const pane of s.panes) {
+        assert(typeof pane.command === 'string', 'tmux pane missing command');
+        assert(typeof pane.cwd === 'string', 'tmux pane missing cwd');
+        assert(typeof pane.title === 'string', 'tmux pane missing title');
+      }
+    }
+
+    // has-session against a name that (almost certainly) doesn't exist must
+    // 400 cleanly via the preview route's validation, not error out.
+    const badSession = await fetch(`http://127.0.0.1:${port}/api/tmux/preview?session=${encodeURIComponent('bad name!')}`);
+    assert(badSession.status === 400, `/api/tmux/preview with a bad session name should 400, got ${badSession.status}`);
+
+    // capture-pane is read-only — safe to call against a real session if one
+    // happens to be running on this host, but we never send it anything.
+    if (tmuxBody.sessions.length) {
+      const real = tmuxBody.sessions[0].name;
+      const previewRes = await fetch(`http://127.0.0.1:${port}/api/tmux/preview?session=${encodeURIComponent(real)}&lines=5`);
+      assert(previewRes.status === 200, `/api/tmux/preview should 200 for a real session, got ${previewRes.status}`);
+      const previewBody = await previewRes.json();
+      assert(typeof previewBody.text === 'string', '/api/tmux/preview missing text field');
+    }
+
+    console.log(`smoke ok (tmux API: present, ${tmuxBody.sessions.length} session(s), shape-checked only)`);
+  }
+
+  // --- prompt scheduler (hub-level, not project-scoped) -----------------------
+  const schedRes = await fetch(`http://127.0.0.1:${port}/api/schedule`);
+  assert(schedRes.status === 200 || schedRes.status === 501, `/api/schedule GET unexpected status ${schedRes.status}`);
+  const schedAvailable = schedRes.status === 200;
+
+  if (!schedAvailable) {
+    const body = await schedRes.json();
+    assert(/node/i.test(body.error || ''), '/api/schedule 501 should explain the Node version requirement');
+    console.log('smoke ok (scheduler: node:sqlite unavailable -> 501, skipping CRUD checks)');
+  } else {
+    const fakeSession = `smoke-fake-${Date.now()}`;
+    const nearFuture = Date.now() + 5 * 60 * 1000;
+
+    const createFuture = await fetch(`http://127.0.0.1:${port}/api/schedule`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: 'echo smoke', session: fakeSession, runAt: nearFuture })
+    }).then((r) => r.json());
+    assert(createFuture.ok && createFuture.job && createFuture.job.id, `schedule create (future) failed: ${JSON.stringify(createFuture)}`);
+    assert(createFuture.job.status === 'pending', 'newly created schedule job should be pending');
+    const futureJobId = createFuture.job.id;
+
+    const listAfterCreate = await fetch(`http://127.0.0.1:${port}/api/schedule`).then((r) => r.json());
+    assert(listAfterCreate.jobs.some((j) => j.id === futureJobId && j.status === 'pending'), 'schedule list missing the pending future job');
+
+    const cancelRes = await fetch(`http://127.0.0.1:${port}/api/schedule/cancel`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: futureJobId })
+    }).then((r) => r.json());
+    assert(cancelRes.ok, `schedule cancel failed: ${JSON.stringify(cancelRes)}`);
+
+    const listAfterCancel = await fetch(`http://127.0.0.1:${port}/api/schedule`).then((r) => r.json());
+    const cancelledJob = listAfterCancel.jobs.find((j) => j.id === futureJobId);
+    assert(cancelledJob && cancelledJob.status === 'cancelled', 'cancelled job did not transition to status "cancelled"');
+
+    // A second cancel on an already-cancelled (non-pending) job must fail.
+    const doubleCancel = await fetch(`http://127.0.0.1:${port}/api/schedule/cancel`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: futureJobId })
+    });
+    assert(doubleCancel.status === 400, `cancelling an already-cancelled job should 400, got ${doubleCancel.status}`);
+
+    // Validation: bad session name, empty prompt, non-integer runAt.
+    const badSessionCreate = await fetch(`http://127.0.0.1:${port}/api/schedule`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: 'x', session: 'bad name!', runAt: Date.now() })
+    });
+    assert(badSessionCreate.status === 400, `schedule create with a bad session name should 400, got ${badSessionCreate.status}`);
+
+    const emptyPromptCreate = await fetch(`http://127.0.0.1:${port}/api/schedule`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: '  ', session: fakeSession, runAt: Date.now() })
+    });
+    assert(emptyPromptCreate.status === 400, `schedule create with an empty prompt should 400, got ${emptyPromptCreate.status}`);
+
+    // A job scheduled for "now" against a session that (deliberately) does
+    // not exist must fail on the next scheduler tick, never send anywhere.
+    const nonexistentSession = `smoke-nonexistent-${Date.now()}`;
+    const createDue = await fetch(`http://127.0.0.1:${port}/api/schedule`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: 'this must never be sent', session: nonexistentSession, runAt: Date.now() })
+    }).then((r) => r.json());
+    assert(createDue.ok && createDue.job && createDue.job.id, `schedule create (due now) failed: ${JSON.stringify(createDue)}`);
+    const dueJobId = createDue.job.id;
+
+    let finalJob = null;
+    for (let i = 0; i < 30; i++) {
+      const list = await fetch(`http://127.0.0.1:${port}/api/schedule`).then((r) => r.json());
+      const job = list.jobs.find((j) => j.id === dueJobId);
+      if (job && job.status !== 'pending') { finalJob = job; break; }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    assert(finalJob, 'scheduler did not process the due job within the expected window');
+    assert(finalJob.status === 'failed', `due job against a nonexistent session should end up "failed", got "${finalJob.status}"`);
+    assert(/not found/i.test(finalJob.error || ''), `due job error should mention "not found", got: ${finalJob.error}`);
+
+    console.log(`smoke ok (scheduler CRUD + tick-driven failure): future=${futureJobId}, due=${dueJobId}`);
+  }
+
   // --- daemon lifecycle: `start` always supersedes (Feature 1) --------------
   // BD_CONSOLE_PERSIST=0 is mandatory here: it forces the plain-spawn path so
   // this test never touches systemd/systemctl on the real machine.
@@ -275,7 +422,7 @@ try {
   assert(daemonMeta2.pid === daemonPid2, 'hub /api/meta pid did not match the pid file after supersede');
 
   runServeCommand(['stop']);
-  assert(!isPidAlive(daemonPid2), 'daemon still running after `stop`');
+  assert(await waitForExit(daemonPid2), 'daemon still running after `stop`');
   daemonPid = null;
 
   console.log(`smoke ok (daemon supersede): ${daemonPid1} -> ${daemonPid2}`);
@@ -420,7 +567,7 @@ try {
     env: firstRunEnv,
     stdio: 'ignore'
   });
-  assert(!isPidAlive(firstRunPid), 'first-run daemon still running after `stop`');
+  assert(await waitForExit(firstRunPid), 'first-run daemon still running after `stop`');
   firstRunPid = null;
 
   console.log('smoke ok (non-TTY first-run defaults + log line)');
