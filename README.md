@@ -107,12 +107,9 @@ bd-console add .
 ```
 The Hub Dashboard will now display live metrics for all registered projects and let you navigate between them seamlessly.
 
-### Single-Project Mode (Legacy)
-
-If you prefer to run a dedicated instance for a single project, pass the `--repo` flag:
-```bash
-bd-console start --repo ~/code/my-project --port 4181
-```
+bd-console always runs as a single Global Hub — there is no single-project
+server mode. `--repo` is only used by `bd-console-init` to choose which repo
+to initialize/register; it is not a `bd-console`/`bd-console start` flag.
 
 You can manage the daemon with:
 ```bash
@@ -199,10 +196,10 @@ Drop a `bd-console.json` at the project root (see `bd-console.json.example`):
 Environment overrides:
 
 ```bash
-BD_CONSOLE_REPO
 BD_CONSOLE_HOST
 BD_CONSOLE_PORT
 BD_CONSOLE_TOKEN
+BD_CONSOLE_CONFIG_DIR
 ```
 
 The init script writes this file for you unless one already exists. Use
@@ -265,7 +262,7 @@ This repo's own `AGENTS.md` and `CLAUDE.md` show the intended shape.
 ## Troubleshooting
 
 - `Error: no beads database found`
-  Run inside a beads repo, pass `--repo`, or inspect `bd where`.
+  Register the repo with `bd-console add <path>` (or run `bd-console-init --repo <path>`), or inspect `bd where`.
 - Issue list is stale
   Run `bd export -o .beads/issues.jsonl`.
 - Comments work but new issues or status changes do not appear

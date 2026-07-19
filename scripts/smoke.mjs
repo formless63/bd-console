@@ -50,7 +50,11 @@ function assert(cond, msg) {
 
 const tempRoot = mkdtempSync(join(tmpdir(), 'bd-console-smoke-'));
 const repoDir = join(tempRoot, 'repo');
+const configDir = join(tempRoot, 'config');
 mkdirSync(repoDir, { recursive: true });
+
+// Isolate the hub registry/config from the real ~/.config/bd-console.
+const env = { ...process.env, BD_CONSOLE_CONFIG_DIR: configDir };
 
 let server;
 
@@ -68,16 +72,24 @@ try {
   run('bd', ['export', '-o', '.beads/issues.jsonl'], { cwd: repoDir });
 
   const initEntry = resolve(join(process.cwd(), 'scripts', 'init.mjs'));
-  run(process.execPath, [initEntry, '--repo', repoDir, '--apply-agent-docs', '--create-missing-agent-docs'], { cwd: process.cwd() });
+  run(process.execPath, [initEntry, '--repo', repoDir, '--apply-agent-docs', '--create-missing-agent-docs'], { cwd: process.cwd(), env });
   assert(existsSync(join(repoDir, 'bd-console.json')), 'init did not create bd-console.json');
   assert(readFileSync(join(repoDir, 'bd-console.json'), 'utf8').includes('"host": "127.0.0.1"'), 'init config missing expected host');
   assert(readFileSync(join(repoDir, 'AGENTS.md'), 'utf8').includes('BEGIN BD-CONSOLE SETUP'), 'AGENTS.md missing bd-console setup block');
   assert(readFileSync(join(repoDir, 'CLAUDE.md'), 'utf8').includes('BEGIN BD-CONSOLE SETUP'), 'CLAUDE.md missing bd-console setup block');
 
+  // init.mjs registers the repo with the hub via `serve.mjs add`; confirm it landed.
+  const registryPath = join(configDir, 'registry.json');
+  assert(existsSync(registryPath), 'init did not register the repo with the hub');
+  const registry = JSON.parse(readFileSync(registryPath, 'utf8'));
+  const projectId = Object.keys(registry.projects).find((id) => registry.projects[id].path === repoDir);
+  assert(projectId, 'registry.json missing the initialized repo');
+
   const port = await getPort();
   const serverEntry = resolve(join(process.cwd(), 'serve.mjs'));
-  server = spawn(process.execPath, [serverEntry, '--repo', repoDir, '--host', '127.0.0.1', '--port', String(port)], {
+  server = spawn(process.execPath, [serverEntry, '--host', '127.0.0.1', '--port', String(port)], {
     cwd: process.cwd(),
+    env,
     stdio: ['ignore', 'pipe', 'pipe']
   });
 
@@ -85,30 +97,38 @@ try {
   server.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
   await waitFor(`http://127.0.0.1:${port}/api/meta`);
 
-  const meta = await fetch(`http://127.0.0.1:${port}/api/meta`).then((r) => r.json());
-  assert(meta.name === 'repo', 'meta name mismatch');
+  const hubMeta = await fetch(`http://127.0.0.1:${port}/api/meta`).then((r) => r.json());
+  assert(hubMeta.mode === 'hub', 'root /api/meta should report hub mode');
 
-  const issues0 = await fetch(`http://127.0.0.1:${port}/api/issues`).then((r) => r.json());
-  assert(Array.isArray(issues0.issues) && issues0.issues.some((i) => i.id === seedId), 'seed issue missing from /api/issues');
+  const projects = await fetch(`http://127.0.0.1:${port}/api/projects`).then((r) => r.json());
+  assert(projects.projects && projects.projects[projectId] && projects.projects[projectId].path === repoDir, '/api/projects missing registered repo');
 
-  const docs = await fetch(`http://127.0.0.1:${port}/api/docs`).then((r) => r.json());
-  assert(docs.docs.some((d) => d.path === 'README.md'), 'top-level README missing from /api/docs');
-  assert(docs.docs.some((d) => d.path === 'docs/plan.md'), 'nested doc missing from /api/docs');
+  const p = (path) => `http://127.0.0.1:${port}/api/p/${projectId}${path}`;
 
-  const doc = await fetch(`http://127.0.0.1:${port}/api/doc?path=${encodeURIComponent('docs/plan.md')}`).then((r) => r.json());
-  assert(doc.content.includes('Plan'), '/api/doc returned unexpected content');
+  const meta = await fetch(p('/meta')).then((r) => r.json());
+  assert(meta.name === 'repo', 'per-project meta name mismatch');
 
-  const comments0 = await fetch(`http://127.0.0.1:${port}/api/comments?id=${encodeURIComponent(seedId)}`).then((r) => r.json());
-  assert(Array.isArray(comments0.comments), '/api/comments did not return an array');
+  const issues0 = await fetch(p('/issues')).then((r) => r.json());
+  assert(Array.isArray(issues0.issues) && issues0.issues.some((i) => i.id === seedId), 'seed issue missing from /api/p/<id>/issues');
 
-  const commentRes = await fetch(`http://127.0.0.1:${port}/api/comment`, {
+  const docs = await fetch(p('/docs')).then((r) => r.json());
+  assert(docs.docs.some((d) => d.path === 'README.md'), 'top-level README missing from /api/p/<id>/docs');
+  assert(docs.docs.some((d) => d.path === 'docs/plan.md'), 'nested doc missing from /api/p/<id>/docs');
+
+  const doc = await fetch(p(`/doc?path=${encodeURIComponent('docs/plan.md')}`)).then((r) => r.json());
+  assert(doc.content.includes('Plan'), '/api/p/<id>/doc returned unexpected content');
+
+  const comments0 = await fetch(p(`/comments?id=${encodeURIComponent(seedId)}`)).then((r) => r.json());
+  assert(Array.isArray(comments0.comments), '/api/p/<id>/comments did not return an array');
+
+  const commentRes = await fetch(p('/comment'), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ id: seedId, text: 'smoke comment' })
   }).then((r) => r.json());
   assert(commentRes.comments.some((c) => c.text === 'smoke comment'), 'comment write path failed');
 
-  await fetch(`http://127.0.0.1:${port}/api/edit`, {
+  await fetch(p('/edit'), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ id: seedId, op: 'claim' })
@@ -117,7 +137,7 @@ try {
     if (!r.ok) throw new Error(data.error || `edit claim failed (${r.status})`);
   });
 
-  await fetch(`http://127.0.0.1:${port}/api/edit`, {
+  await fetch(p('/edit'), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ id: seedId, op: 'set-priority', priority: '1' })
@@ -126,7 +146,7 @@ try {
     if (!r.ok) throw new Error(data.error || `edit priority failed (${r.status})`);
   });
 
-  await fetch(`http://127.0.0.1:${port}/api/edit`, {
+  await fetch(p('/edit'), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ id: seedId, op: 'add-label', label: 'smoke' })
@@ -135,21 +155,25 @@ try {
     if (!r.ok) throw new Error(data.error || `edit label failed (${r.status})`);
   });
 
-  const issuesAfterEdit = await fetch(`http://127.0.0.1:${port}/api/issues`).then((r) => r.json());
+  const issuesAfterEdit = await fetch(p('/issues')).then((r) => r.json());
   const edited = issuesAfterEdit.issues.find((i) => i.id === seedId);
   assert(edited && edited.priority === 1, 'priority edit did not persist');
   assert(edited && edited.status === 'in_progress', 'claim action did not persist');
   assert(edited && (edited.labels || []).includes('smoke'), 'label edit did not persist');
 
-  const quickRes = await fetch(`http://127.0.0.1:${port}/api/quick`, {
+  const quickRes = await fetch(p('/quick'), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ title: 'Quick smoke issue', description: 'created by smoke', label: 'triage', priority: '3' })
   }).then((r) => r.json());
   assert(quickRes.id, 'quick capture did not return an issue id');
 
-  const issues1 = await fetch(`http://127.0.0.1:${port}/api/issues`).then((r) => r.json());
+  const issues1 = await fetch(p('/issues')).then((r) => r.json());
   assert(issues1.issues.some((i) => i.id === quickRes.id), 'quick-captured issue missing after export refresh');
+
+  // A request for an unregistered project should 404, not fall through.
+  const unknown = await fetch(`http://127.0.0.1:${port}/api/p/does-not-exist/issues`);
+  assert(unknown.status === 404, 'unknown project id should 404');
 
   console.log(`smoke ok: ${seedId}, ${quickRes.id}`);
 } catch (err) {

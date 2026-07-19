@@ -183,25 +183,26 @@ async function upsertGuideFile(path, createIfMissing, dryRun) {
 
 import { fileURLToPath } from 'node:url';
 import { mkdir } from 'node:fs/promises';
-import { basename } from 'node:path';
 
-async function installSystemService(workspace, dryRun) {
+// bd-console now runs as a single Global Hub daemon (not one instance per
+// repo), so this installs one shared systemd user service that runs the hub
+// server; the workspace being initialized is registered with that hub
+// separately (see the `add` call in main()).
+async function installSystemService(dryRun) {
   if (process.platform !== 'linux') {
     return { error: 'systemd service installation is only supported on Linux.' };
   }
   const __dirname = dirname(fileURLToPath(import.meta.url));
   const serveJs = resolve(join(__dirname, '..', 'serve.mjs'));
-  const repoName = basename(workspace) || 'repo';
-  const safeName = repoName.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase();
-  const serviceName = `bd-console-${safeName}.service`;
-  
+  const serviceName = 'bd-console.service';
+
   const unitFile = `[Unit]
-Description=bd-console for ${workspace}
+Description=bd-console Global Hub
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=${process.execPath} ${serveJs} --repo ${workspace}
+ExecStart=${process.execPath} ${serveJs}
 Restart=on-failure
 RestartSec=3
 
@@ -250,7 +251,7 @@ async function main() {
   const serveJs = resolve(join(__dirname, '..', 'serve.mjs'));
   if (!args.dryRun) {
     try {
-      const addResult = await runCmd(process.execPath, [serveJs, 'add', '--repo', workspace]);
+      const addResult = await runCmd(process.execPath, [serveJs, 'add', workspace]);
       if (addResult.ok) {
         console.log(`hub: registered ${workspace}`);
       } else {
@@ -276,7 +277,7 @@ async function main() {
 
   let serviceStatus = null;
   if (args.installService) {
-    serviceStatus = await installSystemService(workspace, args.dryRun);
+    serviceStatus = await installSystemService(args.dryRun);
   }
 
   console.log(`workspace: ${workspace}`);
