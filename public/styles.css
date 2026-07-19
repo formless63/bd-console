@@ -260,6 +260,7 @@ code { font-family: var(--font-mono); }
 .icon-btn:hover { background: var(--surface-2); color: var(--text); }
 .icon-btn.hub-back { width: auto; padding: 0 10px; color: var(--text-dim); font-weight: 500; font-size: 13px; }
 .icon-btn.hub-back:hover { color: var(--text); }
+.icon-btn-xs { width: 24px; height: 24px; }
 
 .field {
   width: 100%; background: var(--surface); border: 1px solid var(--border); color: var(--text);
@@ -378,14 +379,41 @@ textarea.field { resize: vertical; }
 .hub-section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.6rem; }
 .hub-section-head h2 { font-size: 13px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint); margin: 0; }
 .hub-section-empty { margin: 0; }
-.hub-tmux-rows { display: flex; flex-direction: column; gap: 6px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 6px; box-shadow: var(--shadow-sm); }
-.hub-tmux-row {
-  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: none; border: none; font: inherit;
-  color: var(--text); cursor: pointer; padding: 8px 10px; border-radius: var(--radius-sm); transition: background 0.14s var(--ease);
+/* Single CSS grid spanning every row: the header (HubTmuxHead) and each
+   session row (SessionRowCompact) are `display: contents` wrappers, so
+   their cells become flat, in-order items of *this* grid and share one set
+   of column tracks. That's what keeps columns aligned across rows instead
+   of each row sizing itself independently like a flex row would. Every row
+   must emit exactly six direct-child cells, in the same order, for the
+   auto-placement to line up correctly. */
+.hub-tmux-rows {
+  display: grid;
+  grid-template-columns: minmax(84px, 1.1fr) minmax(70px, 0.85fr) minmax(70px, 1.3fr) 58px 78px 34px;
+  align-items: center;
+  column-gap: 12px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: 4px 10px; box-shadow: var(--shadow-sm);
 }
-.hub-tmux-row:hover { background: var(--bg); }
-.hub-tmux-cmd { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hub-tmux-repo { margin-left: 0; flex-shrink: 0; }
+.hub-tmux-row { display: contents; cursor: pointer; }
+.hub-tmux-row > * { min-width: 0; padding: 7px 0; border-bottom: 1px solid var(--border); transition: background 0.14s var(--ease); }
+.hub-tmux-row:hover > *, .hub-tmux-row:focus-visible > * { background: var(--bg); }
+.hub-tmux-row:focus-visible { outline: none; }
+
+.hub-tmux-head-row > * { padding: 4px 0 6px; border-bottom: 1px solid var(--border-2); background: none; }
+.tmux-head-label { font-size: 10px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-faint); }
+
+.tmux-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); flex-shrink: 0; display: inline-block; }
+.tmux-dot.on { background: var(--green); box-shadow: 0 0 0 2px color-mix(in srgb, var(--green) 20%, transparent); }
+
+.tmux-cell-name { display: flex; align-items: center; gap: 7px; overflow: hidden; }
+.tmux-cell-name .tmux-name { font-family: var(--font-mono); font-weight: 600; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tmux-cell-repo { overflow: hidden; }
+.tmux-cell-empty { color: var(--text-faint); font-size: 12px; }
+.tmux-cell-cmd { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); }
+.tmux-cell-age, .tmux-cell-activity { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-faint); }
+.tmux-cell-actions { display: flex; justify-content: flex-end; }
+
+.hub-tmux-repo { margin-left: 0; flex-shrink: 0; max-width: 100%; }
 
 .dot-status { width: 7px; height: 7px; border-radius: 50%; display: inline-block; background: var(--text-faint); }
 .dot-status.st-open, .st-open .dot-status { background: var(--green); }
@@ -826,7 +854,31 @@ input.edit-input { flex: 1; min-width: 120px; }
   .hub { padding: 1.5rem 1rem 3rem; }
   .hub-grid { grid-template-columns: 1fr; }
   .hub-section, .hub-grid { max-width: 100%; }
-  .hub-tmux-row { flex-wrap: wrap; }
+  /* Collapse the aligned grid into stacked, two-line row "cards": each row
+     becomes its own 4-column grid (name/actions on line 1; repo/cmd/age/
+     activity on line 2 via grid-template-areas) instead of participating
+     in the shared desktop grid, so nothing has to scroll horizontally. */
+  .hub-tmux-rows { display: flex; flex-direction: column; align-items: stretch; gap: 6px; background: none; border: none; box-shadow: none; padding: 0; }
+  .hub-tmux-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-areas: "name name name actions" "repo cmd  age  activity";
+    column-gap: 8px; row-gap: 4px;
+    padding: 9px 10px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  }
+  /* Two selector classes beats .hub-tmux-row's single-class specificity
+     regardless of source order, so the header row (which carries both
+     classes) reliably stays hidden instead of picking up the grid rule
+     above meant for session rows. */
+  .hub-tmux-row.hub-tmux-head-row { display: none; }
+  .hub-tmux-row > * { border-bottom: none; padding: 0; }
+  .tmux-cell-name { grid-area: name; }
+  .tmux-cell-repo { grid-area: repo; }
+  .tmux-cell-cmd { grid-area: cmd; }
+  .tmux-cell-age { grid-area: age; }
+  .tmux-cell-activity { grid-area: activity; text-align: right; }
+  .tmux-cell-actions { grid-area: actions; }
+  .hub-tmux-repo { max-width: 84px; }
   .settings-grid { grid-template-columns: 1fr; }
   .settings-row { grid-template-columns: 74px 1fr auto; }
   .settings-form-row { flex-wrap: wrap; }

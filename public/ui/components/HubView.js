@@ -5,7 +5,7 @@ import { html } from 'htm/preact';
 import { useEffect, useState } from 'preact/hooks';
 import { store, navigate, loadProjectStats, loadTmux, loadSchedule, loadProjectsGit } from '../store.js';
 import { timeAgo } from './common.js';
-import { SessionRowCompact } from './TmuxView.js';
+import { SessionRowCompact, HubTmuxHead } from './TmuxView.js';
 
 const METRICS_META = [
   ['open', 'Ready', 'green'],
@@ -157,6 +157,7 @@ function TmuxSection() {
       ${sessions.length === 0
         ? html`<p class="muted small hub-section-empty">No tmux sessions running.</p>`
         : html`<div class="hub-tmux-rows">
+            <${HubTmuxHead} />
             ${sessions.slice(0, 6).map((s) => html`<${SessionRowCompact} key=${s.name} session=${s} projects=${projects} onClick=${() => navigate('#/tmux')} />`)}
           </div>`}
     </section>`;

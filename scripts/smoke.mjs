@@ -284,6 +284,8 @@ try {
       assert(typeof s.created === 'number', 'tmux session missing numeric created');
       assert(typeof s.attached === 'number', 'tmux session missing numeric attached');
       assert(typeof s.windows === 'number', 'tmux session missing numeric windows');
+      assert(s.activity === null || typeof s.activity === 'number', 'tmux session activity must be number or null');
+      assert(s.lastAttached === null || typeof s.lastAttached === 'number', 'tmux session lastAttached must be number or null');
       assert(Array.isArray(s.panes), 'tmux session missing panes array');
       for (const pane of s.panes) {
         assert(typeof pane.command === 'string', 'tmux pane missing command');

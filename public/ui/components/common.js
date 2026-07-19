@@ -20,6 +20,21 @@ export function fmtDate(s) {
 }
 export function fmtClock(ms) { return ms ? new Date(ms).toLocaleTimeString() : 'never'; }
 
+// Compact combined-unit age, e.g. "3d 4h", "2h 15m", "5m" — used for
+// "time since created" stats where a single rounded unit (as timeAgo gives)
+// reads as too coarse. `createdSec` is epoch seconds; falsy -> '—'.
+export function ageText(createdSec) {
+  if (!createdSec) return '—';
+  const diffMs = Date.now() - createdSec * 1000;
+  const mins = Math.max(0, Math.floor(diffMs / 60000));
+  const days = Math.floor(mins / 1440);
+  const hours = Math.floor((mins % 1440) / 60);
+  const remMins = mins % 60;
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${remMins}m`;
+  return `${mins}m`;
+}
+
 // Relative time that works both directions — "in 5m" for future timestamps
 // (e.g. a not-yet-fired schedule job), "5m ago" for past ones.
 export function relTime(ms) {
@@ -93,4 +108,37 @@ export function syncState(info) {
   if (info.error) return 'err';
   if (!info.exists || info.stale) return 'warn';
   return 'ok';
+}
+
+// Copies text to the clipboard, trying the modern async Clipboard API first
+// and falling back to a hidden-textarea + execCommand('copy') for contexts
+// where navigator.clipboard is unavailable (notably: browsing the console
+// over plain http via a LAN IP, which most browsers treat as an insecure
+// context and refuse to expose the Clipboard API on). Resolves true/false —
+// never throws — so callers can toast the outcome either way.
+export async function copyToClipboard(text) {
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch { /* fall through to the legacy fallback below */ }
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:0;left:-9999px;opacity:0;';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, ta.value.length);
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return !!ok;
+  } catch {
+    return false;
+  }
+}
+
+export function CopyIcon() {
+  return html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M4 1.5A1.5 1.5 0 0 0 2.5 3v7A1.5 1.5 0 0 0 4 11.5h1v-1H4a.5.5 0 0 1-.5-.5V3a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 .5.5v1h1V3A1.5 1.5 0 0 0 9 1.5H4Zm3 3A1.5 1.5 0 0 0 5.5 6v7A1.5 1.5 0 0 0 7 14.5h5a1.5 1.5 0 0 0 1.5-1.5V6A1.5 1.5 0 0 0 12 4.5H7ZM6.5 6a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 .5.5v7a.5.5 0 0 1-.5.5H7a.5.5 0 0 1-.5-.5V6Z"/></svg>`;
 }

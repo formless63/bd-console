@@ -4,25 +4,82 @@
 // polling preview drawer (GET /api/tmux/preview, ANSI stripped).
 import { html } from 'htm/preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { store, navigate, loadTmux, loadTmuxPreview } from '../store.js';
-import { timeAgo, cwdTail, stripAnsi, matchProject } from './common.js';
+import { store, navigate, loadTmux, loadTmuxPreview, toast } from '../store.js';
+import { timeAgo, cwdTail, stripAnsi, matchProject, ageText, copyToClipboard, CopyIcon } from './common.js';
 
 const SESSION_POLL_MS = 8000;
 const PREVIEW_POLL_MS = 3000;
 
-// Compact single-line session row shared with the hub's "Terminal sessions"
-// section — name, attached badge, first pane's command, and a repo chip when
-// the pane's cwd resolves to a registered project.
+// Copies `tmux attach -t <name>` to the clipboard and toasts the outcome.
+// On success the toast confirms what was copied; if copyToClipboard
+// couldn't write to the clipboard at all (e.g. an insecure http context
+// with no execCommand fallback available either), the toast shows the raw
+// command text itself, held open longer, so the user can select/copy it by
+// hand instead.
+async function copyAttach(name) {
+  const cmd = `tmux attach -t ${name}`;
+  const ok = await copyToClipboard(cmd);
+  toast(ok ? `Copied "${cmd}"` : cmd, ok ? 'ok' : 'warn', ok ? 3200 : 8000);
+}
+
+function CopyAttachButton({ name }) {
+  return html`
+    <button
+      type="button"
+      class="icon-btn icon-btn-xs tmux-copy-btn"
+      title="Copy attach command"
+      aria-label=${'Copy attach command for ' + name}
+      onClick=${(e) => { e.stopPropagation(); copyAttach(name); }}
+    ><${CopyIcon} /></button>`;
+}
+
+// Column header for the hub's compact session grid. It's a sibling
+// `display: contents` group (see .hub-tmux-rows in styles.css) so its six
+// labels land in the exact same grid columns the session rows below use —
+// that's what keeps everything aligned instead of each row sizing itself.
+export function HubTmuxHead() {
+  return html`
+    <div class="hub-tmux-row hub-tmux-head-row">
+      <span class="tmux-cell-name tmux-head-label">Session</span>
+      <span class="tmux-cell-repo tmux-head-label">Repo</span>
+      <span class="tmux-cell-cmd tmux-head-label">Command</span>
+      <span class="tmux-cell-age tmux-head-label">Age</span>
+      <span class="tmux-cell-activity tmux-head-label">Active</span>
+      <span class="tmux-cell-actions tmux-head-label"></span>
+    </div>`;
+}
+
+// Compact session row shared with the hub's "Terminal sessions" section —
+// status dot + name, repo chip, first pane's command, age/last-activity
+// stats, and a copy-attach action. Every row (including the header above)
+// must emit exactly six direct-child cells, in this order, for the shared
+// grid's columns to line up — see .hub-tmux-rows in styles.css.
 export function SessionRowCompact({ session, projects, onClick }) {
   const first = session.panes[0];
   const match = first ? matchProject(first.cwd, projects) : null;
+  // Only treat Enter/Space as "open" when they originate on the row itself
+  // — not when they bubble up from the nested copy-attach button, which
+  // handles its own activation.
+  const onKeyDown = (e) => {
+    if (e.target !== e.currentTarget) return;
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); }
+  };
   return html`
-    <button type="button" class="hub-tmux-row" onClick=${onClick}>
-      <span class="tmux-name">${session.name}</span>
-      <span class=${'badge tmux-attach' + (session.attached ? ' on' : '')}>${session.attached ? 'attached' : 'detached'}</span>
-      <span class="pane-cmd hub-tmux-cmd">${first?.command || '—'}</span>
-      ${match && html`<span class="chip repo-chip hub-tmux-repo">${match[0]}</span>`}
-    </button>`;
+    <div class="hub-tmux-row" role="button" tabIndex="0" onClick=${onClick} onKeyDown=${onKeyDown}>
+      <span class="tmux-cell-name">
+        <span class=${'tmux-dot' + (session.attached ? ' on' : '')} title=${session.attached ? 'attached' : 'detached'}></span>
+        <span class="tmux-name">${session.name}</span>
+      </span>
+      <span class="tmux-cell-repo">
+        ${match
+          ? html`<span class="chip repo-chip hub-tmux-repo" title=${match[1].path}>${match[0]}</span>`
+          : html`<span class="tmux-cell-empty">—</span>`}
+      </span>
+      <span class="tmux-cell-cmd pane-cmd" title=${first?.command || ''}>${first?.command || '—'}</span>
+      <span class="tmux-cell-age" title="Session age">${ageText(session.created)}</span>
+      <span class="tmux-cell-activity" title="Last activity">${session.activity ? timeAgo(session.activity * 1000) : '—'}</span>
+      <span class="tmux-cell-actions"><${CopyAttachButton} name=${session.name} /></span>
+    </div>`;
 }
 
 function Pane({ pane, projects }) {
@@ -48,7 +105,7 @@ function SessionCard({ session, projects, onPreview, onSchedule }) {
         <span class=${'badge tmux-attach' + (session.attached ? ' on' : '')}>${session.attached ? 'attached' : 'detached'}</span>
       </div>
       <div class="tmux-meta muted small">
-        ${session.windows} window${session.windows === 1 ? '' : 's'} · created ${timeAgo(session.created ? session.created * 1000 : null)}
+        ${session.windows} window${session.windows === 1 ? '' : 's'} · age ${ageText(session.created)} · active ${session.activity ? timeAgo(session.activity * 1000) : '—'}
       </div>
       <div class="tmux-panes">
         ${session.panes.length === 0
@@ -57,6 +114,7 @@ function SessionCard({ session, projects, onPreview, onSchedule }) {
       </div>
       <div class="tmux-card-actions">
         <button class="btn btn-xs" onClick=${onPreview}>Preview</button>
+        <button class="btn btn-xs btn-ghost" onClick=${() => copyAttach(session.name)}>Copy attach</button>
         <button class="btn btn-xs btn-ghost" onClick=${onSchedule}>Schedule a prompt here</button>
       </div>
     </div>`;
