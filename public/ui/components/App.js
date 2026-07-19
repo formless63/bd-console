@@ -7,14 +7,15 @@ import { HubView } from './HubView.js';
 import { ProjectView } from './ProjectView.js';
 import { TmuxView } from './TmuxView.js';
 import { ScheduleView } from './ScheduleView.js';
+import { SettingsView } from './SettingsView.js';
 import { Toasts } from './Toasts.js';
 import { CreateIssueDialog } from './CreateIssueDialog.js';
-import { TokenDialog } from './TokenDialog.js';
 
 function CurrentView(route) {
   if (route.view === 'project') return html`<${ProjectView} />`;
   if (route.view === 'tmux') return html`<${TmuxView} />`;
   if (route.view === 'schedule') return html`<${ScheduleView} />`;
+  if (route.view === 'settings') return html`<${SettingsView} />`;
   return html`<${HubView} />`;
 }
 
@@ -26,7 +27,6 @@ export function App() {
       ${CurrentView(route)}
     </div>
     <${CreateIssueDialog} />
-    <${TokenDialog} />
     <${Toasts} />
   `;
 }

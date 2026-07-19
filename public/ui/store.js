@@ -72,9 +72,21 @@ export const store = {
 
   // ui chrome
   toasts: signal([]),
-  tokenDialogOpen: signal(false),
   createOpen: signal(false),
   mobileFiltersOpen: signal(false),
+
+  // settings (#/settings)
+  settings: signal(null),
+  settingsAvailable: signal(true),
+  settingsLoading: signal(false),
+
+  // saved prompts (hub-level, backs the schedule create form)
+  prompts: signal([]),
+  promptsAvailable: signal(true),
+
+  // hub restyle: per-project git insights (GET /api/projects?git=1)
+  projectsGit: signal({}),
+  projectsGitAvailable: signal(true),
 };
 
 // ---------------------------------------------------------------------------
@@ -216,6 +228,7 @@ export function parseHash() {
   }
   if (parts[0] === 'tmux') return { view: 'tmux' };
   if (parts[0] === 'schedule') return { view: 'schedule' };
+  if (parts[0] === 'settings') return { view: 'settings' };
   return { view: 'hub' };
 }
 export function navigate(hash) { if (location.hash !== hash) location.hash = hash; }
@@ -282,12 +295,33 @@ export async function loadHub() {
   } catch (e) { toast('Failed to load projects: ' + e.message, 'err'); }
 }
 
-// Per-project card stats for the hub.
+// Per-project git insights for hub cards (branch, last commit, ahead/behind,
+// dirty state). Optional endpoint form (?git=1) — degrade silently (whole
+// hub still renders plain cards) if the server doesn't support it yet.
+export async function loadProjectsGit() {
+  try {
+    const data = await apiGetRaw('/api/projects?git=1');
+    const projects = data.projects || {};
+    const git = {};
+    for (const [id, p] of Object.entries(projects)) git[id] = p.git ?? null;
+    store.projectsGit.value = git;
+    store.projectsGitAvailable.value = true;
+  } catch (e) {
+    store.projectsGitAvailable.value = false;
+    store.projectsGit.value = {};
+    console.warn('Project git insights unavailable: ' + e.message);
+  }
+}
+
+// Per-project card stats for the hub. `open` here means "open and unblocked"
+// (i.e. ready) — blocked opens are bucketed separately, matching effStatus()
+// semantics used elsewhere. Also folds in the small extra metrics the hub
+// restyle wants: closed7d (a velocity signal) and openBugs.
 export async function loadProjectStats(id) {
   const data = await apiGetRaw('/api/p/' + encodeURIComponent(id) + '/issues');
   const issues = data.issues || [];
-  const t = { open: 0, in_progress: 0, blocked: 0, closed: 0, total: issues.length };
-  const idset = new Map(issues.map((i) => [i.id, i]));
+  const t = { open: 0, in_progress: 0, blocked: 0, closed: 0, total: issues.length, closed7d: 0, openBugs: 0 };
+  const sevenDaysAgo = Date.now() - 7 * 86400000;
   for (const i of issues) {
     let s = i.status;
     if (s === 'open') {
@@ -298,6 +332,11 @@ export async function loadProjectStats(id) {
       if (blocked) s = 'blocked';
     }
     if (t[s] != null) t[s]++;
+    if (s === 'closed') {
+      const ts = i.closed_at ? new Date(i.closed_at).getTime() : (i.updated_at ? new Date(i.updated_at).getTime() : 0);
+      if (ts && ts >= sevenDaysAgo) t.closed7d++;
+    }
+    if (i.issue_type === 'bug' && i.status !== 'closed') t.openBugs++;
   }
   return t;
 }
@@ -375,7 +414,7 @@ export async function loadTmuxPreview(session, lines = 400) {
     const data = await apiGetRaw('/api/tmux/preview?session=' + encodeURIComponent(session) + '&lines=' + lines);
     return data.text || '';
   } catch (e) {
-    if (e instanceof AuthError) { store.tokenDialogOpen.value = true; toast('A write token is required to view pane output.', 'err'); }
+    if (e instanceof AuthError) requireToken('A write token is required to view pane output.');
     throw e;
   }
 }
@@ -411,6 +450,66 @@ export async function scheduleCancel(id) {
 }
 
 // ---------------------------------------------------------------------------
+// Saved prompts (hub-level) — backs the schedule create form's picker.
+// Endpoints may not exist yet on an older server; degrade to "unavailable"
+// on any failure (404/501/network) rather than erroring the whole view.
+// ---------------------------------------------------------------------------
+export async function loadPrompts() {
+  try {
+    const data = await apiGetRaw('/api/prompts');
+    store.prompts.value = data.prompts || [];
+    store.promptsAvailable.value = true;
+  } catch (e) {
+    store.promptsAvailable.value = false;
+    store.prompts.value = [];
+    console.warn('Saved prompts unavailable: ' + e.message);
+  }
+}
+
+export async function savePrompt(name, prompt) {
+  const data = await withAuth(() => apiPost('/api/prompts', { name, prompt }));
+  await loadPrompts();
+  toast('Saved prompt "' + name + '"');
+  return data.id;
+}
+
+export async function deletePrompt(id) {
+  await withAuth(() => apiPost('/api/prompts/delete', { id }));
+  await loadPrompts();
+  toast('Deleted saved prompt');
+}
+
+// Best-effort "last used" ping — never surfaces an error to the user.
+export async function markPromptUsed(id) {
+  try { await apiPost('/api/prompts/used', { id }); } catch { /* ignore */ }
+}
+
+// ---------------------------------------------------------------------------
+// Settings (#/settings) — hub-level server configuration + tokens.
+// ---------------------------------------------------------------------------
+export async function loadSettings() {
+  store.settingsLoading.value = true;
+  try {
+    const data = await apiGetRaw('/api/settings');
+    store.settings.value = data;
+    store.settingsAvailable.value = true;
+  } catch (e) {
+    store.settingsAvailable.value = false;
+    store.settings.value = null;
+    console.warn('Settings endpoint unavailable: ' + e.message);
+  } finally {
+    store.settingsLoading.value = false;
+  }
+}
+
+// token: a non-empty string to set the server write token, or null to clear it.
+export async function saveServerToken(token) {
+  const data = await withAuth(() => apiPost('/api/settings', { token }));
+  await loadSettings();
+  return data;
+}
+
+// ---------------------------------------------------------------------------
 // Issue selection + comments
 // ---------------------------------------------------------------------------
 export async function selectIssue(id) {
@@ -435,9 +534,17 @@ export function selectAdjacent(delta) {
 // ---------------------------------------------------------------------------
 // Writes
 // ---------------------------------------------------------------------------
+// A 401 means the server wants a write token this browser doesn't have (or
+// has the wrong one) — send the user to #/settings to fix it, with a toast
+// explaining why, instead of a modal dialog.
+export function requireToken(message = 'A write token is required.') {
+  toast(message, 'err');
+  if (store.route.value.view !== 'settings') navigate('#/settings');
+}
+
 function withAuth(fn) {
   return fn().catch((e) => {
-    if (e instanceof AuthError) { store.tokenDialogOpen.value = true; toast('A write token is required.', 'err'); }
+    if (e instanceof AuthError) requireToken('A write token is required.');
     throw e;
   });
 }

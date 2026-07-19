@@ -1,12 +1,55 @@
-// HubView.js — the global hub landing page: a responsive grid of project cards,
-// each showing live status tallies and linking through to the project view.
+// HubView.js — the global hub landing page: a hero header, a live tmux
+// sessions strip, and a responsive grid of project cards carrying issue
+// metrics and (optional) git insights.
 import { html } from 'htm/preact';
 import { useEffect, useState } from 'preact/hooks';
-import { store, navigate, loadProjectStats, loadTmux, loadSchedule } from '../store.js';
+import { store, navigate, loadProjectStats, loadTmux, loadSchedule, loadProjectsGit } from '../store.js';
+import { timeAgo } from './common.js';
+import { SessionRowCompact } from './TmuxView.js';
 
-const STATUS_META = [
-  ['open', 'Open'], ['in_progress', 'Active'], ['blocked', 'Blocked'], ['closed', 'Closed'],
+const METRICS_META = [
+  ['open', 'Ready', 'green'],
+  ['in_progress', 'Active', 'accent'],
+  ['blocked', 'Blocked', 'red'],
 ];
+
+function truncate(s, n) {
+  if (!s) return '';
+  return s.length > n ? s.slice(0, n - 1) + '…' : s;
+}
+
+function GitLinkIcon() {
+  return html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M6.5 2a.5.5 0 000 1H12l-6.65 6.65a.5.5 0 10.7.7L12.7 3.7V9a.5.5 0 001 0V3a1 1 0 00-1-1H6.5z"/></svg>`;
+}
+function BranchIcon() {
+  return html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true"><path fill="currentColor" d="M5 2.5a1.5 1.5 0 113 0 1.5 1.5 0 01-3 0zm.5 2.45v6.1a1.5 1.5 0 11-1 0V4.95a1.5 1.5 0 111 0zM11 12a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zm-2.5-1.5V9c0-1.1.9-2 2-2h.5a1.5 1.5 0 100-1H10.5A3 3 0 007.5 9v1.5"/></svg>`;
+}
+
+function GitInsights({ git }) {
+  if (!git) return null;
+  const any = git.branch || git.lastCommit || git.webUrl || (git.dirty ?? 0) > 0 || git.ahead != null || git.behind != null || git.commits7d != null;
+  if (!any) return null;
+  return html`
+    <div class="hub-card-git">
+      <div class="hub-card-git-row">
+        ${git.branch && html`<span class="git-chip git-branch"><${BranchIcon} />${git.branch}</span>`}
+        ${git.ahead != null && git.ahead > 0 && html`<span class="git-chip git-ahead" title="${git.ahead} commit(s) ahead of upstream">↑${git.ahead}</span>`}
+        ${git.behind != null && git.behind > 0 && html`<span class="git-chip git-behind" title="${git.behind} commit(s) behind upstream">↓${git.behind}</span>`}
+        ${(git.dirty ?? 0) > 0 && html`<span class="git-chip git-dirty" title="${git.dirty} file(s) with uncommitted changes">●${git.dirty}</span>`}
+        ${git.commits7d != null && html`<span class="git-chip git-velocity">${git.commits7d} commit${git.commits7d === 1 ? '' : 's'}/wk</span>`}
+        ${git.webUrl && html`
+          <a class="git-link" href=${git.webUrl} target="_blank" rel="noopener noreferrer" title="Open remote"
+            onClick=${(e) => e.stopPropagation()}>
+            <${GitLinkIcon} />
+          </a>`}
+      </div>
+      ${git.lastCommit && (git.lastCommit.subject || git.lastCommit.hash) && html`
+        <div class="hub-card-commit muted small" title=${[git.lastCommit.author, git.lastCommit.subject].filter(Boolean).join(' · ')}>
+          <span class="commit-subject">${truncate(git.lastCommit.subject, 58) || git.lastCommit.hash?.slice(0, 7)}</span>
+          ${git.lastCommit.time && html`<span class="commit-time"> · ${timeAgo(git.lastCommit.time * 1000)}</span>`}
+        </div>`}
+    </div>`;
+}
 
 function ProjectCard({ id, project }) {
   const [stats, setStats] = useState(null);
@@ -17,32 +60,42 @@ function ProjectCard({ id, project }) {
     return () => { live = false; };
   }, [id]);
 
+  const git = store.projectsGit.value[id];
   const open = () => navigate('#/p/' + encodeURIComponent(id));
+  const onKeyDown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } };
+
   return html`
-    <button class="hub-card" onClick=${open}>
+    <div class="hub-card" role="button" tabIndex="0" onClick=${open} onKeyDown=${onKeyDown}>
       <div class="hub-card-top">
         <span class="hub-card-title">${id}</span>
-        ${stats && html`<span class="hub-card-total">${stats.total} issues</span>`}
+        ${stats && html`<span class="hub-card-total">${stats.total} issue${stats.total === 1 ? '' : 's'}</span>`}
       </div>
       <div class="hub-card-path">${project.path}</div>
+
+      <${GitInsights} git=${git} />
+
       <div class="hub-card-stats">
         ${err
           ? html`<span class="muted small">Failed to load</span>`
           : !stats
-            ? STATUS_META.map(([k]) => html`<span key=${k} class="stat-pill skeleton-pill"></span>`)
-            : STATUS_META.map(([k, label]) => html`
+            ? METRICS_META.map(([k]) => html`<span key=${k} class="stat-pill skeleton-pill"></span>`)
+            : html`
+              ${METRICS_META.map(([k, label]) => html`
                 <span key=${k} class=${'stat-pill s-' + k}>
                   <span class=${'dot-status st-' + k}></span>${stats[k]} ${label}
                 </span>`)}
+              ${stats.closed7d > 0 && html`<span class="stat-pill s-velocity" title="Closed in the last 7 days">⚡ ${stats.closed7d}/wk</span>`}
+              ${stats.openBugs > 0 && html`<span class="stat-pill s-bugs" title="Open bugs">🐞 ${stats.openBugs}</span>`}
+            `}
       </div>
       <div class="hub-card-cta">Open project →</div>
-    </button>`;
+    </div>`;
 }
 
 // One-shot (not polled) summary strip — cheap enough to fetch every time the
 // hub mounts, but the tmux/schedule views themselves own the live polling.
 function OpsStrip() {
-  useEffect(() => { loadTmux(); loadSchedule(); }, []);
+  useEffect(() => { loadTmux(); loadSchedule(); loadProjectsGit(); }, []);
   const sessions = store.tmuxSessions.value;
   const pending = store.scheduleJobs.value.filter((j) => j.status === 'pending').length;
   const hasTmux = store.tmuxAvailable.value;
@@ -58,6 +111,25 @@ function OpsStrip() {
     </div>`;
 }
 
+function TmuxSection() {
+  const hasTmux = store.tmuxAvailable.value;
+  const sessions = store.tmuxSessions.value;
+  const projects = store.projects.value;
+  if (!hasTmux) return null;
+  return html`
+    <section class="hub-section hub-tmux-section">
+      <div class="hub-section-head">
+        <h2>Terminal sessions</h2>
+        ${sessions.length > 0 && html`<button class="btn btn-ghost btn-xs" onClick=${() => navigate('#/tmux')}>View all →</button>`}
+      </div>
+      ${sessions.length === 0
+        ? html`<p class="muted small hub-section-empty">No tmux sessions running.</p>`
+        : html`<div class="hub-tmux-rows">
+            ${sessions.slice(0, 6).map((s) => html`<${SessionRowCompact} key=${s.name} session=${s} projects=${projects} onClick=${() => navigate('#/tmux')} />`)}
+          </div>`}
+    </section>`;
+}
+
 export function HubView() {
   const projects = store.projects.value;
   const entries = Object.entries(projects);
@@ -68,6 +140,9 @@ export function HubView() {
         <p class="muted">Select a project to manage its beads.</p>
         ${OpsStrip()}
       </div>
+
+      ${entries.length > 0 && TmuxSection()}
+
       ${entries.length === 0
         ? html`<div class="empty-state">
             <div class="empty-icon">◇</div>

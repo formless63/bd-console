@@ -52,7 +52,6 @@ function isTyping() {
 function onKeyDown(e) {
   if (e.key === 'Escape') {
     if (store.createOpen.value) store.createOpen.value = false;
-    if (store.tokenDialogOpen.value) store.tokenDialogOpen.value = false;
     if (store.mobileFiltersOpen.value) store.mobileFiltersOpen.value = false;
     return;
   }

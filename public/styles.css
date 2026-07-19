@@ -233,9 +233,16 @@ textarea.field { resize: vertical; }
   border-bottom: 1px solid var(--border); z-index: 50;
 }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; letter-spacing: -0.01em; min-width: 0; }
-.brand-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.brand-link {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+  background: none; border: none; padding: 0; margin: 0; font: inherit; font-weight: 650;
+  color: var(--text); cursor: pointer; text-decoration: none; letter-spacing: -0.01em;
+  transition: color 0.15s var(--ease);
+}
+.brand-link:hover { color: var(--accent); }
 .brand-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 60%, transparent); }
 .topbar-right { display: flex; align-items: center; gap: 8px; }
+.icon-btn.settings-trigger.active { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 
 .health-pill {
   display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 500;
@@ -257,30 +264,73 @@ textarea.field { resize: vertical; }
 /* ==========================================================================
    Hub
    ========================================================================== */
-.hub { flex: 1; overflow-y: auto; padding: clamp(2rem, 6vw, 4.5rem) 1.5rem; display: flex; flex-direction: column; align-items: center; }
-.hub-header { text-align: center; margin-bottom: 2.75rem; }
-.hub-header h1 { font-size: clamp(1.9rem, 4vw, 2.6rem); font-weight: 700; letter-spacing: -0.025em; margin: 0 0 0.4rem; }
-.hub-header p { margin: 0; font-size: 15px; }
-.hub-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1.25rem; width: 100%; max-width: 1080px; }
+.hub { flex: 1; overflow-y: auto; padding: clamp(2rem, 6vw, 4.5rem) 1.5rem 4rem; display: flex; flex-direction: column; align-items: center; }
+.hub-header { text-align: center; margin-bottom: 2.5rem; max-width: 640px; }
+.hub-header h1 {
+  font-size: clamp(2.1rem, 4.4vw, 3rem); font-weight: 750; letter-spacing: -0.03em; margin: 0 0 0.5rem;
+  background: linear-gradient(120deg, var(--text) 55%, var(--accent));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.hub-header p { margin: 0; font-size: 15.5px; color: var(--text-dim); }
+.hub-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1.25rem; width: 100%; max-width: 1080px; animation: hub-grid-in 0.3s var(--ease); }
+@keyframes hub-grid-in { from { opacity: 0; transform: translateY(6px); } }
 .hub-card {
   text-align: left; display: flex; flex-direction: column; gap: 0.55rem; cursor: pointer;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
   padding: 1.35rem; font: inherit; color: var(--text);
-  box-shadow: var(--shadow-sm); transition: transform 0.18s var(--ease), border-color 0.18s var(--ease), box-shadow 0.18s var(--ease);
+  box-shadow: var(--shadow-sm); transition: transform 0.2s var(--ease), border-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
   position: relative; overflow: hidden;
 }
-.hub-card::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 3px; background: linear-gradient(90deg, var(--accent), var(--purple)); opacity: 0; transition: opacity 0.18s var(--ease); }
-.hub-card:hover { transform: translateY(-3px); border-color: var(--border-2); box-shadow: var(--shadow-lg); }
+.hub-card::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 3px; background: linear-gradient(90deg, var(--accent), var(--purple)); opacity: 0; transition: opacity 0.2s var(--ease); }
+.hub-card::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0; border-radius: inherit;
+  background: radial-gradient(560px circle at 20% 0%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 60%);
+  transition: opacity 0.25s var(--ease);
+}
+.hub-card:hover { transform: translateY(-4px); border-color: var(--border-2); box-shadow: var(--shadow-lg); }
 .hub-card:hover::before { opacity: 1; }
+.hub-card:hover::after { opacity: 1; }
+.hub-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .hub-card-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .hub-card-title { font-weight: 650; font-size: 1.1rem; letter-spacing: -0.01em; }
 .hub-card-total { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
 .hub-card-path { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hub-card-stats { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 0.55rem; min-height: 26px; }
+.hub-card-stats { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 0.15rem; min-height: 26px; }
 .stat-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 3px 9px; }
-.hub-card-cta { margin-top: 0.5rem; font-size: 12.5px; font-weight: 600; color: var(--accent); opacity: 0; transform: translateX(-4px); transition: all 0.18s var(--ease); }
+.stat-pill.s-velocity { color: var(--purple); border-color: color-mix(in srgb, var(--purple) 30%, transparent); }
+.stat-pill.s-bugs { color: var(--red); border-color: color-mix(in srgb, var(--red) 30%, transparent); }
+.hub-card-cta { margin-top: 0.5rem; font-size: 12.5px; font-weight: 600; color: var(--accent); opacity: 0; transform: translateX(-4px); transition: all 0.2s var(--ease); }
 .hub-card:hover .hub-card-cta { opacity: 1; transform: none; }
 .skeleton-pill { width: 74px; height: 24px; border: none; background: var(--surface-2); }
+
+/* ---- Git insights (project cards) ----------------------------------------- */
+.hub-card-git { display: flex; flex-direction: column; gap: 4px; margin-top: -0.1rem; }
+.hub-card-git-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.git-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; font-family: var(--font-mono); color: var(--text-dim); background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 2px 8px; }
+.git-branch { color: var(--purple); }
+.git-ahead { color: var(--green); }
+.git-behind { color: var(--amber); }
+.git-dirty { color: var(--red); }
+.git-velocity { font-family: var(--font-ui); color: var(--text-faint); font-weight: 500; }
+.git-link { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; color: var(--text-faint); transition: all 0.15s var(--ease); margin-left: auto; }
+.git-link:hover { color: var(--accent); background: var(--surface-2); }
+.hub-card-commit { display: flex; gap: 0; overflow: hidden; }
+.hub-card-commit .commit-subject { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hub-card-commit .commit-time { flex-shrink: 0; }
+
+/* ---- Hub sections (tmux strip) --------------------------------------------- */
+.hub-section { width: 100%; max-width: 1080px; margin-bottom: 1.75rem; }
+.hub-section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.6rem; }
+.hub-section-head h2 { font-size: 13px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint); margin: 0; }
+.hub-section-empty { margin: 0; }
+.hub-tmux-rows { display: flex; flex-direction: column; gap: 6px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 6px; box-shadow: var(--shadow-sm); }
+.hub-tmux-row {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: none; border: none; font: inherit;
+  color: var(--text); cursor: pointer; padding: 8px 10px; border-radius: var(--radius-sm); transition: background 0.14s var(--ease);
+}
+.hub-tmux-row:hover { background: var(--bg); }
+.hub-tmux-cmd { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hub-tmux-repo { margin-left: 0; flex-shrink: 0; }
 
 .dot-status { width: 7px; height: 7px; border-radius: 50%; display: inline-block; background: var(--text-faint); }
 .dot-status.st-open, .st-open .dot-status { background: var(--green); }
@@ -595,6 +645,65 @@ input.edit-input { flex: 1; min-width: 120px; }
 .preset-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
 .sched-note { margin: 0; line-height: 1.5; }
 .form-warn { color: var(--amber); font-size: 12px; font-weight: 500; }
+.sched-prompt-tools { display: flex; justify-content: flex-end; margin-top: 4px; }
+
+/* ---- Custom combobox (session picker + saved prompts) --------------------- */
+.combobox { position: relative; }
+.combobox-menu {
+  position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 30;
+  margin: 0; padding: 5px; list-style: none;
+  background: var(--elevated); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow-lg); max-height: 220px; overflow-y: auto;
+}
+.combobox-opt {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 7px 9px; border-radius: var(--radius-sm); cursor: pointer; font-size: 13px;
+  transition: background 0.1s var(--ease);
+}
+.combobox-opt:hover, .combobox-opt.hi { background: var(--surface-2); }
+.combobox-opt-name { font-family: var(--font-mono); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.combobox-opt-badge { flex-shrink: 0; }
+
+.saved-prompts { display: inline-block; }
+.saved-prompts-menu { left: auto; right: 0; width: min(320px, 80vw); display: flex; flex-direction: column; gap: 3px; }
+.saved-prompts-save-trigger {
+  text-align: left; background: none; border: none; color: var(--accent); font: inherit; font-size: 12.5px; font-weight: 500;
+  cursor: pointer; padding: 7px 9px; border-radius: var(--radius-sm);
+}
+.saved-prompts-save-trigger:hover { background: var(--surface-2); }
+.saved-prompts-save-trigger:disabled { color: var(--text-faint); cursor: not-allowed; }
+.saved-prompts-save-row { display: flex; gap: 6px; padding: 4px; }
+.saved-prompts-save-row .field { padding: 6px 9px; font-size: 12.5px; }
+.saved-prompts-empty { padding: 8px 9px; }
+.saved-prompt-opt { justify-content: space-between; }
+.saved-prompt-del { background: none; border: none; color: var(--text-faint); font-size: 15px; line-height: 1; cursor: pointer; padding: 2px 5px; border-radius: 5px; flex-shrink: 0; }
+.saved-prompt-del:hover { color: var(--red); background: color-mix(in srgb, var(--red) 12%, transparent); }
+
+/* ==========================================================================
+   Settings view
+   ========================================================================== */
+.settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1rem; align-items: start; }
+.settings-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; box-shadow: var(--shadow-sm); }
+.settings-card-title { font-size: 14px; font-weight: 650; margin: 0; }
+.settings-kv { display: flex; flex-direction: column; gap: 8px; margin-top: 2px; }
+.settings-row { display: grid; grid-template-columns: 90px 1fr auto; align-items: center; gap: 10px; font-size: 13px; }
+.settings-k { color: var(--text-dim); font-weight: 500; }
+.settings-v { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.settings-v code { font-size: 12.5px; }
+.settings-hint, .settings-path, .settings-note { margin: 0; line-height: 1.5; }
+.settings-current { margin: 0; font-size: 13px; color: var(--text-dim); }
+.settings-form-row { display: flex; gap: 8px; align-items: center; }
+.settings-form-row .field { flex: 1; min-width: 0; }
+.settings-notice { margin: 0; color: var(--accent); }
+
+.source-chip {
+  justify-self: end; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+  padding: 2px 7px; border-radius: var(--radius-pill); background: var(--surface-2); color: var(--text-faint);
+  border: 1px solid var(--border); white-space: nowrap;
+}
+.source-chip.src-flag { color: var(--purple); border-color: color-mix(in srgb, var(--purple) 35%, transparent); background: color-mix(in srgb, var(--purple) 12%, transparent); }
+.source-chip.src-env { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, transparent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.source-chip.src-config { color: var(--green); border-color: color-mix(in srgb, var(--green) 35%, transparent); background: color-mix(in srgb, var(--green) 12%, transparent); }
 
 /* ==========================================================================
    Toasts
@@ -613,6 +722,15 @@ input.edit-input { flex: 1; min-width: 120px; }
   .health-pill { display: none; }
   .theme-select { width: 108px; }
   .scheme-select { width: 78px; }
+  /* Below ~560px the theme selects + icon buttons alone exceed the viewport
+     width; without a floor here flexbox squeezes .brand-link toward 0 and
+     the "bd-console" home link becomes unreadable/unclickable. Give the
+     brand a guaranteed minimum and let the (fixed-width) controls group
+     scroll horizontally instead of stealing that space. */
+  .brand { flex: 1 1 auto; min-width: 0; }
+  .brand-link { min-width: 0; }
+  .topbar-right { flex-shrink: 0; max-width: 62%; overflow-x: auto; scrollbar-width: none; }
+  .topbar-right::-webkit-scrollbar { display: none; }
 
   .issues-layout, .docs-layout { grid-template-columns: 1fr; position: relative; }
   .issues-layout > .filters, .mobile-drawer .filters { }
@@ -643,4 +761,20 @@ input.edit-input { flex: 1; min-width: 120px; }
   .sched-create-pane { position: static; }
   .sched-time { margin-left: 0; width: 100%; }
   .dialog-lg { max-width: 92vw; }
+
+  .hub { padding: 1.5rem 1rem 3rem; }
+  .hub-grid { grid-template-columns: 1fr; }
+  .hub-section, .hub-grid { max-width: 100%; }
+  .hub-tmux-row { flex-wrap: wrap; }
+  .settings-grid { grid-template-columns: 1fr; }
+  .settings-row { grid-template-columns: 74px 1fr auto; }
+  .settings-form-row { flex-wrap: wrap; }
+  .settings-form-row .field { width: 100%; }
+  .combobox-menu { max-height: 180px; }
+}
+
+@media (max-width: 460px) {
+  .theme-select { width: 84px; }
+  .scheme-select { width: 60px; }
+  .topbar-right { gap: 5px; }
 }

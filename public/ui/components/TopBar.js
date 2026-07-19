@@ -44,6 +44,13 @@ function HubNav() {
     </nav>`;
 }
 
+function BrandLink({ name }) {
+  return html`
+    <button class="brand-link" onClick=${() => navigate('#/')} title="bd-console — back to hub">
+      ${name}
+    </button>`;
+}
+
 function HealthPill() {
   const route = store.route.value;
   if (route.view !== 'project') return null;
@@ -83,7 +90,7 @@ export function TopBar() {
               <span>Hub</span>
             </button>`
           : html`<span class="brand-dot"></span>`}
-        <span class="brand-name">${name}</span>
+        <${BrandLink} name=${name} />
       </div>
 
       <div class="topbar-right">
@@ -94,7 +101,7 @@ export function TopBar() {
           <span class="hide-sm">New issue</span>
         </button>`}
         ${ThemePicker()}
-        <button class="icon-btn" title="Write token settings" onClick=${() => (store.tokenDialogOpen.value = true)}>
+        <button class=${'icon-btn settings-trigger' + (route.view === 'settings' ? ' active' : '')} title="Settings" onClick=${() => navigate('#/settings')}>
           <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path fill="currentColor" d="M19.4 13a7.5 7.5 0 000-2l2-1.6-2-3.4-2.4 1a7.6 7.6 0 00-1.7-1l-.4-2.5H10l-.4 2.5c-.6.3-1.2.6-1.7 1l-2.4-1-2 3.4 2 1.6a7.5 7.5 0 000 2l-2 1.6 2 3.4 2.4-1c.5.4 1.1.7 1.7 1l.4 2.5h4l.4-2.5c.6-.3 1.2-.6 1.7-1l2.4 1 2-3.4-2-1.6zM12 15.5a3.5 3.5 0 110-7 3.5 3.5 0 010 7z"/></svg>
         </button>
         <button class="icon-btn" title="Reload data" onClick=${refresh}>

@@ -1,10 +1,17 @@
 // ScheduleView.js — hub-level #/schedule route: create and manage scheduled
 // tmux prompts (POST/GET /api/schedule). The create form's session list comes
-// live from GET /api/tmux so a vanished session is caught before submit, and
-// the job list polls while this view is mounted.
+// live from GET /api/tmux via a themed custom combobox (see SessionCombobox
+// below — native <input list=…>/<datalist> was replaced after it proved
+// unreliable in this app's layout; see the note on SessionCombobox for the
+// root-cause writeup), and the job list polls while this view is mounted.
+// Saved prompts (GET/POST /api/prompts…) are optional — they degrade to
+// "hidden" if the backend hasn't landed the endpoints yet.
 import { html } from 'htm/preact';
-import { useEffect, useState } from 'preact/hooks';
-import { store, loadSchedule, loadTmux, scheduleCreate, scheduleCancel } from '../store.js';
+import { useEffect, useRef, useState } from 'preact/hooks';
+import {
+  store, loadSchedule, loadTmux, scheduleCreate, scheduleCancel,
+  loadPrompts, savePrompt, deletePrompt, markPromptUsed,
+} from '../store.js';
 import { relTime } from './common.js';
 
 const POLL_MS = 5000;
@@ -14,20 +21,153 @@ function pad(n) { return String(n).padStart(2, '0'); }
 function toLocalInputValue(d) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
-function presetInHour() { return new Date(Date.now() + 3600 * 1000); }
-function presetTonight() {
+// +N hours from now.
+function presetPlusHours(hours) { return new Date(Date.now() + hours * 3600 * 1000); }
+// Next local occurrence of a given hour (0-23) — today if it's still ahead,
+// otherwise tomorrow. Used for the "2am" / "4am" presets.
+function presetNextClock(hour) {
   const d = new Date();
   d.setSeconds(0, 0);
-  d.setHours(2, 0, 0, 0);
+  d.setHours(hour, 0, 0, 0);
   if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
   return d;
 }
-function presetTomorrowMorning() {
-  const d = new Date();
-  d.setSeconds(0, 0);
-  d.setDate(d.getDate() + 1);
-  d.setHours(6, 0, 0, 0);
-  return d;
+const RUN_AT_PRESETS = [
+  { label: '+1h', fn: () => presetPlusHours(1) },
+  { label: '+2h', fn: () => presetPlusHours(2) },
+  { label: '+3h', fn: () => presetPlusHours(3) },
+  { label: '+4h', fn: () => presetPlusHours(4) },
+  { label: '+5h', fn: () => presetPlusHours(5) },
+  { label: '2am', fn: () => presetNextClock(2) },
+  { label: '4am', fn: () => presetNextClock(4) },
+];
+
+// ---------------------------------------------------------------------------
+// SessionCombobox — replaces a plain <input list=…>/<datalist>.
+//
+// Root cause of the original "doesn't seem to work" report: reproduced with
+// headless + headed Chrome (Xvfb) against both the live app and a bare
+// zero-dependency <input list>/<datalist> control page. In both cases the
+// native suggestion popover never rendered on focus or programmatic
+// interaction — only a precise mouse click on the tiny, undiscoverable arrow
+// glyph opens it, and even then the popover is unstyleable (always renders
+// in the OS/browser's default light chrome, clashing with every dark theme
+// preset here). That combination — invisible affordance + no theming hook +
+// unreliable rendering in this app's flex/sticky layout — makes it
+// effectively non-functional for users. Replaced with a small themed
+// combobox: a real <input> (so freeform names still work) plus an
+// absolutely-positioned suggestion menu we fully control, filtered as you
+// type, keyboard-navigable, and closes on blur/Escape/selection.
+function SessionCombobox({ value, onChange, sessions }) {
+  const [open, setOpen] = useState(false);
+  const [hi, setHi] = useState(-1);
+  const wrapRef = useRef(null);
+
+  const q = value.trim().toLowerCase();
+  const filtered = q ? sessions.filter((s) => s.name.toLowerCase().includes(q)) : sessions;
+
+  useEffect(() => {
+    function onDocClick(e) { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
+
+  const pick = (name) => { onChange(name); setOpen(false); setHi(-1); };
+
+  const onKeyDown = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setOpen(true); setHi((i) => Math.min(i + 1, filtered.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setHi((i) => Math.max(i - 1, 0)); }
+    else if (e.key === 'Enter') { if (open && hi >= 0 && filtered[hi]) { e.preventDefault(); pick(filtered[hi].name); } }
+    else if (e.key === 'Escape') { setOpen(false); setHi(-1); }
+  };
+
+  return html`
+    <div class="combobox" ref=${wrapRef}>
+      <input class="field" placeholder="tmux session name" value=${value} autocomplete="off"
+        onFocus=${() => setOpen(true)}
+        onInput=${(e) => { onChange(e.target.value); setOpen(true); setHi(-1); }}
+        onKeyDown=${onKeyDown} />
+      ${open && filtered.length > 0 && html`
+        <ul class="combobox-menu" role="listbox">
+          ${filtered.map((s, i) => html`
+            <li key=${s.name} role="option" aria-selected=${i === hi}
+              class=${'combobox-opt' + (i === hi ? ' hi' : '')}
+              onMouseDown=${(e) => { e.preventDefault(); pick(s.name); }}
+              onMouseEnter=${() => setHi(i)}>
+              <span class="combobox-opt-name">${s.name}</span>
+              ${s.attached ? html`<span class="badge tmux-attach on combobox-opt-badge">attached</span>` : null}
+            </li>`)}
+        </ul>`}
+    </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Saved prompts — optional feature backed by an endpoint that may not exist
+// yet on an older/mid-deploy server; hides itself on failure.
+function SavedPrompts({ prompt, onPick }) {
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [name, setName] = useState('');
+  const wrapRef = useRef(null);
+  const available = store.promptsAvailable.value;
+  const prompts = store.prompts.value;
+
+  useEffect(() => { loadPrompts(); }, []);
+  useEffect(() => {
+    function onDocClick(e) { if (wrapRef.current && !wrapRef.current.contains(e.target)) { setOpen(false); setSaving(false); } }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
+
+  if (!available) return null;
+
+  const pick = async (p) => {
+    onPick(p.prompt);
+    setOpen(false);
+    markPromptUsed(p.id);
+  };
+  const remove = async (e, p) => {
+    e.stopPropagation();
+    if (!confirm(`Delete saved prompt "${p.name}"?`)) return;
+    try { await deletePrompt(p.id); } catch { /* toasted by the store action */ }
+  };
+  const doSave = async () => {
+    const n = name.trim();
+    if (!n) return;
+    if (!prompt.trim()) return;
+    try {
+      await savePrompt(n, prompt);
+      setName(''); setSaving(false); setOpen(false);
+    } catch { /* toasted by the store action */ }
+  };
+
+  return html`
+    <div class="combobox saved-prompts" ref=${wrapRef}>
+      <button type="button" class="btn btn-xs btn-ghost" onClick=${() => setOpen((o) => !o)}>
+        Saved prompts${prompts.length ? ` (${prompts.length})` : ''}
+      </button>
+      ${open && html`
+        <div class="combobox-menu saved-prompts-menu">
+          ${!saving
+            ? html`<button type="button" class="saved-prompts-save-trigger" onClick=${() => setSaving(true)} disabled=${!prompt.trim()}>
+                + Save current prompt…
+              </button>`
+            : html`<div class="saved-prompts-save-row">
+                <input class="field" placeholder="name this prompt…" value=${name} autofocus
+                  onInput=${(e) => setName(e.target.value)}
+                  onKeyDown=${(e) => { if (e.key === 'Enter') doSave(); if (e.key === 'Escape') setSaving(false); }} />
+                <button type="button" class="btn btn-xs btn-accent" disabled=${!name.trim()} onClick=${doSave}>Save</button>
+              </div>`}
+          ${prompts.length === 0
+            ? html`<div class="saved-prompts-empty muted small">No saved prompts yet.</div>`
+            : prompts.map((p) => html`
+                <div key=${p.id} class="combobox-opt saved-prompt-opt" onClick=${() => pick(p)}>
+                  <span class="combobox-opt-name" title=${p.prompt}>${p.name}</span>
+                  <button type="button" class="saved-prompt-del" title="Delete"
+                    onMouseDown=${(e) => e.stopPropagation()} onClick=${(e) => remove(e, p)}>×</button>
+                </div>`)}
+        </div>`}
+    </div>`;
 }
 
 function CreateForm() {
@@ -72,14 +212,13 @@ function CreateForm() {
       <label class="dialog-field"><span>prompt</span>
         <textarea class="field" rows="5" placeholder="What should be typed into the session?"
           value=${prompt} onInput=${(e) => setPrompt(e.target.value)}></textarea>
+        <div class="sched-prompt-tools">
+          <${SavedPrompts} prompt=${prompt} onPick=${setPrompt} />
+        </div>
       </label>
 
       <label class="dialog-field"><span>session</span>
-        <input class="field" list="sched-session-options" placeholder="tmux session name" value=${session}
-          onInput=${(e) => setSession(e.target.value)} />
-        <datalist id="sched-session-options">
-          ${sessions.map((s) => html`<option key=${s.name} value=${s.name} />`)}
-        </datalist>
+        <${SessionCombobox} value=${session} onChange=${setSession} sessions=${sessions} />
         ${vanished && html`<span class="form-warn">Session "${session}" is not currently running — the job will fail when it fires.</span>`}
         ${sessions.length === 0 && html`<span class="muted small">No live tmux sessions detected; you can still type a session name.</span>`}
       </label>
@@ -87,9 +226,8 @@ function CreateForm() {
       <label class="dialog-field"><span>run at</span>
         <input class="field" type="datetime-local" value=${runAtLocal} onInput=${(e) => setRunAtLocal(e.target.value)} />
         <div class="preset-row">
-          <button type="button" class="btn btn-xs btn-ghost" onClick=${() => applyPreset(presetInHour)}>in 1h</button>
-          <button type="button" class="btn btn-xs btn-ghost" onClick=${() => applyPreset(presetTonight)}>tonight 02:00</button>
-          <button type="button" class="btn btn-xs btn-ghost" onClick=${() => applyPreset(presetTomorrowMorning)}>tomorrow 06:00</button>
+          ${RUN_AT_PRESETS.map((p) => html`
+            <button key=${p.label} type="button" class="btn btn-xs btn-ghost" onClick=${() => applyPreset(p.fn)}>${p.label}</button>`)}
         </div>
       </label>
 

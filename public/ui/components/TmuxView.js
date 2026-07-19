@@ -10,6 +10,21 @@ import { timeAgo, cwdTail, stripAnsi, matchProject } from './common.js';
 const SESSION_POLL_MS = 8000;
 const PREVIEW_POLL_MS = 3000;
 
+// Compact single-line session row shared with the hub's "Terminal sessions"
+// section — name, attached badge, first pane's command, and a repo chip when
+// the pane's cwd resolves to a registered project.
+export function SessionRowCompact({ session, projects, onClick }) {
+  const first = session.panes[0];
+  const match = first ? matchProject(first.cwd, projects) : null;
+  return html`
+    <button type="button" class="hub-tmux-row" onClick=${onClick}>
+      <span class="tmux-name">${session.name}</span>
+      <span class=${'badge tmux-attach' + (session.attached ? ' on' : '')}>${session.attached ? 'attached' : 'detached'}</span>
+      <span class="pane-cmd hub-tmux-cmd">${first?.command || '—'}</span>
+      ${match && html`<span class="chip repo-chip hub-tmux-repo">${match[0]}</span>`}
+    </button>`;
+}
+
 function Pane({ pane, projects }) {
   const match = matchProject(pane.cwd, projects);
   return html`
