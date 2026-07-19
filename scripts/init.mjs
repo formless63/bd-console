@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 
 const DEFAULT_PORT = 4180;
-const DEFAULT_HOST = '127.0.0.1';
+const DEFAULT_HOST = '0.0.0.0';
 const CONFIG_FILE = 'bd-console.json';
 const BLOCK_START = '<!-- BEGIN BD-CONSOLE SETUP -->';
 const BLOCK_END = '<!-- END BD-CONSOLE SETUP -->';
@@ -139,10 +139,11 @@ async function hasRootMarkdown(workspace) {
   return entries.some((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.md'));
 }
 
-function renderConfig({ host, port, token, docRoots }) {
-  const config = { port, host };
+// Per-repo bd-console.json is docRoots-only; host/port/token live in the
+// global ~/.config/bd-console/config.json (edit with `bd-console settings`).
+function renderConfig({ docRoots }) {
+  const config = {};
   if (docRoots.length) config.docRoots = docRoots;
-  if (token) config.token = token;
   return `${JSON.stringify(config, null, 2)}\n`;
 }
 
@@ -156,7 +157,7 @@ This repo uses \`bd-console\` as a local dashboard for beads issues and markdown
 - Keep \`.beads/issues.jsonl\` fresh after non-UI beads mutations with \`bd export -o .beads/issues.jsonl\`.
 - Treat \`triage\` as the default inbox label for captured ideas.
 - Preserve document provenance with \`doc:<path>\` labels when an idea comes from a specific markdown file.
-- Prefer \`127.0.0.1\` unless you intentionally need network access; if you expose the dashboard, set a write token in \`bd-console.json\` or \`BD_CONSOLE_TOKEN\`.
+- Host/port/token are global settings (\`bd-console settings\`), not per-repo config; per-repo \`bd-console.json\` only sets \`docRoots\`. On internet-exposed hosts bind a private interface (tailnet/VPN) or set a write token.
 - Before telling someone to use the dashboard, verify that \`bd-console\` starts and that \`http://localhost:4180\` or the configured host/port loads.
 ${BLOCK_END}
 `;
@@ -183,6 +184,7 @@ async function upsertGuideFile(path, createIfMissing, dryRun) {
 
 import { fileURLToPath } from 'node:url';
 import { SERVICE_NAME, serviceUnitPath, renderServiceUnit, installAndStartService } from '../lib/systemd.mjs';
+import { saveGlobalConfig } from '../lib/config.mjs';
 
 // bd-console now runs as a single Global Hub daemon (not one instance per
 // repo), so this installs one shared systemd user service that runs the hub
@@ -251,9 +253,19 @@ async function main() {
 
   if (!configExists || args.forceConfig) {
 
-    const configText = renderConfig({ host: args.host, port: args.port, token: args.token, docRoots: configDocRoots });
+    const configText = renderConfig({ docRoots: configDocRoots });
     if (!args.dryRun) await writeFile(configPath, configText, 'utf8');
     wrote.push(`${CONFIG_FILE}${configExists ? ' (overwritten)' : ''}`);
+  }
+
+  // host/port/token are global settings now, not per-repo config.
+  if (args.host !== DEFAULT_HOST || args.port !== DEFAULT_PORT || args.token) {
+    const patch = {};
+    if (args.host !== DEFAULT_HOST) patch.host = args.host;
+    if (args.port !== DEFAULT_PORT) patch.port = args.port;
+    if (args.token) patch.token = args.token;
+    if (!args.dryRun) saveGlobalConfig(patch);
+    console.log(`global settings ${args.dryRun ? 'would be' : ''} updated (${Object.keys(patch).join(', ')}) — manage with 'bd-console settings'`);
   }
 
   const guideUpdates = [];

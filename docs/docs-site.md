@@ -36,5 +36,6 @@ Keep the runtime docs aligned across:
 - `AGENTS.md`
 - `CLAUDE.md`
 - `site/index.html`
+- `docs/upgrading.md`
 
 If defaults or setup guidance change, update all of them in the same change.

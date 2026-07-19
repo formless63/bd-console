@@ -22,8 +22,9 @@
         <div class="eyebrow">bd-console documentation</div>
         <h1>Point it at a beads repo and get a usable dashboard fast.</h1>
         <p class="lede">
-          `bd-console` is a zero-dependency local web UI for beads issues and project markdown.
-          These docs cover setup, security, operations, troubleshooting, and agent guidance.
+          `bd-console` is a Global Hub dashboard for beads issues, project markdown, and your agent
+          tmux sessions — install it once per machine, then register repos. These docs cover setup,
+          security, operations, troubleshooting, and agent guidance.
         </p>
         <nav class="hero-actions">
           <a href="#quickstart">Quick start</a>
@@ -43,6 +44,7 @@
             <a href="#what">What it is</a>
             <a href="#prereqs">Prerequisites</a>
             <a href="#quickstart">Quick start</a>
+            <a href="#hub-tmux-scheduler">Hub, tmux &amp; scheduler</a>
             <a href="#configuration">Configuration</a>
           </div>
         </details>
@@ -71,19 +73,23 @@
         <section id="what">
           <h2>What it is</h2>
           <p>
-            `bd-console` reads `.beads/issues.jsonl` for issue lists, shells out to `bd` for live
-            comments and writes, and renders markdown docs from the target repo. It is designed for
-            repos that already use beads and want a simple local dashboard without introducing a
-            frontend framework or build pipeline.
+            `bd-console` is a <strong>Global Hub</strong>: one server per machine, with the repos
+            you work in registered into it. It reads `.beads/issues.jsonl` for issue lists, shells
+            out to `bd` for live comments and writes, renders markdown docs from each registered
+            repo, and — on the same host — lets you see tmux sessions and schedule prompts to be
+            typed into them later. It is designed for repos that already use beads and want a
+            dashboard without introducing a build pipeline; the frontend is a no-build app with all
+            its dependencies vendored, not pulled from npm at install time.
           </p>
         </section>
 
         <section id="prereqs">
           <h2>Prerequisites</h2>
           <ul>
-            <li>Node 18 or newer</li>
+            <li>Node 22 or newer (required — the prompt scheduler uses `node:sqlite`)</li>
             <li>`bd` installed and available on `PATH`</li>
-            <li>A target repo with `.beads/` already initialized</li>
+            <li>optionally, `tmux` on the same host, for the tmux/scheduler features</li>
+            <li>each repo you register needs `.beads/` already initialized</li>
           </ul>
           <pre><code>cd ~/code/my-project
 bd where
@@ -115,40 +121,79 @@ bd-console add .
 <pre><code>bd-console status
 bd-console stop
 </code></pre>
+          <p>
+            There is no per-repo server mode anymore — `bd-console` always runs as one hub, and
+            `--repo` only exists on `bd-console-init`/`scripts/init.mjs` to pick which repo to set up
+            and register. See the project's `docs/upgrading.md` if you're coming from an older
+            single-repo install.
+          </p>
+        </section>
+
+        <section id="hub-tmux-scheduler">
+          <h2>Hub, tmux &amp; scheduler</h2>
+          <p>
+            Beyond issues and docs, the hub also exposes host-level (not per-repo) views:
+          </p>
+          <ul>
+            <li><strong>tmux sessions</strong> — see every tmux session/pane running on the hub's host, with a live scrollback preview.</li>
+            <li><strong>Prompt scheduler</strong> — queue a literal prompt to be typed into an <em>already-running</em>, named tmux session at a future time. It never creates sessions and never runs a command like `claude -p` itself; a job against a session that isn't there when it fires ends up `failed`, not silently dropped.</li>
+          </ul>
+          <p>
+            Both degrade gracefully: without `tmux` installed, the tmux view reports no sessions
+            available; without Node 22's `node:sqlite`, the scheduler endpoints return `501` and the
+            rest of the hub keeps working.
+          </p>
         </section>
 
         <section id="configuration">
           <h2>Configuration</h2>
-          <p>The init script writes `bd-console.json` for you unless one already exists. Create or edit it manually only when you need overrides.</p>
+          <p>
+            Host, port, token, and persist are <strong>global</strong> settings for the hub — they
+            live in `~/.config/bd-console/config.json`, not in any per-repo file. Manage them with:
+          </p>
+          <pre><code>bd-console settings list
+bd-console settings set host 0.0.0.0
+bd-console settings set port 4180
+bd-console settings set token a-shared-secret
+bd-console settings unset token
+bd-console settings              # interactive walkthrough</code></pre>
+          <p>
+            A per-repo `bd-console.json` (the init script writes one for you) still exists, but its
+            job shrank to a single key:
+          </p>
           <pre><code>{
-  "port": 4180,
-  "host": "127.0.0.1",
-  "docRoots": ["docs", ".planning"],
-  "token": "shared-secret"
+  "docRoots": ["docs", ".planning"]
 }</code></pre>
           <ul>
-            <li><strong>host</strong>: defaults to `127.0.0.1`; expose wider only on purpose</li>
-            <li><strong>port</strong>: defaults to `4180`</li>
-            <li><strong>docRoots</strong>: narrows markdown discovery in large repos</li>
-            <li><strong>token</strong>: gates write actions while leaving reads open</li>
+            <li><strong>docRoots</strong>: narrows markdown discovery in large repos; omit to auto-discover</li>
           </ul>
-          <p>Environment overrides: `BD_CONSOLE_REPO`, `BD_CONSOLE_HOST`, `BD_CONSOLE_PORT`, `BD_CONSOLE_TOKEN`.</p>
+          <p>Any `host`/`port`/`token` left over in an old per-repo `bd-console.json` is now ignored.</p>
+          <p>Environment overrides: `BD_CONSOLE_HOST`, `BD_CONSOLE_PORT`, `BD_CONSOLE_TOKEN`, `BD_CONSOLE_PERSIST`, `BD_CONSOLE_CONFIG_DIR`, `BD_CONSOLE_SCHED_INTERVAL`.</p>
         </section>
 
         <section id="security">
           <h2>Security posture</h2>
+          <p>
+            The default bind is `0.0.0.0:4180`. Because that's more permissive than binding only to
+            localhost, the very first run on a terminal walks you through a short setup instead of
+            applying it silently:
+          </p>
           <ul>
-            <li>Default bind host is `127.0.0.1`.</li>
-            <li>Writes are open unless a token is configured.</li>
-            <li>If you bind off localhost, set a token.</li>
-            <li>Issue IDs are validated before write commands.</li>
-            <li>Writes use `execFile` with an args array, not shell strings.</li>
+            <li><strong>This machine / home LAN</strong> — bind `0.0.0.0`, open writes recommended.</li>
+            <li><strong>VPS / internet-exposed</strong> — bind a private or tailnet interface first; a random token is generated only as a last resort if you bind `0.0.0.0` anyway.</li>
           </ul>
           <p>
-            For LAN or tailnet access, keep the setup explicit:
+            If a box is ever exposed publicly, put an authenticating reverse proxy (e.g.
+            <a href="https://github.com/fosrl/pangolin">Pangolin</a>) in front rather than relying on
+            the token alone — the token only gates write endpoints against casual use.
           </p>
-          <pre><code>node serve.mjs --repo ~/code/my-project --host 0.0.0.0 --port 4180
-# and set BD_CONSOLE_TOKEN or token in bd-console.json</code></pre>
+          <ul>
+            <li>Writes are open unless a token is configured.</li>
+            <li>Issue IDs and tmux session names are format-validated before every write.</li>
+            <li>Writes use `execFile` with an args array, not shell strings.</li>
+            <li>tmux pane previews are token-gated the same as writes, since pane contents can hold secrets.</li>
+          </ul>
+          <p>Change any of this later with `bd-console settings`.</p>
         </section>
 
         <section id="export">
@@ -258,20 +303,29 @@ npm_config_cache=/tmp/bd-console-npm-cache npm pack --dry-run</code></pre>
         <section id="troubleshooting">
           <h2>Troubleshooting</h2>
           <dl class="faq">
-            <dt>`Error: no beads database found`</dt>
-            <dd>Run inside a beads repo, pass `--repo`, or inspect `bd where`.</dd>
+            <dt>`no .beads/ found at &lt;path&gt;` from `bd-console add`</dt>
+            <dd>Run `bd init` in that repo first, or point `add` at the right path.</dd>
+
+            <dt>A registered project 404s or doesn't show up</dt>
+            <dd>Confirm it's actually registered with `bd-console list`; re-add it if not.</dd>
+
+            <dt>`start` says it started but the dashboard doesn't load</dt>
+            <dd>Run `bd-console status` — it checks real port reachability, not just whether a pid is alive. `start` also tails the log automatically on failure.</dd>
 
             <dt>Issue list looks stale</dt>
-            <dd>Run `bd export -o .beads/issues.jsonl` and refresh the page.</dd>
+            <dd>Run `bd export -o .beads/issues.jsonl` and refresh the page (the server also auto-refreshes it when stale).</dd>
 
             <dt>Comments work but status changes do not appear</dt>
             <dd>Comments are live; issue list data comes from the exported JSONL.</dd>
 
             <dt>Docs tree is noisy</dt>
-            <dd>Set `docRoots` explicitly in `bd-console.json`.</dd>
+            <dd>Set `docRoots` explicitly in that project's `bd-console.json`.</dd>
 
             <dt>Token prompts keep appearing</dt>
             <dd>Check the configured token value and clear `localStorage.bd_token` if needed.</dd>
+
+            <dt>The tmux or scheduler API returns `501`</dt>
+            <dd>You're on Node &lt;22 (`node:sqlite` isn't available). Upgrade Node.</dd>
           </dl>
         </section>
 

@@ -94,7 +94,11 @@ try {
   const initEntry = resolve(join(process.cwd(), 'scripts', 'init.mjs'));
   run(process.execPath, [initEntry, '--repo', repoDir, '--apply-agent-docs', '--create-missing-agent-docs'], { cwd: process.cwd(), env });
   assert(existsSync(join(repoDir, 'bd-console.json')), 'init did not create bd-console.json');
-  assert(readFileSync(join(repoDir, 'bd-console.json'), 'utf8').includes('"host": "127.0.0.1"'), 'init config missing expected host');
+  const perRepoConfig = JSON.parse(readFileSync(join(repoDir, 'bd-console.json'), 'utf8'));
+  assert(!('host' in perRepoConfig) && !('port' in perRepoConfig) && !('token' in perRepoConfig),
+    'per-repo bd-console.json should be docRoots-only (host/port/token are global settings)');
+  assert(!('docRoots' in perRepoConfig) || Array.isArray(perRepoConfig.docRoots),
+    'init config docRoots, when present, must be an array');
   assert(readFileSync(join(repoDir, 'AGENTS.md'), 'utf8').includes('BEGIN BD-CONSOLE SETUP'), 'AGENTS.md missing bd-console setup block');
   assert(readFileSync(join(repoDir, 'CLAUDE.md'), 'utf8').includes('BEGIN BD-CONSOLE SETUP'), 'CLAUDE.md missing bd-console setup block');
 

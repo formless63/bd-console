@@ -76,26 +76,43 @@ bd export -o .beads/issues.jsonl
 
 ## Architecture Overview
 
-- Backend: `serve.mjs`, a single Node server using built-in modules only.
-- Frontend: `public/index.html`, `public/app.js`, and `public/styles.css`.
+- Backend: `serve.mjs` (CLI entry + daemon commands) plus `lib/*.mjs`
+  (registry, config, settings, daemon lifecycle, systemd, update, bd wrapper,
+  docs, tmux, scheduler, HTTP routes) — Node built-in modules only.
+- `bd-console` is a **Global Hub**: one server per machine, with repos
+  registered into it via `bd-console add`. There is no more per-repo
+  `--repo`/`BD_CONSOLE_REPO` single-server mode — see `docs/upgrading.md` if
+  you're touching anything that still assumes it.
+- Frontend: `public/index.html` (import map + theme-before-paint script),
+  `public/app.js` (entry point), `public/ui/` (state/routing/components), and
+  `public/styles.css`. No-build Preact + `@preact/signals` + `htm`, with all
+  dependencies vendored under `public/vendor/` — no npm install, no bundler.
 - Data model:
-  - issues come from `.beads/issues.jsonl`
+  - issues come from `.beads/issues.jsonl` (per registered project)
   - comments are fetched live through `bd comments --json`
-  - writes shell out to `bd` with `execFile` and an args array
-- Project constraint: no npm dependencies, no framework, no bundler, no build
-  step.
+  - writes shell out to `bd` (and, for the scheduler, `tmux`) with `execFile`
+    and an args array
+- Project constraint: no npm dependencies (no `npm install` step), no
+  bundler, no build step. Node >=22 is required (the scheduler uses
+  `node:sqlite`).
 
 ## Conventions & Patterns
 
 - Keep all new write paths injection-safe:
   - use `execFile`
   - pass an args array
-  - validate issue IDs against the existing server regex
+  - validate issue IDs (and, for tmux, session names) against the existing
+    server regexes
 - If a new feature changes issue metadata, make sure export freshness is handled
   deliberately.
 - Use `triage` as the default inbox label for quick ideas unless the user asks
   for a different convention.
 - Preserve doc provenance with `doc:<path>` labels when creating doc-derived
   ideas outside a future first-class UI flow.
-- Prefer localhost binding and token-gated writes when documenting setup.
+- Global settings (host/port/token/persist) belong in
+  `~/.config/bd-console/config.json` / env vars, not per-project
+  `bd-console.json` — that file is `docRoots`-only now. When documenting
+  setup, follow the LAN-vs-VPS guidance from the first-run flow rather than
+  defaulting to "always bind localhost" (the tool's own default bind is now
+  `0.0.0.0`).
 - Keep install docs explicit: clone or install path, init step, then run step.
