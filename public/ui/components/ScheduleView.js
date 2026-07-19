@@ -3,7 +3,8 @@
 // live from GET /api/tmux via a themed custom combobox (see SessionCombobox
 // below — native <input list=…>/<datalist> was replaced after it proved
 // unreliable in this app's layout; see the note on SessionCombobox for the
-// root-cause writeup), and the job list polls while this view is mounted.
+// root-cause writeup), and the scheduled-prompt list polls while this view
+// is mounted.
 // Saved prompts (GET/POST /api/prompts…) are optional — they degrade to
 // "hidden" if the backend hasn't landed the endpoints yet.
 import { html } from 'htm/preact';
@@ -12,7 +13,7 @@ import {
   store, loadSchedule, loadTmux, scheduleCreate, scheduleCancel,
   loadPrompts, savePrompt, deletePrompt, markPromptUsed,
 } from '../store.js';
-import { relTime } from './common.js';
+import { relTime, cwdTail } from './common.js';
 
 const POLL_MS = 5000;
 const STATUS_LABEL = { pending: 'pending', sent: 'sent', failed: 'failed', cancelled: 'cancelled' };
@@ -58,6 +59,16 @@ const RUN_AT_PRESETS = [
 // combobox: a real <input> (so freeform names still work) plus an
 // absolutely-positioned suggestion menu we fully control, filtered as you
 // type, keyboard-navigable, and closes on blur/Escape/selection.
+//
+// Follow-up fix (user report): the menu previously only opened while typing,
+// and the field silently pre-filled with sessions[0] — so anyone who didn't
+// start typing only ever saw (and only ever targeted) the same one session.
+// A stray-prompt incident already taught us silent default targeting is
+// dangerous, so there is now no default: the field starts empty, opens its
+// full session list on focus *and* on click (covers the case where the
+// input is already focused but the menu got dismissed), and every option
+// shows what it's actually running (pane command + cwd) so the choice is
+// informed rather than a guess.
 function SessionCombobox({ value, onChange, sessions }) {
   const [open, setOpen] = useState(false);
   const [hi, setHi] = useState(-1);
@@ -81,21 +92,35 @@ function SessionCombobox({ value, onChange, sessions }) {
     else if (e.key === 'Escape') { setOpen(false); setHi(-1); }
   };
 
+  // A session's first pane's command + cwd tail, so users can tell what's
+  // actually running there instead of picking blind by name alone.
+  const paneSummary = (s) => {
+    const first = s.panes && s.panes[0];
+    if (!first) return 'no active pane';
+    const cmd = first.command || '—';
+    const cwd = cwdTail(first.cwd);
+    return cwd ? `${cmd} · ${cwd}` : cmd;
+  };
+
   return html`
     <div class="combobox" ref=${wrapRef}>
-      <input class="field" placeholder="tmux session name" value=${value} autocomplete="off"
+      <input class="field" placeholder="choose or type a session…" value=${value} autocomplete="off"
         onFocus=${() => setOpen(true)}
+        onClick=${() => setOpen(true)}
         onInput=${(e) => { onChange(e.target.value); setOpen(true); setHi(-1); }}
         onKeyDown=${onKeyDown} />
       ${open && filtered.length > 0 && html`
         <ul class="combobox-menu" role="listbox">
           ${filtered.map((s, i) => html`
             <li key=${s.name} role="option" aria-selected=${i === hi}
-              class=${'combobox-opt' + (i === hi ? ' hi' : '')}
+              class=${'combobox-opt session-opt' + (i === hi ? ' hi' : '')}
               onMouseDown=${(e) => { e.preventDefault(); pick(s.name); }}
               onMouseEnter=${() => setHi(i)}>
-              <span class="combobox-opt-name">${s.name}</span>
-              ${s.attached ? html`<span class="badge tmux-attach on combobox-opt-badge">attached</span>` : null}
+              <span class="combobox-opt-row">
+                <span class="combobox-opt-name">${s.name}</span>
+                ${s.attached ? html`<span class="badge tmux-attach on combobox-opt-badge">attached</span>` : null}
+              </span>
+              <span class="combobox-opt-meta muted small">${paneSummary(s)}</span>
             </li>`)}
         </ul>`}
     </div>`;
@@ -185,11 +210,6 @@ function CreateForm() {
     if (preset) { setSession(preset); store.scheduleSessionPreset.value = null; }
   }, []);
 
-  // If nothing picked yet and sessions arrive, default to the first one.
-  useEffect(() => {
-    if (!session && sessions.length) setSession(sessions[0].name);
-  }, [sessions.length]);
-
   const vanished = session && sessions.length > 0 && !sessions.some((s) => s.name === session);
 
   const applyPreset = (fn) => setRunAtLocal(toLocalInputValue(fn()));
@@ -219,7 +239,7 @@ function CreateForm() {
 
       <label class="dialog-field"><span>session</span>
         <${SessionCombobox} value=${session} onChange=${setSession} sessions=${sessions} />
-        ${vanished && html`<span class="form-warn">Session "${session}" is not currently running — the job will fail when it fires.</span>`}
+        ${vanished && html`<span class="form-warn">Session "${session}" is not currently running — the scheduled prompt will fail when it fires.</span>`}
         ${sessions.length === 0 && html`<span class="muted small">No live tmux sessions detected; you can still type a session name.</span>`}
       </label>
 
@@ -237,7 +257,7 @@ function CreateForm() {
 
       <div class="dialog-actions">
         ${err && html`<span class="form-err">${err}</span>`}
-        <button class="btn btn-accent" disabled=${busy} onClick=${submit}>Schedule</button>
+        <button class="btn btn-accent" disabled=${busy || !session.trim()} onClick=${submit}>Schedule</button>
       </div>
     </div>`;
 }
@@ -283,7 +303,7 @@ export function ScheduleView() {
   };
 
   const cancel = async (id) => {
-    if (!confirm('Cancel this scheduled job?')) return;
+    if (!confirm('Cancel this scheduled prompt?')) return;
     try { await scheduleCancel(id); } catch (e) { /* toasted by the store action */ }
   };
 
@@ -305,9 +325,9 @@ export function ScheduleView() {
         : html`
           <div class="sched-layout">
             <section class="sched-list-pane">
-              <div class="sched-list-head muted small">${jobs.length} job${jobs.length === 1 ? '' : 's'} · ${pendingCount} pending</div>
+              <div class="sched-list-head muted small">${jobs.length} scheduled prompt${jobs.length === 1 ? '' : 's'} · ${pendingCount} pending</div>
               ${jobs.length === 0
-                ? html`<div class="pane-empty muted">No scheduled jobs yet.</div>`
+                ? html`<div class="pane-empty muted">No scheduled prompts yet.</div>`
                 : html`<div class="sched-list">
                     ${jobs.map((j) => html`<${JobRow} key=${j.id} job=${j} expanded=${expandedIds.has(j.id)} onToggle=${() => toggle(j.id)} onCancel=${cancel} />`)}
                   </div>`}

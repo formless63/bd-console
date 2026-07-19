@@ -449,7 +449,7 @@ export async function scheduleCreate(body) {
 export async function scheduleCancel(id) {
   await withAuth(() => apiPost('/api/schedule/cancel', { id }));
   await loadSchedule();
-  toast('Cancelled job #' + id);
+  toast('Cancelled scheduled prompt #' + id);
 }
 
 // ---------------------------------------------------------------------------

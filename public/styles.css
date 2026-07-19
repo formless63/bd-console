@@ -359,8 +359,16 @@ textarea.field { resize: vertical; }
 .git-behind { color: var(--amber); }
 .git-dirty { color: var(--red); }
 .git-velocity { font-family: var(--font-ui); color: var(--text-faint); font-weight: 500; }
-.git-link { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; color: var(--text-faint); transition: all 0.15s var(--ease); margin-left: auto; }
-.git-link:hover { color: var(--accent); background: var(--surface-2); }
+.repo-chip {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600;
+  font-family: var(--font-mono); color: var(--text-dim); background: var(--bg);
+  border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 2px 8px;
+  max-width: 200px; min-width: 0; margin-left: auto; text-decoration: none;
+  transition: all 0.15s var(--ease);
+}
+.repo-chip:hover { color: var(--accent); border-color: var(--border-2); background: var(--surface-2); }
+.repo-chip svg { flex-shrink: 0; }
+.repo-chip-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hub-card-commit { display: flex; gap: 0; overflow: hidden; }
 .hub-card-commit .commit-subject { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hub-card-commit .commit-time { flex-shrink: 0; }
@@ -697,7 +705,7 @@ input.edit-input { flex: 1; min-width: 120px; }
 /* ---- Custom combobox (session picker + saved prompts) --------------------- */
 .combobox { position: relative; }
 .combobox-menu {
-  position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 30;
+  position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 40;
   margin: 0; padding: 5px; list-style: none;
   background: var(--elevated); border: 1px solid var(--border); border-radius: var(--radius);
   box-shadow: var(--shadow-lg); max-height: 220px; overflow-y: auto;
@@ -710,6 +718,12 @@ input.edit-input { flex: 1; min-width: 120px; }
 .combobox-opt:hover, .combobox-opt.hi { background: var(--surface-2); }
 .combobox-opt-name { font-family: var(--font-mono); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .combobox-opt-badge { flex-shrink: 0; }
+/* Session combobox options carry a second, muted "what's running here" line
+   (pane command + cwd) below the name/badge row — stacked instead of the
+   default single-row layout used elsewhere (e.g. saved prompts). */
+.combobox-opt.session-opt { flex-direction: column; align-items: stretch; gap: 2px; }
+.combobox-opt-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.combobox-opt-meta { font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .saved-prompts { display: inline-block; }
 .saved-prompts-menu { left: auto; right: 0; width: min(320px, 80vw); display: flex; flex-direction: column; gap: 3px; }
@@ -824,4 +838,5 @@ input.edit-input { flex: 1; min-width: 120px; }
   .theme-select { width: 84px; }
   .scheme-select { width: 60px; }
   .topbar-right { gap: 5px; }
+  .repo-chip { max-width: 140px; }
 }

@@ -24,6 +24,36 @@ function GitLinkIcon() {
 function BranchIcon() {
   return html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true"><path fill="currentColor" d="M5 2.5a1.5 1.5 0 113 0 1.5 1.5 0 01-3 0zm.5 2.45v6.1a1.5 1.5 0 11-1 0V4.95a1.5 1.5 0 111 0zM11 12a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zm-2.5-1.5V9c0-1.1.9-2 2-2h.5a1.5 1.5 0 100-1H10.5A3 3 0 007.5 9v1.5"/></svg>`;
 }
+// Official GitHub "mark" logo, inline so currentColor picks up the theme.
+function GitHubMarkIcon() {
+  return html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>`;
+}
+
+// Parses "owner/repo" out of a webUrl (github/gitlab/codeberg all use
+// /owner/repo as the last two path segments) for the repo chip's label.
+function ownerRepoFromWebUrl(webUrl) {
+  try {
+    const u = new URL(webUrl);
+    const parts = u.pathname.split('/').filter(Boolean);
+    if (parts.length < 2) return null;
+    return { host: u.hostname, label: parts.slice(-2).join('/') };
+  } catch { return null; }
+}
+
+// Repo chip — replaces the old icon-only "open remote" link with a labeled
+// chip: GitHub mark for github.com remotes, a generic external glyph for
+// other forges (gitlab/codeberg/etc.), always showing "owner/repo".
+function RepoChip({ webUrl }) {
+  const parsed = ownerRepoFromWebUrl(webUrl);
+  if (!parsed) return null;
+  const isGithub = parsed.host === 'github.com';
+  return html`
+    <a class="repo-chip" href=${webUrl} target="_blank" rel="noopener noreferrer" title=${webUrl}
+      onClick=${(e) => e.stopPropagation()}>
+      ${isGithub ? html`<${GitHubMarkIcon} />` : html`<${GitLinkIcon} />`}
+      <span class="repo-chip-text">${parsed.label}</span>
+    </a>`;
+}
 
 function GitInsights({ git }) {
   if (!git) return null;
@@ -37,11 +67,7 @@ function GitInsights({ git }) {
         ${git.behind != null && git.behind > 0 && html`<span class="git-chip git-behind" title="${git.behind} commit(s) behind upstream">↓${git.behind}</span>`}
         ${(git.dirty ?? 0) > 0 && html`<span class="git-chip git-dirty" title="${git.dirty} file(s) with uncommitted changes">●${git.dirty}</span>`}
         ${git.commits7d != null && html`<span class="git-chip git-velocity">${git.commits7d} commit${git.commits7d === 1 ? '' : 's'}/wk</span>`}
-        ${git.webUrl && html`
-          <a class="git-link" href=${git.webUrl} target="_blank" rel="noopener noreferrer" title="Open remote"
-            onClick=${(e) => e.stopPropagation()}>
-            <${GitLinkIcon} />
-          </a>`}
+        ${git.webUrl && html`<${RepoChip} webUrl=${git.webUrl} />`}
       </div>
       ${git.lastCommit && (git.lastCommit.subject || git.lastCommit.hash) && html`
         <div class="hub-card-commit muted small" title=${[git.lastCommit.author, git.lastCommit.subject].filter(Boolean).join(' · ')}>
@@ -112,7 +138,7 @@ function OpsStrip() {
       </button>
       <span class="ops-sep">·</span>
       <button class="ops-chip" onClick=${() => navigate('#/schedule')}>
-        ${pending} pending job${pending === 1 ? '' : 's'}
+        ${pending} scheduled prompt${pending === 1 ? '' : 's'}
       </button>
     </div>`;
 }
