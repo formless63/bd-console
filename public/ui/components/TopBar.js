@@ -29,6 +29,21 @@ function ThemePicker() {
     </div>`;
 }
 
+function HubNav() {
+  const view = store.route.value.view;
+  return html`
+    <nav class="hub-nav">
+      <button class=${'nav-link' + (view === 'tmux' ? ' active' : '')} onClick=${() => navigate('#/tmux')} title="tmux sessions">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M1 3a1 1 0 011-1h12a1 1 0 011 1v10a1 1 0 01-1 1H2a1 1 0 01-1-1V3zm2 1.5L5.5 7 3 9.5l1 1L7.5 7 4 3.5l-1 1zM8 10h5v1H8v-1z"/></svg>
+        <span class="hide-sm">Terminal</span>
+      </button>
+      <button class=${'nav-link' + (view === 'schedule' ? ' active' : '')} onClick=${() => navigate('#/schedule')} title="Prompt scheduler">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M8 1a7 7 0 100 14A7 7 0 008 1zm.75 3.5v4l3 1.8-.6 1-3.65-2.2V4.5h1.25z"/></svg>
+        <span class="hide-sm">Schedule</span>
+      </button>
+    </nav>`;
+}
+
 function HealthPill() {
   const route = store.route.value;
   if (route.view !== 'project') return null;
@@ -72,10 +87,11 @@ export function TopBar() {
       </div>
 
       <div class="topbar-right">
+        ${HubNav()}
         ${HealthPill()}
-        ${inProject && html`<button class="btn btn-accent" onClick=${() => (store.quickOpen.value = true)} title="Capture an idea (i)">
+        ${inProject && html`<button class="btn btn-accent new-issue-trigger" onClick=${() => (store.createOpen.value = true)} title="New issue (i)">
           <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M8 1v6H2v2h6v6h2V9h6V7h-6V1z"/></svg>
-          <span class="hide-sm">Idea</span>
+          <span class="hide-sm">New issue</span>
         </button>`}
         ${ThemePicker()}
         <button class="icon-btn" title="Write token settings" onClick=${() => (store.tokenDialogOpen.value = true)}>

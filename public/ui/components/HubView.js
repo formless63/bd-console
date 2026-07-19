@@ -2,7 +2,7 @@
 // each showing live status tallies and linking through to the project view.
 import { html } from 'htm/preact';
 import { useEffect, useState } from 'preact/hooks';
-import { store, navigate, loadProjectStats } from '../store.js';
+import { store, navigate, loadProjectStats, loadTmux, loadSchedule } from '../store.js';
 
 const STATUS_META = [
   ['open', 'Open'], ['in_progress', 'Active'], ['blocked', 'Blocked'], ['closed', 'Closed'],
@@ -39,6 +39,25 @@ function ProjectCard({ id, project }) {
     </button>`;
 }
 
+// One-shot (not polled) summary strip — cheap enough to fetch every time the
+// hub mounts, but the tmux/schedule views themselves own the live polling.
+function OpsStrip() {
+  useEffect(() => { loadTmux(); loadSchedule(); }, []);
+  const sessions = store.tmuxSessions.value;
+  const pending = store.scheduleJobs.value.filter((j) => j.status === 'pending').length;
+  const hasTmux = store.tmuxAvailable.value;
+  return html`
+    <div class="ops-strip">
+      <button class="ops-chip" onClick=${() => navigate('#/tmux')}>
+        ${hasTmux ? `${sessions.length} tmux session${sessions.length === 1 ? '' : 's'}` : 'tmux unavailable'}
+      </button>
+      <span class="ops-sep">·</span>
+      <button class="ops-chip" onClick=${() => navigate('#/schedule')}>
+        ${pending} pending job${pending === 1 ? '' : 's'}
+      </button>
+    </div>`;
+}
+
 export function HubView() {
   const projects = store.projects.value;
   const entries = Object.entries(projects);
@@ -47,6 +66,7 @@ export function HubView() {
       <div class="hub-header">
         <h1>Global Hub</h1>
         <p class="muted">Select a project to manage its beads.</p>
+        ${OpsStrip()}
       </div>
       ${entries.length === 0
         ? html`<div class="empty-state">

@@ -4,6 +4,11 @@
 import { signal, computed } from '@preact/signals';
 import { apiGet, apiGetRaw, apiPost, AuthError } from './api.js';
 
+// Server text for the 501 the scheduler routes return when node:sqlite isn't
+// available (Node < 22) — used to tell "feature unavailable" apart from a
+// real network/server error without threading HTTP status through apiGetRaw.
+const SCHED_UNAVAILABLE_MSG = 'scheduler requires Node >= 22';
+
 const lsGet = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* ignore */ } };
 
@@ -45,6 +50,22 @@ export const store = {
   docLoading: signal(false),
   collapsedDocGroups: signal(new Set(lsGet('bd_docs_collapsed', []))),
 
+  // epics (for the create-issue dialog's "target epic" picker)
+  epics: signal([]),
+
+  // tmux (hub-level)
+  tmuxAvailable: signal(true),
+  tmuxSessions: signal([]),
+  tmuxLoading: signal(false),
+
+  // scheduler (hub-level)
+  scheduleAvailable: signal(true),
+  scheduleJobs: signal([]),
+  scheduleLoading: signal(false),
+  // set by TmuxView's "Schedule a prompt here" before navigating to
+  // #/schedule; ScheduleView consumes it once on mount and clears it.
+  scheduleSessionPreset: signal(null),
+
   // theme
   themePreset: signal(localStorage.getItem('bd_theme_preset') || 'default'),
   themeScheme: signal(localStorage.getItem('bd_theme_scheme') || 'auto'),
@@ -52,7 +73,7 @@ export const store = {
   // ui chrome
   toasts: signal([]),
   tokenDialogOpen: signal(false),
-  quickOpen: signal(false),
+  createOpen: signal(false),
   mobileFiltersOpen: signal(false),
 };
 
@@ -193,6 +214,8 @@ export function parseHash() {
   if (parts[0] === 'p' && parts[1]) {
     return { view: 'project', projectId: decodeURIComponent(parts[1]), tab: parts[2] === 'docs' ? 'docs' : 'issues' };
   }
+  if (parts[0] === 'tmux') return { view: 'tmux' };
+  if (parts[0] === 'schedule') return { view: 'schedule' };
   return { view: 'hub' };
 }
 export function navigate(hash) { if (location.hash !== hash) location.hash = hash; }
@@ -322,6 +345,71 @@ export async function openDoc(path) {
   finally { store.docLoading.value = false; }
 }
 
+// Open (non-closed) epics for the active project — feeds the create-issue
+// dialog's epic-target picker. No-op outside a project context.
+export async function loadEpics() {
+  if (!store.projectId.value) { store.epics.value = []; return; }
+  try {
+    const data = await apiGet('/api/epics');
+    store.epics.value = data.epics || [];
+  } catch (e) { store.epics.value = []; }
+}
+
+// ---------------------------------------------------------------------------
+// tmux sessions (hub-level — always fetched unprefixed via apiGetRaw)
+// ---------------------------------------------------------------------------
+export async function loadTmux() {
+  store.tmuxLoading.value = true;
+  try {
+    const data = await apiGetRaw('/api/tmux');
+    store.tmuxAvailable.value = !!data.available;
+    store.tmuxSessions.value = data.sessions || [];
+  } catch (e) { toast('Failed to load tmux sessions: ' + e.message, 'err'); }
+  finally { store.tmuxLoading.value = false; }
+}
+
+// Pane preview text (ANSI intact — stripped for display by the caller).
+// Throws AuthError on 401 so callers can open the token dialog.
+export async function loadTmuxPreview(session, lines = 400) {
+  try {
+    const data = await apiGetRaw('/api/tmux/preview?session=' + encodeURIComponent(session) + '&lines=' + lines);
+    return data.text || '';
+  } catch (e) {
+    if (e instanceof AuthError) { store.tokenDialogOpen.value = true; toast('A write token is required to view pane output.', 'err'); }
+    throw e;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Prompt scheduler (hub-level)
+// ---------------------------------------------------------------------------
+export async function loadSchedule() {
+  store.scheduleLoading.value = true;
+  try {
+    const data = await apiGetRaw('/api/schedule');
+    store.scheduleAvailable.value = true;
+    store.scheduleJobs.value = data.jobs || [];
+  } catch (e) {
+    if (e.message === SCHED_UNAVAILABLE_MSG) { store.scheduleAvailable.value = false; store.scheduleJobs.value = []; }
+    else toast('Failed to load schedule: ' + e.message, 'err');
+  } finally {
+    store.scheduleLoading.value = false;
+  }
+}
+
+export async function scheduleCreate(body) {
+  const data = await withAuth(() => apiPost('/api/schedule', body));
+  await loadSchedule();
+  toast('Scheduled for ' + body.session);
+  return data.job;
+}
+
+export async function scheduleCancel(id) {
+  await withAuth(() => apiPost('/api/schedule/cancel', { id }));
+  await loadSchedule();
+  toast('Cancelled job #' + id);
+}
+
 // ---------------------------------------------------------------------------
 // Issue selection + comments
 // ---------------------------------------------------------------------------
@@ -365,6 +453,16 @@ export async function quickCapture(body) {
   await loadIssues();
   if (data.id) await selectIssue(data.id);
   toast('Captured ' + data.id);
+  return data.id;
+}
+
+// Full-featured issue creation (type, priority, labels, description,
+// acceptance, epic parent, assignee) — backs the "New issue" dialog.
+export async function createIssue(body) {
+  const data = await withAuth(() => apiPost('/api/create', body));
+  await loadIssues();
+  if (data.id) await selectIssue(data.id);
+  toast('Created ' + data.id);
   return data.id;
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "bd-console",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Standalone, project-agnostic viewer + light editor for beads issues and a project's docs.",
   "type": "module",
   "bin": {

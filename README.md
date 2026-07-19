@@ -357,7 +357,7 @@ your choice is remembered in `localStorage` and applied before first paint
 | `k` | Select the previous issue in the list |
 | `/` | Focus the issue search field |
 | `c` | Focus the "Add a comment" input area |
-| `i` | Open the Quick Capture modal dialog |
+| `i` | Open the New issue dialog |
 | `Esc` | Close the open modal dialog or remove focus |
 
 These are ignored while you're typing into a form field or text input.

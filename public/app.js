@@ -51,14 +51,14 @@ function isTyping() {
 }
 function onKeyDown(e) {
   if (e.key === 'Escape') {
-    if (store.quickOpen.value) store.quickOpen.value = false;
+    if (store.createOpen.value) store.createOpen.value = false;
     if (store.tokenDialogOpen.value) store.tokenDialogOpen.value = false;
     if (store.mobileFiltersOpen.value) store.mobileFiltersOpen.value = false;
     return;
   }
   if (isTyping() || e.metaKey || e.ctrlKey || e.altKey) return;
   const inProject = store.route.value.view === 'project';
-  if (e.key === 'i' && inProject) { e.preventDefault(); store.quickOpen.value = true; }
+  if (e.key === 'i' && inProject) { e.preventDefault(); store.createOpen.value = true; }
   else if (e.key === 'j' && inProject) { e.preventDefault(); selectAdjacent(1); scrollSelectedIntoView(); }
   else if (e.key === 'k' && inProject) { e.preventDefault(); selectAdjacent(-1); scrollSelectedIntoView(); }
   else if (e.key === '/') { e.preventDefault(); document.querySelector('.issue-search')?.focus(); }

@@ -20,6 +20,58 @@ export function fmtDate(s) {
 }
 export function fmtClock(ms) { return ms ? new Date(ms).toLocaleTimeString() : 'never'; }
 
+// Relative time that works both directions — "in 5m" for future timestamps
+// (e.g. a not-yet-fired schedule job), "5m ago" for past ones.
+export function relTime(ms) {
+  if (!ms) return '';
+  const diff = ms - Date.now();
+  const future = diff >= 0;
+  const abs = Math.abs(diff);
+  const min = Math.round(abs / 60000);
+  let text;
+  if (min < 1) text = 'just now';
+  else if (min < 60) text = min + 'm';
+  else if (min < 1440) text = Math.round(min / 60) + 'h';
+  else text = Math.round(min / 1440) + 'd';
+  if (text === 'just now') return text;
+  return future ? 'in ' + text : text + ' ago';
+}
+
+// Strips ANSI escape sequences (CSI, OSC, and lone C1 codes) from captured
+// tmux pane output so it renders cleanly in a plain <pre>.
+export function stripAnsi(s) {
+  if (!s) return '';
+  return s
+    .replace(/\x1B\][^\x07\x1B]*(\x07|\x1B\\)/g, '') // OSC ... BEL | ST
+    .replace(/\x1B[[0-9;?]*[ -/]*[@-~]/g, '')          // CSI sequences
+    .replace(/\x1B[PX^_].*?\x1B\\/g, '')               // DCS/APC/PM/SOS
+    .replace(/\x1B[@-Z\\-_]/g, '');                     // remaining Fe escapes
+}
+
+// Renders a pane's cwd for display: last one or two path segments, with the
+// full path available via title/tooltip at the call site.
+export function cwdTail(path) {
+  if (!path) return '';
+  const parts = path.split('/').filter(Boolean);
+  if (parts.length <= 2) return '/' + parts.join('/');
+  return '…/' + parts.slice(-2).join('/');
+}
+
+// Matches a tmux pane's cwd against the hub's registered project paths —
+// returns [id, project] for the longest matching prefix, or null.
+export function matchProject(cwd, projects) {
+  if (!cwd || !projects) return null;
+  let best = null;
+  for (const [id, project] of Object.entries(projects)) {
+    const p = project.path;
+    if (!p) continue;
+    if (cwd === p || cwd.startsWith(p.endsWith('/') ? p : p + '/')) {
+      if (!best || p.length > best[1].path.length) best = [id, project];
+    }
+  }
+  return best;
+}
+
 export const statusText = (s) => s.replace('_', ' ');
 
 export const PriBadge = (p) => html`<span class=${'badge pri pri-' + p}>${PRI_LABEL[p] ?? p}</span>`;

@@ -71,7 +71,7 @@ public/
   app.js               entry point: boots theme + Shoelace, routing, global keyboard shortcuts
   ui/                  store.js (signals-based state + routing), theme.js, api.js, markdown.js,
                         components/ (App, HubView, ProjectView, IssueList, IssueDetail,
-                        FiltersPane, DocsView, QuickCapture, TopBar, TokenDialog, Toasts, ...)
+                        FiltersPane, DocsView, CreateIssueDialog, TmuxView, ScheduleView, TopBar, TokenDialog, Toasts, ...)
   vendor/               self-hosted Preact, htm, @preact/signals, preact-iso, Open Props, Shoelace
   styles.css            CSS custom-property theme tokens + components
 package.json            bin: bd-console -> serve.mjs, bd-console-init -> scripts/init.mjs
