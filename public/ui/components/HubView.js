@@ -88,7 +88,13 @@ function ProjectCard({ id, project }) {
               ${stats.openBugs > 0 && html`<span class="stat-pill s-bugs" title="Open bugs">🐞 ${stats.openBugs}</span>`}
             `}
       </div>
-      <div class="hub-card-cta">Open project →</div>
+      <div class="hub-card-cta">
+        <span>Open project →</span>
+        <button class="btn btn-xs hub-c2-open" title="Open the Console 2.0 mission-control view"
+          onClick=${(e) => { e.stopPropagation(); navigate('#/p2/' + encodeURIComponent(id)); }}>
+          Console 2.0 ◆
+        </button>
+      </div>
     </div>`;
 }
 

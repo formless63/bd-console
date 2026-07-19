@@ -10,6 +10,7 @@ import { ScheduleView } from './ScheduleView.js';
 import { SettingsView } from './SettingsView.js';
 import { Toasts } from './Toasts.js';
 import { CreateIssueDialog } from './CreateIssueDialog.js';
+import { Console2 } from '../console2/Console2.js';
 
 function CurrentView(route) {
   if (route.view === 'project') return html`<${ProjectView} />`;
@@ -21,6 +22,11 @@ function CurrentView(route) {
 
 export function App() {
   const route = store.route.value;
+  // Console 2.0 is a full-viewport flagship view — it renders without the
+  // classic TopBar chrome, but keeps global Toasts.
+  if (route.view === 'console2') {
+    return html`<${Console2} /><${Toasts} />`;
+  }
   return html`
     <${TopBar} />
     <div class="app-body">

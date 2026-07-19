@@ -226,6 +226,9 @@ export function parseHash() {
   if (parts[0] === 'p' && parts[1]) {
     return { view: 'project', projectId: decodeURIComponent(parts[1]), tab: parts[2] === 'docs' ? 'docs' : 'issues' };
   }
+  if (parts[0] === 'p2' && parts[1]) {
+    return { view: 'console2', projectId: decodeURIComponent(parts[1]) };
+  }
   if (parts[0] === 'tmux') return { view: 'tmux' };
   if (parts[0] === 'schedule') return { view: 'schedule' };
   if (parts[0] === 'settings') return { view: 'settings' };
