@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="default" data-scheme="dark">
+<html lang="en" data-theme="synergy" data-scheme="dark">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -9,7 +9,7 @@
     <script>
       (function () {
         try {
-          var preset = localStorage.getItem('bd_theme_preset') || 'default';
+          var preset = localStorage.getItem('bd_theme_preset') || 'synergy';
           var scheme = localStorage.getItem('bd_theme_scheme') || 'auto';
           var resolved = scheme === 'light' || scheme === 'dark'
             ? scheme
@@ -28,6 +28,7 @@
     <link rel="stylesheet" href="/vendor/open-props/open-props.min.css" />
     <link rel="stylesheet" href="/vendor/shoelace/themes/light.css" />
     <link rel="stylesheet" href="/vendor/shoelace/themes/dark.css" />
+    <link rel="stylesheet" href="/vendor/fonts/fonts.css" />
     <link rel="stylesheet" href="/styles.css" />
     <link rel="stylesheet" href="/ui/console2/console2.css" />
 

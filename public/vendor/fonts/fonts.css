@@ -1,0 +1,63 @@
+/* Vendored fonts — latin subset only, weights 400/500/600/700, woff2 only.
+   Source: fontsource-space-grotesk 5.3.0 and fontsource-manrope 5.3.0.
+   Self-hosted so bd-console has zero runtime network dependencies. Used by
+   the "synergy" theme preset (see styles.css --font-heading/--font-body
+   tokens and theme.js). */
+
+@font-face {
+  font-family: 'Space Grotesk';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(./space-grotesk/space-grotesk-latin-400-normal.woff2) format('woff2');
+}
+@font-face {
+  font-family: 'Space Grotesk';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url(./space-grotesk/space-grotesk-latin-500-normal.woff2) format('woff2');
+}
+@font-face {
+  font-family: 'Space Grotesk';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url(./space-grotesk/space-grotesk-latin-600-normal.woff2) format('woff2');
+}
+@font-face {
+  font-family: 'Space Grotesk';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url(./space-grotesk/space-grotesk-latin-700-normal.woff2) format('woff2');
+}
+
+@font-face {
+  font-family: 'Manrope';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(./manrope/manrope-latin-400-normal.woff2) format('woff2');
+}
+@font-face {
+  font-family: 'Manrope';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url(./manrope/manrope-latin-500-normal.woff2) format('woff2');
+}
+@font-face {
+  font-family: 'Manrope';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url(./manrope/manrope-latin-600-normal.woff2) format('woff2');
+}
+@font-face {
+  font-family: 'Manrope';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url(./manrope/manrope-latin-700-normal.woff2) format('woff2');
+}

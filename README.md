@@ -26,8 +26,9 @@ Preact app with vendored dependencies — still no bundler, no build step.
   runs on — what's running, where, and a live scrollback preview.
 - **Prompt scheduler**: queue a literal prompt to be typed into an existing,
   named tmux session at a future time (see [Scheduler](#scheduler) below).
-- **Themes**: five presets (Default, Dracula, Nord, Gruvbox, Tokyo Night),
-  each with light, dark, and auto (follows `prefers-color-scheme`) variants.
+- **Themes**: six presets (Synergy — the default, Default, Dracula, Nord,
+  Gruvbox, Tokyo Night), each with light, dark, and auto (follows
+  `prefers-color-scheme`) variants.
 - **Keyboard shortcuts**: vim/Gmail-like navigation for fast, hands-on-keyboard
   triage (see [Keyboard shortcuts](#keyboard-shortcuts)).
 
@@ -345,11 +346,14 @@ erroring, and the rest of the hub keeps working normally. Likewise, if
 
 ## Themes and keyboard shortcuts
 
-Five theme presets — Default, Dracula, Nord, Gruvbox, Tokyo Night — each
-with light, dark, and an "auto" mode that follows
-`prefers-color-scheme`. Pick one from the theme switcher in the top bar;
-your choice is remembered in `localStorage` and applied before first paint
-(no flash of the wrong theme).
+Six theme presets — Synergy, Default, Dracula, Nord, Gruvbox, Tokyo Night —
+each with light, dark, and an "auto" mode that follows
+`prefers-color-scheme`. **Synergy is the default** for first-time visitors
+(a void-black/near-white neon green + electric purple theme, with Space
+Grotesk/Manrope typography); anyone who has already picked a preset keeps
+their existing choice untouched. Pick one from the theme switcher in the
+top bar; your choice is remembered in `localStorage` and applied before
+first paint (no flash of the wrong theme).
 
 | Shortcut | Action |
 | --- | --- |

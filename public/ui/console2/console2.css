@@ -41,6 +41,12 @@
 }
 [data-scheme="light"] .c2 { --c2-rim: color-mix(in srgb, white 55%, transparent); --c2-rim-soft: color-mix(in srgb, white 40%, transparent); }
 
+/* The synergy preset's semantic --green/--purple are tuned for legible body
+   text (see styles.css), so they drift from DESIGN.md's raw neon hexes. The
+   --c2-* hooks are glows/borders/accents, not text, so give them the literal
+   neon values natively in both schemes. */
+[data-theme="synergy"] .c2 { --c2-neon: #39ff14; --c2-synergy: #9d05ff; }
+
 /* Ambient synergy blobs — layer 0, break the grid, very low opacity. */
 .c2::before, .c2::after {
   content: ""; position: absolute; z-index: 0; pointer-events: none;

@@ -67,7 +67,7 @@ export const store = {
   scheduleSessionPreset: signal(null),
 
   // theme
-  themePreset: signal(localStorage.getItem('bd_theme_preset') || 'default'),
+  themePreset: signal(localStorage.getItem('bd_theme_preset') || 'synergy'),
   themeScheme: signal(localStorage.getItem('bd_theme_scheme') || 'auto'),
 
   // ui chrome

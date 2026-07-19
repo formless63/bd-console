@@ -7,6 +7,7 @@ import { effect } from '@preact/signals';
 import { store } from './store.js';
 
 export const THEME_PRESETS = [
+  { id: 'synergy', name: 'Synergy' },
   { id: 'default', name: 'Default' },
   { id: 'dracula', name: 'Dracula' },
   { id: 'nord', name: 'Nord' },
