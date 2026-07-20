@@ -35,8 +35,10 @@ async function verifyAssetFreshness() {
   bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;padding:10px 44px 10px 14px;'
     + 'background:#93000a;color:#ffdad6;font:13px/1.5 system-ui,sans-serif;box-shadow:0 2px 12px rgba(0,0,0,.4);';
   bar.innerHTML = '<b>Stale cached UI detected.</b> You are running assets stamped <code>' + ASSET_STAMP
-    + '</code> but the server is on <code>' + live + '</code>, and a reload did not fix it — a proxy/CDN in front '
-    + '(e.g. Cloudflare) is caching these files. Purge its cache for this host, or add a cache-bypass rule, then reload.';
+    + '</code> but the server is on <code>' + live + '</code>, and a normal reload did not fix it. '
+    + 'Try a hard reload (Ctrl/Cmd+Shift+R) or a private window first. If it keeps coming back, something in front '
+    + '(e.g. Cloudflare) is caching these files or rewriting cache headers — set Browser Cache TTL to '
+    + '"Respect Existing Headers", purge the cache for this host, or add a cache-bypass rule.';
   const x = document.createElement('button');
   x.textContent = '✕';
   x.setAttribute('aria-label', 'Dismiss');
