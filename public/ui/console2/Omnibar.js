@@ -59,7 +59,12 @@ function buildItems(raw) {
     return { mode: 'cmd', items: matches, verb, rest };
   }
   const q = raw.trim().toLowerCase();
-  if (!q) return { mode: 'empty', items: [] };
+  if (!q) {
+    // Empty-but-focused IS the palette: `/` or Ctrl-K should land the user in
+    // a browsable command list immediately, not an empty box that needs a
+    // second `/` typed into it before anything appears.
+    return { mode: 'cmd', items: COMMANDS.map((c) => ({ type: 'cmd', cmd: c, rest: [] })), verb: '', rest: [] };
+  }
   const jumps = store.issues.value
     .map((i) => ({ i, s: scoreIssue(i, q) }))
     .filter((x) => x.s > 0)
