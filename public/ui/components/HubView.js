@@ -282,7 +282,10 @@ function ProviderUsageRow({ name, data }) {
     <div class="usage-row">
       <div class="usage-row-head">
         <span class="usage-provider-name">${label}</span>
-        ${data.plan && html`<span class="usage-plan-chip">${data.plan}</span>`}
+        ${data.plan && html`<span class="usage-plan-chip"
+          title=${name === 'claude'
+            ? 'Plan as recorded at your last Claude Code login — run /login in Claude Code to refresh (usage percentages are computed server-side against your real limits either way)'
+            : 'Plan reported live by the provider'}>${data.plan}</span>`}
         ${name === 'codex' && data.asOf && html`<span class="muted small usage-asof">as of ${timeAgo(data.asOf)}</span>`}
       </div>
       <div class="usage-gauges">
