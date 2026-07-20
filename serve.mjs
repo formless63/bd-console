@@ -109,6 +109,17 @@ function parseArgs(argv) {
 }
 const ARGS = parseArgs(process.argv.slice(2));
 
+// Unknown words must never silently fall through to "run the server in the
+// foreground" — that's how `bd-console update` on a pre-update-command
+// install (or any typo) ended up trying to bind the daemon's port and
+// crashing with EADDRINUSE instead of saying what's wrong.
+if (!ARGS.command && ARGS.positional.length) {
+  console.error(`bd-console: unknown command '${ARGS.positional[0]}'`);
+  console.error(`Commands: ${[...COMMANDS].join(', ')} — or run bare for a foreground server.`);
+  console.error(`(If this version doesn't know a documented command, upgrade first: see docs/upgrading.md.)`);
+  process.exit(1);
+}
+
 const REGISTRY = loadRegistry();
 if (Object.keys(REGISTRY.projects).length === 0 && ARGS.command !== 'add') {
   console.warn('bd-console Hub Mode: No projects registered yet. Use `bd-console add` to register projects.');
@@ -301,6 +312,14 @@ function isLocalOnlyHost(host) {
 const handler = createRequestHandler({ host: HOST, port: PORT, token: TOKEN, argsHost: ARGS.host, argsPort: ARGS.port });
 const server = createServer(handler);
 
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`bd-console: port ${PORT} is already in use — a daemon is likely running.`);
+    console.error(`Use 'bd-console start' to replace it, 'bd-console status' to inspect it, or pass a different --port.`);
+    process.exit(1);
+  }
+  throw err;
+});
 server.listen(PORT, HOST, () => {
   console.log(`bd-console [hub mode] → ${dashboardUrls(HOST, PORT).join('  ·  ')}`);
   console.log(`  registry: ${REGISTRY_PATH}`);
