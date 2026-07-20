@@ -3,9 +3,18 @@
 // metrics and (optional) git insights.
 import { html } from 'htm/preact';
 import { useEffect, useState } from 'preact/hooks';
-import { store, navigate, loadProjectStats, loadTmux, loadSchedule, loadProjectsGit } from '../store.js';
+import { store, navigate, loadProjectStats, loadTmux, loadSchedule, loadProjectsGit, toggleHubSection } from '../store.js';
 import { timeAgo } from './common.js';
 import { SessionRowCompact, HubTmuxHead } from './TmuxView.js';
+
+// Chevron used by the mobile collapsible-section headers (ops strip, tmux
+// strip) — see .hub-section-toggle / .hub-section-body in styles.css. Only
+// visible at <=768px; on desktop the toggle header itself is hidden so this
+// never renders there.
+function ChevronIcon({ open }) {
+  return html`<svg class="hub-section-chevron" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"
+    style=${'transform:rotate(' + (open ? '0' : '-90') + 'deg)'}><path fill="currentColor" d="M4 6l4 4 4-4"/></svg>`;
+}
 
 const METRICS_META = [
   ['open', 'Ready', 'green'],
@@ -87,7 +96,11 @@ function ProjectCard({ id, project }) {
   }, [id]);
 
   const git = store.projectsGit.value[id];
-  const open = () => navigate('#/p/' + encodeURIComponent(id));
+  // Console 2.0 is the hub's primary destination (the classic view is being
+  // retired) — the card's whole click-through, and its CTA hint below, both
+  // land on #/p2/<id>. The classic view stays reachable, just not from the
+  // hub: Console 2.0's own header carries a "classic view →" link.
+  const open = () => navigate('#/p2/' + encodeURIComponent(id));
   const onKeyDown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } };
 
   return html`
@@ -115,31 +128,44 @@ function ProjectCard({ id, project }) {
             `}
       </div>
       <div class="hub-card-cta">
-        <span>Open project →</span>
-        <button class="btn btn-xs hub-c2-open" title="Open the Console 2.0 mission-control view"
-          onClick=${(e) => { e.stopPropagation(); navigate('#/p2/' + encodeURIComponent(id)); }}>
-          Console 2.0 ◆
-        </button>
+        <span>Open Console 2.0 →</span>
       </div>
     </div>`;
 }
 
 // One-shot (not polled) summary strip — cheap enough to fetch every time the
 // hub mounts, but the tmux/schedule views themselves own the live polling.
+//
+// At <=768px this and the tmux strip below eat half the viewport before a
+// single project card is visible, so both get a tappable, per-section
+// collapse toggle (state persisted in store.collapsedHubSections / bd_hub_
+// sections_collapsed) — collapsed by default on first mobile visit. The
+// toggle header itself (.hub-section-toggle) is desktop-hidden and
+// .hub-section-body's "collapsed" class only takes effect <=768px (see
+// styles.css), so desktop rendering is untouched either way.
 function OpsStrip() {
   useEffect(() => { loadTmux(); loadSchedule(); loadProjectsGit(); }, []);
   const sessions = store.tmuxSessions.value;
   const pending = store.scheduleJobs.value.filter((j) => j.status === 'pending').length;
   const hasTmux = store.tmuxAvailable.value;
+  const collapsed = store.collapsedHubSections.value.has('ops');
+  const summary = `${hasTmux ? sessions.length + ' tmux session' + (sessions.length === 1 ? '' : 's') : 'tmux unavailable'} · ${pending} scheduled prompt${pending === 1 ? '' : 's'}`;
   return html`
-    <div class="ops-strip">
-      <button class="ops-chip" onClick=${() => navigate('#/tmux')}>
-        ${hasTmux ? `${sessions.length} tmux session${sessions.length === 1 ? '' : 's'}` : 'tmux unavailable'}
+    <div class="hub-ops-wrap">
+      <button type="button" class="hub-section-toggle" aria-expanded=${!collapsed} onClick=${() => toggleHubSection('ops')}>
+        <span class="hub-section-toggle-label">Overview</span>
+        <span class="hub-section-toggle-summary">${summary}</span>
+        <${ChevronIcon} open=${!collapsed} />
       </button>
-      <span class="ops-sep">·</span>
-      <button class="ops-chip" onClick=${() => navigate('#/schedule')}>
-        ${pending} scheduled prompt${pending === 1 ? '' : 's'}
-      </button>
+      <div class=${'ops-strip hub-section-body' + (collapsed ? ' collapsed' : '')}>
+        <button class="ops-chip" onClick=${() => navigate('#/tmux')}>
+          ${hasTmux ? `${sessions.length} tmux session${sessions.length === 1 ? '' : 's'}` : 'tmux unavailable'}
+        </button>
+        <span class="ops-sep">·</span>
+        <button class="ops-chip" onClick=${() => navigate('#/schedule')}>
+          ${pending} scheduled prompt${pending === 1 ? '' : 's'}
+        </button>
+      </div>
     </div>`;
 }
 
@@ -148,18 +174,32 @@ function TmuxSection() {
   const sessions = store.tmuxSessions.value;
   const projects = store.projects.value;
   if (!hasTmux) return null;
+  const collapsed = store.collapsedHubSections.value.has('tmux');
+  const attached = sessions.filter((s) => s.attached).length;
+  const summary = `${sessions.length} session${sessions.length === 1 ? '' : 's'} · ${attached} attached`;
   return html`
     <section class="hub-section hub-tmux-section">
-      <div class="hub-section-head">
+      <div
+        class="hub-section-head hub-section-toggle-inline"
+        role="button"
+        tabIndex="0"
+        aria-expanded=${!collapsed}
+        onClick=${() => toggleHubSection('tmux')}
+        onKeyDown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleHubSection('tmux'); } }}
+      >
         <h2>Terminal sessions</h2>
-        ${sessions.length > 0 && html`<button class="btn btn-ghost btn-xs" onClick=${() => navigate('#/tmux')}>View all →</button>`}
+        <span class="hub-section-toggle-summary">${summary}</span>
+        ${sessions.length > 0 && html`<button class="btn btn-ghost btn-xs" onClick=${(e) => { e.stopPropagation(); navigate('#/tmux'); }}>View all →</button>`}
+        <${ChevronIcon} open=${!collapsed} />
       </div>
-      ${sessions.length === 0
-        ? html`<p class="muted small hub-section-empty">No tmux sessions running.</p>`
-        : html`<div class="hub-tmux-rows">
-            <${HubTmuxHead} />
-            ${sessions.slice(0, 6).map((s) => html`<${SessionRowCompact} key=${s.name} session=${s} projects=${projects} onClick=${() => navigate('#/tmux')} />`)}
-          </div>`}
+      <div class=${'hub-section-body' + (collapsed ? ' collapsed' : '')}>
+        ${sessions.length === 0
+          ? html`<p class="muted small hub-section-empty">No tmux sessions running.</p>`
+          : html`<div class="hub-tmux-rows">
+              <${HubTmuxHead} />
+              ${sessions.slice(0, 6).map((s) => html`<${SessionRowCompact} key=${s.name} session=${s} projects=${projects} onClick=${() => navigate('#/tmux')} />`)}
+            </div>`}
+      </div>
     </section>`;
 }
 

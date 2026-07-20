@@ -87,6 +87,14 @@ export const store = {
   // hub restyle: per-project git insights (GET /api/projects?git=1)
   projectsGit: signal({}),
   projectsGitAvailable: signal(true),
+
+  // hub sections (ops strip, tmux strip, …) collapsed on mobile — collapsed
+  // state is a set of section ids, persisted per-browser. Only meaningful at
+  // the <=768px breakpoint (see .hub-section-body.collapsed in styles.css);
+  // desktop always renders sections expanded regardless of this set.
+  // Default (nothing persisted yet) is "collapsed" for every known section
+  // so a first mobile visit shows project cards without scrolling.
+  collapsedHubSections: signal(new Set(lsGet('bd_hub_sections_collapsed', ['ops', 'tmux']))),
 };
 
 // ---------------------------------------------------------------------------
@@ -278,6 +286,12 @@ export function toggleDocGroup(name) {
   set.has(name) ? set.delete(name) : set.add(name);
   store.collapsedDocGroups.value = set;
   lsSet('bd_docs_collapsed', [...set]);
+}
+export function toggleHubSection(id) {
+  const set = new Set(store.collapsedHubSections.value);
+  set.has(id) ? set.delete(id) : set.add(id);
+  store.collapsedHubSections.value = set;
+  lsSet('bd_hub_sections_collapsed', [...set]);
 }
 
 // ---------------------------------------------------------------------------

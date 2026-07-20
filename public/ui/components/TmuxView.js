@@ -50,10 +50,12 @@ export function HubTmuxHead() {
 }
 
 // Compact session row shared with the hub's "Terminal sessions" section —
-// status dot + name, repo chip, first pane's command, age/last-activity
-// stats, and a copy-attach action. Every row (including the header above)
-// must emit exactly six direct-child cells, in this order, for the shared
-// grid's columns to line up — see .hub-tmux-rows in styles.css.
+// attached/detached badge (the same pill used by TmuxView's own session
+// cards, not a status dot — a dot alone doesn't carry the label at a
+// glance) + name, repo chip, first pane's command, age/last-activity stats,
+// and a copy-attach action. Every row (including the header above) must
+// emit exactly six direct-child cells, in this order, for the shared grid's
+// columns to line up — see .hub-tmux-rows in styles.css.
 export function SessionRowCompact({ session, projects, onClick }) {
   const first = session.panes[0];
   const match = first ? matchProject(first.cwd, projects) : null;
@@ -67,7 +69,7 @@ export function SessionRowCompact({ session, projects, onClick }) {
   return html`
     <div class="hub-tmux-row" role="button" tabIndex="0" onClick=${onClick} onKeyDown=${onKeyDown}>
       <span class="tmux-cell-name">
-        <span class=${'tmux-dot' + (session.attached ? ' on' : '')} title=${session.attached ? 'attached' : 'detached'}></span>
+        <span class=${'badge tmux-attach tmux-attach-badge' + (session.attached ? ' on' : '')}>${session.attached ? 'attached' : 'detached'}</span>
         <span class="tmux-name">${session.name}</span>
       </span>
       <span class="tmux-cell-repo">
@@ -91,7 +93,7 @@ function Pane({ pane, projects }) {
         <span class="pane-cwd">${cwdTail(pane.cwd)}</span>
       </sl-tooltip>
       ${match && html`
-        <button class="chip repo-chip" onClick=${() => navigate('#/p/' + encodeURIComponent(match[0]))}>
+        <button class="chip repo-chip" onClick=${() => navigate('#/p2/' + encodeURIComponent(match[0]))}>
           ${match[0]}
         </button>`}
     </div>`;

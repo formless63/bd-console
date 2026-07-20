@@ -111,11 +111,16 @@ export function Console2() {
     c2.bootError.value = null;
     c2.laneFocus.value = null;
     c2.epicGroup.value = loadEpicGroupPref(pid);
+    // Cancellation guard: navigating away (or to another project) mid-bootstrap
+    // must not let a stale pid's follow-on loads fire or flip ready.
+    let cancelled = false;
     (async () => {
       await loadProjectMeta();
+      if (cancelled) return;
       await Promise.all([loadIssues(), loadDocs(), loadTmux()]);
-      c2.ready.value = true;
+      if (!cancelled) c2.ready.value = true;
     })();
+    return () => { cancelled = true; };
   }, [pid]);
 
   const detailOpen = !!store.selectedId.value;

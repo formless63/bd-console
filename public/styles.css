@@ -309,6 +309,44 @@ textarea.field { resize: vertical; }
 .theme-select { width: 130px; }
 .scheme-select { width: 92px; }
 
+/* ---- Mobile theme switch (◐ popover) --------------------------------------
+   Desktop shows the two Shoelace selects above; at <=768px (see the
+   responsive block near the end of this file) those are hidden in favor of
+   this compact trigger + popover — a single tap target instead of two
+   selects crammed into a horizontally-scrolling topbar-right. Same
+   preset-select + scheme-row layout as console2's ThemeSwitch, restyled
+   with this app's own tokens; both call the same ../theme.js setPreset/
+   setScheme, so there's no separate persisted state to keep in sync. */
+.theme-switch { position: relative; display: none; }
+.theme-switch-btn {
+  display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px;
+  background: transparent; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text-dim); cursor: pointer; font-size: 15px; transition: all 0.15s var(--ease);
+}
+.theme-switch-btn:hover, .theme-switch-btn[aria-expanded="true"] { color: var(--text); border-color: var(--border-2); background: var(--surface-2); }
+/* position: fixed with top/right set inline (see ThemeSwitch.js) — the
+   trigger sits inside .topbar-right, which carries overflow-x: auto below
+   900px, and an absolutely positioned popover there gets silently clipped
+   past the topbar's edge. Fixed positioning's containing block is the
+   viewport (nothing between here and there sets transform/filter/etc.), so
+   it escapes that without touching the topbar's own overflow rule. */
+.theme-switch-pop {
+  position: fixed; z-index: 90; min-width: 190px;
+  display: flex; flex-direction: column; gap: 6px; padding: 10px;
+  background: var(--elevated); border: 1px solid var(--border-2); border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+}
+.theme-switch-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-faint); }
+.theme-switch-scheme-label { margin-top: 4px; }
+.theme-switch-select { width: 100%; }
+.theme-switch-scheme { display: flex; gap: 4px; }
+.theme-switch-mini {
+  flex: 1; text-align: center; font-family: inherit; font-size: 11.5px; font-weight: 500; padding: 5px 8px;
+  background: var(--surface); border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; border-radius: var(--radius-sm);
+}
+.theme-switch-mini:hover { color: var(--text); border-color: var(--border-2); }
+.theme-switch-mini.on { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); font-weight: 600; }
+
 /* ==========================================================================
    Hub
    ========================================================================== */
@@ -376,9 +414,28 @@ textarea.field { resize: vertical; }
 
 /* ---- Hub sections (tmux strip) --------------------------------------------- */
 .hub-section { width: 100%; max-width: 1080px; margin-bottom: 1.75rem; }
-.hub-section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.6rem; }
+.hub-section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.6rem; gap: 10px; }
 .hub-section-head h2 { font-size: 13px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint); margin: 0; }
 .hub-section-empty { margin: 0; }
+
+/* ---- Collapsible hub sections (mobile only) --------------------------------
+   Below the max-width:768px breakpoint (see the responsive block near the
+   end of this file), .hub-section-toggle / .hub-section-toggle-inline
+   become visible/interactive and .hub-section-body.collapsed hides the
+   section body. Above that breakpoint every rule below is a no-op — the
+   toggle affordances stay display:none and .collapsed never applies, so
+   desktop rendering is identical to before this feature existed. */
+.hub-ops-wrap { width: 100%; }
+.hub-section-toggle {
+  display: none; width: 100%; align-items: center; gap: 8px;
+  background: none; border: none; padding: 0; margin: 0 0 0.6rem; font: inherit; color: var(--text);
+  cursor: pointer; text-align: left;
+}
+.hub-section-toggle-inline { }
+.hub-section-toggle-label { font-size: 13px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint); }
+.hub-section-toggle-summary { display: none; font-size: 12px; color: var(--text-dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hub-section-chevron { display: none; flex-shrink: 0; color: var(--text-faint); transition: transform 0.15s var(--ease); }
+.hub-section-body { }
 /* Single CSS grid spanning every row: the header (HubTmuxHead) and each
    session row (SessionRowCompact) are `display: contents` wrappers, so
    their cells become flat, in-order items of *this* grid and share one set
@@ -388,7 +445,11 @@ textarea.field { resize: vertical; }
    auto-placement to line up correctly. */
 .hub-tmux-rows {
   display: grid;
-  grid-template-columns: minmax(84px, 1.1fr) minmax(70px, 0.85fr) minmax(70px, 1.3fr) 58px 78px 34px;
+  /* First column widened from its original minmax(84px, 1.1fr) to fit the
+     attached/detached text badge (replaced a 7px status dot — see
+     .tmux-attach-badge below) alongside the session name without either
+     one crowding the other. */
+  grid-template-columns: minmax(150px, 1.3fr) minmax(70px, 0.85fr) minmax(70px, 1.3fr) 58px 78px 34px;
   align-items: center;
   column-gap: 12px;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
@@ -402,8 +463,11 @@ textarea.field { resize: vertical; }
 .hub-tmux-head-row > * { padding: 4px 0 6px; border-bottom: 1px solid var(--border-2); background: none; }
 .tmux-head-label { font-size: 10px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-faint); }
 
-.tmux-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); flex-shrink: 0; display: inline-block; }
-.tmux-dot.on { background: var(--green); box-shadow: 0 0 0 2px color-mix(in srgb, var(--green) 20%, transparent); }
+/* Attached/detached badge reused inside the hub's compact session row (in
+   place of the old status dot, which conveyed the same meaning less
+   legibly) — same .badge.tmux-attach pill TmuxView's own session cards use,
+   just sized down a notch to fit the grid cell. */
+.tmux-attach-badge { flex-shrink: 0; font-size: 10px; padding: 1px 7px; }
 
 .tmux-cell-name { display: flex; align-items: center; gap: 7px; overflow: hidden; }
 .tmux-cell-name .tmux-name { font-family: var(--font-mono); font-weight: 600; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -884,6 +948,41 @@ input.edit-input { flex: 1; min-width: 120px; }
   .settings-form-row { flex-wrap: wrap; }
   .settings-form-row .field { width: 100%; }
   .combobox-menu { max-height: 180px; }
+}
+
+/* ==========================================================================
+   768px breakpoint — mobile theme popover + collapsible hub sections.
+   Deliberately its own block (narrower than the 900px one above, wider than
+   the 460px one below) since both features below are speced against 768px
+   specifically rather than this file's existing breakpoints.
+   ========================================================================== */
+@media (max-width: 768px) {
+  /* Single ◐ popover trigger in place of the two Shoelace selects, which
+     don't work well crammed side by side into a horizontally-scrolling
+     topbar-right on a phone (see .theme-switch* in the "Top bar" section
+     above). */
+  .theme-picker { display: none; }
+  .theme-switch-mobile { display: inline-flex; }
+
+  /* Collapsible hub sections (ops strip, tmux strip) — collapsed by default
+     on a phone (store.js's collapsedHubSections starts with both ids
+     collapsed) so project cards are reachable without scrolling past a
+     half-screen of chrome first. Tapping a header calls toggleHubSection(),
+     which flips .hub-section-body's "collapsed" class here. Every selector
+     below is otherwise unused above this breakpoint (toggle affordances
+     stay display:none, .collapsed never applies), so desktop is unaffected. */
+  .hub-header { margin-bottom: 1.25rem; }
+  .hub-section { margin-bottom: 1rem; }
+  .hub-section-toggle { display: flex; }
+  .hub-section-toggle-inline { cursor: pointer; flex-wrap: nowrap; }
+  .hub-section-toggle-summary { display: block; flex: 1 1 auto; min-width: 0; text-align: right; }
+  .hub-section-chevron { display: inline-flex; }
+  /* The tmux section's "View all" button is redundant with the collapsible
+     header itself here (tap to expand, or reach #/tmux via the ops strip's
+     "N tmux sessions" chip above) and its label wrapped awkwardly in the
+     header's now-tighter row — drop it at this width. */
+  .hub-tmux-section .hub-section-head > .btn { display: none; }
+  .hub-section-body.collapsed { display: none; }
 }
 
 @media (max-width: 460px) {

@@ -8,6 +8,7 @@ import { html } from 'htm/preact';
 import { useEffect, useState } from 'preact/hooks';
 import { store, loadSettings, saveServerToken, toast } from '../store.js';
 import { getToken, setToken } from '../api.js';
+import { THEME_PRESETS, SCHEMES, setPreset, setScheme } from '../theme.js';
 
 const SOURCE_LABEL = { flag: 'flag', env: 'env', config: 'config', default: 'default' };
 
@@ -54,6 +55,40 @@ function ServerSettingsPanel() {
       </p>
       ${s?.configPath && html`<p class="muted small settings-path">Config file: <code>${s.configPath}</code></p>`}
       ${s?.note && html`<p class="muted small settings-note">${s.note}</p>`}
+    </section>`;
+}
+
+// Appearance — themes are settings too, and this gives mobile a second
+// discoverable path to them beyond the topbar's ◐ popover (components/
+// ThemeSwitch.js). Reuses ../theme.js's setPreset/setScheme directly, same
+// as every other theme control in the app, so there's nothing to keep in
+// sync — this is just another view onto the same store signals.
+function AppearancePanel() {
+  const preset = store.themePreset.value;
+  const scheme = store.themeScheme.value;
+  return html`
+    <section class="settings-card">
+      <h2 class="settings-card-title">Appearance</h2>
+      <p class="muted small">Theme preset and light/dark scheme — applies immediately and persists in this browser.</p>
+      <div class="edit-block">
+        <span class="edit-label">Preset</span>
+        <select class="edit-input theme-switch-select" value=${preset} onChange=${(e) => setPreset(e.target.value)}>
+          ${THEME_PRESETS.map((p) => html`<option key=${p.id} value=${p.id}>${p.name}</option>`)}
+        </select>
+      </div>
+      <div class="edit-block">
+        <span class="edit-label">Scheme</span>
+        <div class="theme-switch-scheme">
+          ${SCHEMES.map((s) => html`
+            <button
+              key=${s.id}
+              type="button"
+              class=${'theme-switch-mini' + (scheme === s.id ? ' on' : '')}
+              aria-pressed=${scheme === s.id}
+              onClick=${() => setScheme(s.id)}
+            >${s.name}</button>`)}
+        </div>
+      </div>
     </section>`;
 }
 
@@ -143,6 +178,7 @@ export function SettingsView() {
           : loading
             ? html`<section class="settings-card"><p class="muted small">Loading…</p></section>`
             : html`<section class="settings-card"><p class="muted small">Server settings endpoint isn't available on this server yet (<code>GET /api/settings</code> 404s). Showing browser-only controls below.</p></section>`}
+        <${AppearancePanel} />
         <${BrowserTokenPanel} />
         <${ServerTokenPanel} />
       </div>

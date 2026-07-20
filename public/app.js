@@ -77,6 +77,19 @@ async function syncRoute() {
     } else if (route.tab === 'docs' && store.docs.value.length === 0) {
       loadDocs();
     }
+  } else if (route.view === 'console2') {
+    // Console 2.0 (#/p2/<id>) owns its own project bootstrapping — see
+    // console2/Console2.js's route effect + mount useEffect, which set
+    // projectId and load issues/docs/tmux themselves. Nulling projectId
+    // here (as the generic "not a project" branch below does) raced with
+    // that: this handler runs synchronously right after the route signal
+    // updates, before Console2's effects settle, so it could stomp the
+    // pid Console2 had just set back to null and leak an unscoped
+    // /api/issues + /api/docs fetch (404s in hub mode, since those only
+    // exist per-project as /api/p/<id>/issues|docs). Leave projectId
+    // alone here; just reset the classic view's "last project" tracker so
+    // a later #/p/<id> visit reloads fresh instead of no-op'ing.
+    lastProjectId = null;
   } else {
     store.projectId.value = null;
     lastProjectId = null;
