@@ -3,7 +3,7 @@
 // metrics and (optional) git insights.
 import { html } from 'htm/preact';
 import { useEffect, useState } from 'preact/hooks';
-import { store, navigate, loadProjectStats, loadTmux, loadSchedule, loadProjectsGit, toggleHubSection } from '../store.js';
+import { store, navigate, loadProjectStats, loadTmux, loadSchedule, loadProjectsGit, loadUsage, toggleHubSection } from '../store.js';
 import { timeAgo } from './common.js';
 import { SessionRowCompact, HubTmuxHead } from './TmuxView.js';
 
@@ -203,6 +203,132 @@ function TmuxSection() {
     </section>`;
 }
 
+// ---------------------------------------------------------------------------
+// Usage section — Claude Code / Codex quota gauges (GET /api/usage, polled
+// every 60s while the hub is mounted). Placed near the ops strip since it's
+// the same kind of hub-wide, not-project-scoped glanceable status.
+// ---------------------------------------------------------------------------
+const USAGE_POLL_MS = 60000;
+const PROVIDER_LABEL = { claude: 'Claude Code', codex: 'Codex' };
+
+// "resets in Xh Ym" / "resets in Ym" — deliberately not timeAgo/relTime
+// (both round to a single unit), since a countdown reading "resets in 1h"
+// when it's actually 1h 55m away is misleading for scheduling decisions.
+function formatResetIn(resetsAt) {
+  if (!resetsAt) return null;
+  const diffMin = Math.round((resetsAt - Date.now()) / 60000);
+  if (diffMin <= 0) return 'resets soon';
+  const h = Math.floor(diffMin / 60);
+  const m = diffMin % 60;
+  return h > 0 ? `resets in ${h}h ${m}m` : `resets in ${m}m`;
+}
+
+function gaugeColorClass(percent) {
+  if (typeof percent !== 'number') return 'gauge-ok';
+  if (percent > 85) return 'gauge-crit';
+  if (percent >= 60) return 'gauge-warn';
+  return 'gauge-ok';
+}
+
+function UsageGauge({ w }) {
+  const pct = typeof w.percent === 'number' ? Math.max(0, Math.min(100, w.percent)) : null;
+  return html`
+    <div class="usage-gauge-row">
+      <span class="usage-gauge-label">${w.label}</span>
+      <span class="usage-gauge-pct">${pct != null ? Math.round(pct) + '%' : '—'}</span>
+      ${w.resetsAt && html`<span class="usage-gauge-reset muted small">${formatResetIn(w.resetsAt)}</span>`}
+      <div class="usage-gauge-track" role="progressbar" aria-valuenow=${pct ?? 0} aria-valuemin="0" aria-valuemax="100">
+        <div class=${'usage-gauge-fill ' + gaugeColorClass(pct)} style=${'width:' + (pct ?? 0) + '%'}></div>
+      </div>
+    </div>`;
+}
+
+function summarizeUsage(data) {
+  if (!data) return '…';
+  if (data.status === 'ok') {
+    const pcts = (data.windows || []).map((w) => w.percent).filter((p) => typeof p === 'number');
+    return pcts.length ? Math.round(Math.max(...pcts)) + '%' : 'ok';
+  }
+  if (data.status === 'token-expired') return 'expired';
+  return 'not detected';
+}
+
+function ProviderUsageRow({ name, data }) {
+  const label = PROVIDER_LABEL[name] || name;
+
+  if (!data || data.status === 'no-creds' || data.status === 'no-data') {
+    return html`
+      <div class="usage-row usage-row-quiet">
+        <span class="usage-provider-name">${label}</span>
+        <span class="muted small">not detected</span>
+      </div>`;
+  }
+  if (data.status === 'token-expired') {
+    return html`
+      <div class="usage-row usage-row-quiet">
+        <span class="usage-provider-name">${label}</span>
+        <span class="muted small">${data.message || 'open Claude Code to refresh'}</span>
+      </div>`;
+  }
+  if (data.status === 'error') {
+    return html`
+      <div class="usage-row usage-row-quiet">
+        <span class="usage-provider-name">${label}</span>
+        <span class="muted small">usage unavailable</span>
+      </div>`;
+  }
+
+  return html`
+    <div class="usage-row">
+      <div class="usage-row-head">
+        <span class="usage-provider-name">${label}</span>
+        ${data.plan && html`<span class="usage-plan-chip">${data.plan}</span>`}
+        ${name === 'codex' && data.asOf && html`<span class="muted small usage-asof">as of ${timeAgo(data.asOf)}</span>`}
+      </div>
+      <div class="usage-gauges">
+        ${(data.windows || []).length === 0
+          ? html`<span class="muted small">no quota data</span>`
+          : data.windows.map((w) => html`<${UsageGauge} key=${w.id} w=${w} />`)}
+      </div>
+    </div>`;
+}
+
+function UsageSection() {
+  useEffect(() => {
+    loadUsage();
+    const t = setInterval(loadUsage, USAGE_POLL_MS);
+    return () => clearInterval(t);
+  }, []);
+
+  if (!store.usageAvailable.value) return null;
+
+  const usage = store.usage.value || {};
+  const collapsed = store.collapsedHubSections.value.has('usage');
+  const summary = `Claude ${summarizeUsage(usage.claude)} · Codex ${summarizeUsage(usage.codex)}`;
+
+  return html`
+    <section class="hub-section hub-usage-section">
+      <div
+        class="hub-section-head hub-section-toggle-inline"
+        role="button"
+        tabIndex="0"
+        aria-expanded=${!collapsed}
+        onClick=${() => toggleHubSection('usage')}
+        onKeyDown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleHubSection('usage'); } }}
+      >
+        <h2>Usage</h2>
+        <span class="hub-section-toggle-summary">${summary}</span>
+        <${ChevronIcon} open=${!collapsed} />
+      </div>
+      <div class=${'hub-section-body' + (collapsed ? ' collapsed' : '')}>
+        <div class="usage-rows">
+          <${ProviderUsageRow} name="claude" data=${usage.claude} />
+          <${ProviderUsageRow} name="codex" data=${usage.codex} />
+        </div>
+      </div>
+    </section>`;
+}
+
 export function HubView() {
   const projects = store.projects.value;
   const entries = Object.entries(projects);
@@ -213,6 +339,8 @@ export function HubView() {
         <p class="muted">Select a project to manage its beads.</p>
         ${OpsStrip()}
       </div>
+
+      ${UsageSection()}
 
       ${entries.length > 0 && TmuxSection()}
 

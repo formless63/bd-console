@@ -88,6 +88,10 @@ export const store = {
   projectsGit: signal({}),
   projectsGitAvailable: signal(true),
 
+  // provider usage (hub-level; GET /api/usage — Claude Code + Codex quotas)
+  usage: signal({ claude: null, codex: null }),
+  usageAvailable: signal(true),
+
   // hub sections (ops strip, tmux strip, …) collapsed on mobile — collapsed
   // state is a set of section ids, persisted per-browser. Only meaningful at
   // the <=768px breakpoint (see .hub-section-body.collapsed in styles.css);
@@ -501,6 +505,24 @@ export async function deletePrompt(id) {
 // Best-effort "last used" ping — never surfaces an error to the user.
 export async function markPromptUsed(id) {
   try { await apiPost('/api/prompts/used', { id }); } catch { /* ignore */ }
+}
+
+// ---------------------------------------------------------------------------
+// Provider usage (hub-level) — Claude Code / Codex quota tracking.
+// GET /api/usage is gated the same way /api/tmux/preview is (token-gated
+// when a token is configured); like the other hub-level "…Available"
+// signals, any failure (401, network, older server without the route)
+// degrades to "unavailable" rather than erroring the whole hub.
+// ---------------------------------------------------------------------------
+export async function loadUsage() {
+  try {
+    const data = await apiGetRaw('/api/usage');
+    store.usage.value = data.providers || { claude: null, codex: null };
+    store.usageAvailable.value = true;
+  } catch (e) {
+    store.usageAvailable.value = false;
+    console.warn('Usage endpoint unavailable: ' + e.message);
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ import { html } from 'htm/preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import {
   store, loadSchedule, loadTmux, scheduleCreate, scheduleCancel,
-  loadPrompts, savePrompt, deletePrompt, markPromptUsed,
+  loadPrompts, savePrompt, deletePrompt, markPromptUsed, loadUsage,
 } from '../store.js';
 import { relTime, cwdTail } from './common.js';
 
@@ -42,6 +42,24 @@ const RUN_AT_PRESETS = [
   { label: '2am', fn: () => presetNextClock(2) },
   { label: '4am', fn: () => presetNextClock(4) },
 ];
+
+// Run-while-you-sleep tie-in: the soonest upcoming resetsAt across a
+// provider's usage windows (e.g. Claude's 5h session window resets sooner
+// than its 7d window) — the moment it's worth having a fresh-quota agent
+// picking work back up. +2 minutes gives the provider's own reset a beat to
+// actually land before the scheduled prompt fires.
+function earliestReset(windows) {
+  const vals = (windows || []).map((w) => w.resetsAt).filter((v) => typeof v === 'number' && Number.isFinite(v) && v > 0);
+  return vals.length ? Math.min(...vals) : null;
+}
+function usageResetPresets(usage) {
+  const presets = [];
+  const claudeReset = usage && usage.claude && usage.claude.status === 'ok' ? earliestReset(usage.claude.windows) : null;
+  const codexReset = usage && usage.codex && usage.codex.status === 'ok' ? earliestReset(usage.codex.windows) : null;
+  if (claudeReset) presets.push({ label: 'next Claude reset', fn: () => new Date(claudeReset + 2 * 60 * 1000) });
+  if (codexReset) presets.push({ label: 'next Codex reset', fn: () => new Date(codexReset + 2 * 60 * 1000) });
+  return presets;
+}
 
 // ---------------------------------------------------------------------------
 // SessionCombobox — replaces a plain <input list=…>/<datalist>.
@@ -197,6 +215,8 @@ function SavedPrompts({ prompt, onPick }) {
 
 function CreateForm() {
   const sessions = store.tmuxSessions.value;
+  const usage = store.usage.value;
+  const resetPresets = usageResetPresets(usage);
   const [prompt, setPrompt] = useState('');
   const [session, setSession] = useState('');
   const [runAtLocal, setRunAtLocal] = useState(toLocalInputValue(new Date(Date.now() + 5 * 60 * 1000)));
@@ -248,6 +268,8 @@ function CreateForm() {
         <div class="preset-row">
           ${RUN_AT_PRESETS.map((p) => html`
             <button key=${p.label} type="button" class="btn btn-xs btn-ghost" onClick=${() => applyPreset(p.fn)}>${p.label}</button>`)}
+          ${resetPresets.map((p) => html`
+            <button key=${p.label} type="button" class="btn btn-xs btn-ghost" onClick=${() => applyPreset(p.fn)}>${p.label}</button>`)}
         </div>
       </label>
 
@@ -292,7 +314,8 @@ export function ScheduleView() {
   useEffect(() => {
     loadSchedule();
     loadTmux();
-    const t = setInterval(() => { loadSchedule(); loadTmux(); }, POLL_MS);
+    loadUsage();
+    const t = setInterval(() => { loadSchedule(); loadTmux(); loadUsage(); }, POLL_MS);
     return () => clearInterval(t);
   }, []);
 

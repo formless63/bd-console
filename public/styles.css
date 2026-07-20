@@ -479,6 +479,37 @@ textarea.field { resize: vertical; }
 
 .hub-tmux-repo { margin-left: 0; flex-shrink: 0; max-width: 100%; }
 
+/* ---- Usage section (Claude Code / Codex quota gauges) ---------------------
+   Percent-filled horizontal gauges, color-ramped via the same semantic
+   --green/--amber/--red tokens every other status affordance in this app
+   uses (never a hardcoded hex) so all six theme presets stay correct. */
+.usage-rows { display: flex; flex-direction: column; gap: 10px; }
+.usage-row {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: 12px 14px; box-shadow: var(--shadow-sm);
+}
+.usage-row-quiet { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; }
+.usage-row-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; flex-wrap: wrap; }
+.usage-provider-name { font-weight: 650; font-size: 13.5px; }
+.usage-plan-chip {
+  font-size: 11px; font-weight: 600; color: var(--text-dim); background: var(--bg);
+  border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 2px 8px; text-transform: capitalize;
+}
+.usage-asof { margin-left: auto; }
+.usage-gauges { display: flex; flex-direction: column; gap: 9px; }
+.usage-gauge-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.usage-gauge-label { font-family: var(--font-mono); font-size: 11.5px; font-weight: 600; color: var(--text-dim); width: 30px; flex-shrink: 0; }
+.usage-gauge-pct { font-size: 12px; font-weight: 650; width: 38px; flex-shrink: 0; }
+.usage-gauge-reset { flex-shrink: 0; white-space: nowrap; margin-left: auto; }
+.usage-gauge-track {
+  flex: 1 1 160px; min-width: 80px; height: 8px; border-radius: var(--radius-pill);
+  background: var(--bg); border: 1px solid var(--border); overflow: hidden;
+}
+.usage-gauge-fill { height: 100%; border-radius: var(--radius-pill); transition: width 0.3s var(--ease); }
+.usage-gauge-fill.gauge-ok { background: var(--green); }
+.usage-gauge-fill.gauge-warn { background: var(--amber); }
+.usage-gauge-fill.gauge-crit { background: var(--red); }
+
 .dot-status { width: 7px; height: 7px; border-radius: 50%; display: inline-block; background: var(--text-faint); }
 .dot-status.st-open, .st-open .dot-status { background: var(--green); }
 .st-open.dot-status { background: var(--green); }
@@ -983,6 +1014,16 @@ input.edit-input { flex: 1; min-width: 120px; }
      header's now-tighter row — drop it at this width. */
   .hub-tmux-section .hub-section-head > .btn { display: none; }
   .hub-section-body.collapsed { display: none; }
+
+  /* Usage gauges: stack full-width instead of the desktop single-line
+     label/pct/reset/track row — avoids the track squeezing to near-zero
+     width (or forcing horizontal scroll) once label+pct+reset text alone
+     approach the viewport width on a phone. */
+  .usage-gauge-row { row-gap: 4px; }
+  .usage-gauge-label { order: 1; }
+  .usage-gauge-pct { order: 2; }
+  .usage-gauge-reset { order: 3; }
+  .usage-gauge-track { order: 4; flex-basis: 100%; }
 }
 
 @media (max-width: 460px) {

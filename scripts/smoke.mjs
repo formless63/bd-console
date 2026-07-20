@@ -818,6 +818,147 @@ try {
   console.log('smoke ok (non-TTY first-run defaults + log line)');
   }
 
+  // --- provider usage adapters (lib/usage.mjs via GET /api/usage) ------------
+  // Fixture-only: never reads the real ~/.claude or ~/.codex, never hits the
+  // real network. BD_CONSOLE_CLAUDE_DIR / BD_CONSOLE_CODEX_DIR redirect both
+  // adapters at fabricated temp dirs the same way BD_CONSOLE_CONFIG_DIR
+  // redirects the registry/config above.
+  {
+    const usageConfigDir = join(tempRoot, 'usage-config');
+    const usageClaudeDir = join(tempRoot, 'usage-claude');
+    const usageCodexDir = join(tempRoot, 'usage-codex-sessions');
+    mkdirSync(usageConfigDir, { recursive: true });
+    mkdirSync(usageClaudeDir, { recursive: true });
+    const codexDayDir = join(usageCodexDir, '2026', '01', '01');
+    mkdirSync(codexDayDir, { recursive: true });
+
+    // Fabricated, already-expired Claude Code credentials — expiresAt is in
+    // the past, so getClaudeUsage() must report 'token-expired' *without*
+    // ever attempting the network call (proving the no-network-on-expiry path).
+    const fakeAccessToken = 'sk-ant-oat01-SMOKE-FIXTURE-TOKEN-DO-NOT-USE-1234567890ABCDEF';
+    writeFileSync(join(usageClaudeDir, '.credentials.json'), JSON.stringify({
+      claudeAiOauth: {
+        accessToken: fakeAccessToken,
+        refreshToken: 'fake-refresh-token-do-not-use',
+        expiresAt: Date.now() - 60000,
+        subscriptionType: 'pro',
+        rateLimitTier: 'default'
+      }
+    }));
+
+    // Fabricated Codex rollout session: a stale token_count event, a
+    // non-token_count event, then a fresh token_count event — getCodexUsage()
+    // must select the LAST token_count event's rate_limits.
+    const primaryResetsAtSec = Math.floor(Date.now() / 1000) + 3 * 3600;
+    const secondaryResetsAtSec = Math.floor(Date.now() / 1000) + 6 * 86400;
+    const staleLine = JSON.stringify({ payload: { type: 'token_count', rate_limits: {
+      primary: { used_percent: 5, window_minutes: 300, resets_at: primaryResetsAtSec - 100 },
+      secondary: null, plan_type: 'pro', credits: {}
+    } } });
+    const noiseLine = JSON.stringify({ payload: { type: 'something_else' } });
+    const freshLine = JSON.stringify({ payload: { type: 'token_count', rate_limits: {
+      primary: { used_percent: 63.5, window_minutes: 300, resets_at: primaryResetsAtSec },
+      secondary: { used_percent: 12, window_minutes: 10080, resets_at: secondaryResetsAtSec },
+      plan_type: 'pro', credits: {}
+    } } });
+    writeFileSync(join(codexDayDir, 'rollout-test.jsonl'), [staleLine, noiseLine, freshLine, ''].join('\n'));
+
+    const usagePort = await getPort();
+    const usageEnv = {
+      ...process.env,
+      BD_CONSOLE_CONFIG_DIR: usageConfigDir,
+      BD_CONSOLE_CLAUDE_DIR: usageClaudeDir,
+      BD_CONSOLE_CODEX_DIR: usageCodexDir
+    };
+    const usageServer = spawn(process.execPath, [serverEntry, '--host', '127.0.0.1', '--port', String(usagePort)], {
+      cwd: process.cwd(), env: usageEnv, stdio: ['ignore', 'pipe', 'pipe']
+    });
+    try {
+      await waitFor(`http://127.0.0.1:${usagePort}/api/meta`);
+      const usageRes = await fetch(`http://127.0.0.1:${usagePort}/api/usage`);
+      assert(usageRes.status === 200, `/api/usage should 200 (no token configured), got ${usageRes.status}`);
+      const usageBody = await usageRes.json();
+      const rawText = JSON.stringify(usageBody);
+      assert(!rawText.includes(fakeAccessToken.slice(0, 12)), '/api/usage response must never contain token material');
+
+      const claude = usageBody.providers && usageBody.providers.claude;
+      assert(claude && claude.status === 'token-expired', `expired claude creds should report token-expired, got: ${JSON.stringify(claude)}`);
+      assert(claude.plan === 'pro' && claude.tier === 'default', `claude token-expired result should still carry plan/tier: ${JSON.stringify(claude)}`);
+      assert(Array.isArray(claude.windows) && claude.windows.length === 0, 'claude token-expired result should have empty windows');
+      assert(/refresh/i.test(claude.message || ''), 'claude token-expired result should hint at refreshing Claude Code');
+
+      const codex = usageBody.providers && usageBody.providers.codex;
+      assert(codex && codex.status === 'ok', `fabricated codex session should report ok, got: ${JSON.stringify(codex)}`);
+      assert(codex.plan === 'pro', `codex plan mismatch: ${JSON.stringify(codex)}`);
+      assert(typeof codex.asOf === 'number' && codex.asOf > 0, 'codex result missing numeric asOf (file mtime)');
+      const primary = (codex.windows || []).find((w) => w.id === 'primary');
+      const secondary = (codex.windows || []).find((w) => w.id === 'secondary');
+      assert(primary && primary.percent === 63.5, `codex should use the LAST token_count event, got: ${JSON.stringify(primary)}`);
+      assert(primary.label === '5h', `codex primary window label should be '5h' (300 minutes), got: ${primary.label}`);
+      assert(primary.resetsAt === primaryResetsAtSec * 1000, `codex primary resetsAt should be resets_at*1000, got: ${primary.resetsAt}`);
+      assert(secondary && secondary.label === '7d', `codex secondary window label should be '7d' (10080 minutes), got: ${JSON.stringify(secondary)}`);
+      assert(secondary.resetsAt === secondaryResetsAtSec * 1000, `codex secondary resetsAt should be resets_at*1000, got: ${secondary.resetsAt}`);
+
+      console.log('smoke ok (usage API: fixture claude token-expired + fixture codex ok, LAST-event selection, no token material leaked)');
+    } finally {
+      usageServer.kill('SIGTERM');
+      await new Promise((resolveP) => usageServer.once('exit', () => resolveP()));
+    }
+
+    // --- missing dirs -> no-creds / no-data --------------------------------
+    const usageEmptyConfigDir = join(tempRoot, 'usage-empty-config');
+    const usageEmptyClaudeDir = join(tempRoot, 'usage-empty-claude'); // exists, but no .credentials.json inside
+    const usageEmptyCodexDir = join(tempRoot, 'usage-empty-codex-sessions'); // does not exist at all
+    mkdirSync(usageEmptyConfigDir, { recursive: true });
+    mkdirSync(usageEmptyClaudeDir, { recursive: true });
+    const usageEmptyPort = await getPort();
+    const usageEmptyEnv = {
+      ...process.env,
+      BD_CONSOLE_CONFIG_DIR: usageEmptyConfigDir,
+      BD_CONSOLE_CLAUDE_DIR: usageEmptyClaudeDir,
+      BD_CONSOLE_CODEX_DIR: usageEmptyCodexDir
+    };
+    const usageEmptyServer = spawn(process.execPath, [serverEntry, '--host', '127.0.0.1', '--port', String(usageEmptyPort)], {
+      cwd: process.cwd(), env: usageEmptyEnv, stdio: ['ignore', 'pipe', 'pipe']
+    });
+    try {
+      await waitFor(`http://127.0.0.1:${usageEmptyPort}/api/meta`);
+      const emptyBody = await fetch(`http://127.0.0.1:${usageEmptyPort}/api/usage`).then((r) => r.json());
+      assert(emptyBody.providers.claude.status === 'no-creds', `missing .credentials.json should report no-creds, got: ${JSON.stringify(emptyBody.providers.claude)}`);
+      assert(emptyBody.providers.codex.status === 'no-data', `missing codex sessions dir should report no-data, got: ${JSON.stringify(emptyBody.providers.codex)}`);
+      console.log('smoke ok (usage API: missing dirs -> no-creds/no-data)');
+    } finally {
+      usageEmptyServer.kill('SIGTERM');
+      await new Promise((resolveP) => usageEmptyServer.once('exit', () => resolveP()));
+    }
+
+    // --- token-gated the same way /api/tmux/preview is ---------------------
+    const usageAuthConfigDir = join(tempRoot, 'usage-auth-config');
+    mkdirSync(usageAuthConfigDir, { recursive: true });
+    const usageAuthPort = await getPort();
+    const usageAuthEnv = {
+      ...process.env,
+      BD_CONSOLE_CONFIG_DIR: usageAuthConfigDir,
+      BD_CONSOLE_TOKEN: 'usage-smoke-token',
+      BD_CONSOLE_CLAUDE_DIR: usageEmptyClaudeDir,
+      BD_CONSOLE_CODEX_DIR: usageEmptyCodexDir
+    };
+    const usageAuthServer = spawn(process.execPath, [serverEntry, '--host', '127.0.0.1', '--port', String(usageAuthPort)], {
+      cwd: process.cwd(), env: usageAuthEnv, stdio: ['ignore', 'pipe', 'pipe']
+    });
+    try {
+      await waitFor(`http://127.0.0.1:${usageAuthPort}/api/meta`);
+      const noAuthRes = await fetch(`http://127.0.0.1:${usageAuthPort}/api/usage`);
+      assert(noAuthRes.status === 401, `/api/usage without a token should 401 when a token is configured, got ${noAuthRes.status}`);
+      const withAuthRes = await fetch(`http://127.0.0.1:${usageAuthPort}/api/usage`, { headers: { 'x-bd-token': 'usage-smoke-token' } });
+      assert(withAuthRes.status === 200, `/api/usage with the correct token should 200, got ${withAuthRes.status}`);
+      console.log('smoke ok (usage API: token-gated like /api/tmux/preview)');
+    } finally {
+      usageAuthServer.kill('SIGTERM');
+      await new Promise((resolveP) => usageAuthServer.once('exit', () => resolveP()));
+    }
+  }
+
   console.log(`smoke ok: ${seedId}, ${quickRes.id}`);
 } catch (err) {
   console.error(`smoke failed: ${err.message}`);
