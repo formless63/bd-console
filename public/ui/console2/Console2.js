@@ -36,8 +36,12 @@ function CliFlash() {
   const cli = c2.lastCli.value;
   if (!cli) return null;
   const copy = () => { navigator.clipboard?.writeText(cli.cmd).catch(() => {}); };
+  // "✓ ran" reads this as a receipt of something that already happened, not
+  // a command being suggested to the user — every action flashes through
+  // here (capture, claim, close, defer, …), so the fix is universal.
   return html`
     <div class="c2-cli" key=${cli.at}>
+      <span class="c2-cli-ran" aria-hidden="true">✓ ran</span>
       <span class="c2-cli-dollar">$</span>
       <code class="c2-cli-cmd">${cli.cmd}</code>
       <button class="c2-cli-copy" title="Copy" onClick=${copy}>copy</button>
