@@ -214,6 +214,9 @@
 /* ---- Pulse bar ----------------------------------------------------------- */
 .c2-pulsebar-wrap { border-bottom: 1px solid var(--c2-line);
   background: color-mix(in srgb, var(--surface) 34%, transparent); backdrop-filter: var(--c2-blur); }
+/* Mobile-only collapse toggle for the whole pulse area — desktop never
+   renders it and never honors .pb-collapsed (see the responsive block). */
+.c2-pb-collapse { display: none; }
 .c2-pulsebar { display: flex; align-items: stretch; gap: 12px; padding: 8px 16px; }
 .c2-pb-tiles { display: flex; gap: 8px; flex: 1 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
 .c2-pb-item { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
@@ -569,6 +572,16 @@
   .c2-pb-side .c2-spark { display: none; }
   .c2-pb-more { min-height: 48px; min-width: 44px; }
   .c2-pulsex { grid-template-columns: 1fr; padding: 8px 12px 12px; }
+
+  /* Collapsible pulse area: slim summary row always visible; the tile bar and
+     details panel hide while collapsed (default on phones) so the canvas is
+     the first screenful. Normal flow — no overlays. */
+  .c2-pb-collapse { display: flex; align-items: center; gap: 8px; width: 100%;
+    min-height: 44px; padding: 4px 12px; background: transparent; border: 0;
+    color: var(--text-dim); cursor: pointer; text-align: left; }
+  .c2-pb-collapse-sum { flex: 1; font-size: 11px; color: var(--text-dim);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .pb-collapsed .c2-pulsebar, .pb-collapsed .c2-pulsex { display: none; }
 
   /* ---- canvas: stop every flex/grid child from forcing horizontal overflow */
   .c2-canvas, .c2-canvas-body, .c2-canvas-body > *, .c2-flow, .c2-map, .c2-docs, .c2-doc-main { min-width: 0; }

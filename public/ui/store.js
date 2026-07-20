@@ -94,7 +94,9 @@ export const store = {
   // desktop always renders sections expanded regardless of this set.
   // Default (nothing persisted yet) is "collapsed" for every known section
   // so a first mobile visit shows project cards without scrolling.
-  collapsedHubSections: signal(new Set(lsGet('bd_hub_sections_collapsed', ['ops', 'tmux']))),
+  // Default: nothing collapsed — hub sections (esp. tmux) stay visible on
+  // every viewport; collapsing is a per-user opt-in via the mobile toggles.
+  collapsedHubSections: signal(new Set(lsGet('bd_hub_sections_collapsed', []))),
 };
 
 // ---------------------------------------------------------------------------

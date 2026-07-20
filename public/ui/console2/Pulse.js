@@ -9,7 +9,7 @@
 // produced exactly those bugs twice.
 import { html } from 'htm/preact';
 import { store, selectIssue, toast } from '../store.js';
-import { c2 } from './state.js';
+import { c2, setPulseBarCollapsed } from './state.js';
 import { pulse, AGE_AMBER_H, AGE_RED_H, ageMs } from './derive.js';
 import { Corners, PRI_LABEL, StatusGlyph } from './ui.js';
 import { matchProject, cwdTail } from '../components/common.js';
@@ -62,10 +62,17 @@ function PriorityBars({ dist }) {
 export function PulseBar() {
   const p = pulse.value;
   const open = c2.pulseOpen.value;
+  const collapsed = c2.pulseBarCollapsed.value;
   const activeAging = p.inProgress.filter((i) => ageMs(i) / 3600000 > AGE_AMBER_H).length;
 
   return html`
-    <section class="c2-pulsebar-wrap">
+    <section class=${'c2-pulsebar-wrap' + (collapsed ? ' pb-collapsed' : '')}>
+      <button class="c2-pb-collapse" aria-expanded=${!collapsed}
+        onClick=${() => setPulseBarCollapsed(!collapsed)}>
+        <span class="c2-hud-label">◈ Pulse</span>
+        <span class="c2-pb-collapse-sum">${p.ready} ready · ${p.inProgress.length} active · ${p.blocked.length} blocked · ${p.triage} triage</span>
+        <span aria-hidden="true">${collapsed ? '▾' : '▴'}</span>
+      </button>
       <div class="c2-pulsebar">
         <div class="c2-pb-tiles">
           ${Tile({ label: 'Ready', value: p.ready, tone: 'green', onClick: () => focus('ready') })}

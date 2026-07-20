@@ -9,6 +9,10 @@ export const c2 = {
 
   canvasMode: signal('flow'),    // 'flow' | 'map' | 'docs'
   pulseOpen: signal(false),      // pulse bar: details panel expanded
+  // Mobile-only collapse of the whole pulse bar (CSS ignores it >768px).
+  // Default collapsed so the canvas is the first thing on a phone; the
+  // collapsed summary row keeps the headline numbers visible. Persisted.
+  pulseBarCollapsed: signal((() => { try { return localStorage.getItem('bd_c2_pulsebar') !== 'open'; } catch { return true; } })()),
   epicGroup: signal(true),       // Flow: regroup lanes into epic rows (default ON — see loadEpicGroupPref)
   laneFocus: signal(null),       // Pulse click → focus a lane/status bucket
 
@@ -31,6 +35,11 @@ export const c2 = {
 
 export function flashCli(cmd, label) {
   c2.lastCli.value = { cmd, label: label || '', at: Date.now() };
+}
+
+export function setPulseBarCollapsed(v) {
+  c2.pulseBarCollapsed.value = v;
+  try { localStorage.setItem('bd_c2_pulsebar', v ? 'closed' : 'open'); } catch { /* ignore */ }
 }
 
 // ---------------------------------------------------------------------------
