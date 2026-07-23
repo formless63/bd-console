@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import net from 'node:net';
 import { renderServiceUnit } from '../lib/systemd.mjs';
+import { parseScopedLimits } from '../lib/usage.mjs';
 
 function run(cmd, args, options = {}) {
   return execFileSync(cmd, args, {
@@ -956,6 +957,185 @@ try {
     } finally {
       usageAuthServer.kill('SIGTERM');
       await new Promise((resolveP) => usageAuthServer.once('exit', () => resolveP()));
+    }
+  }
+
+  // --- scopedLimits parsing (lib/usage.mjs, pure function) -------------------
+  // Not directly testable end-to-end without the live OAuth usage endpoint
+  // (real network) — unit-test the pure mapping helper instead: a fabricated
+  // weekly_scoped entry (has scope.model) must map through; scope:null
+  // entries (session/weekly_all) must be ignored.
+  {
+    const fabricatedLimits = [
+      {
+        kind: 'weekly_scoped', group: 'weekly', percent: 87, severity: 'warning',
+        resets_at: '2026-08-01T00:00:00.000Z', is_active: true,
+        scope: { model: { id: 'claude-fable-5', display_name: 'Fable' }, surface: 'api' }
+      },
+      {
+        kind: 'session', group: 'session', percent: 40, severity: 'info',
+        resets_at: '2026-07-20T00:00:00.000Z', is_active: true,
+        scope: null
+      },
+      {
+        kind: 'weekly_all', group: 'weekly', percent: 55, severity: 'warning',
+        resets_at: '2026-07-25T00:00:00.000Z', is_active: false,
+        scope: null
+      }
+    ];
+    const parsed = parseScopedLimits(fabricatedLimits);
+    assert(Array.isArray(parsed) && parsed.length === 1, `parseScopedLimits should keep only the scoped entry, got: ${JSON.stringify(parsed)}`);
+    assert(parsed[0].model === 'Fable', `parseScopedLimits model mismatch: ${JSON.stringify(parsed[0])}`);
+    assert(parsed[0].percent === 87, `parseScopedLimits percent mismatch: ${JSON.stringify(parsed[0])}`);
+    assert(parsed[0].severity === 'warning', `parseScopedLimits severity mismatch: ${JSON.stringify(parsed[0])}`);
+    assert(parsed[0].resetsAt === new Date('2026-08-01T00:00:00.000Z').getTime(), `parseScopedLimits resetsAt mismatch: ${JSON.stringify(parsed[0])}`);
+    assert(parsed[0].active === true, `parseScopedLimits active mismatch: ${JSON.stringify(parsed[0])}`);
+    assert(parseScopedLimits(null).length === 0, 'parseScopedLimits(null) should return []');
+    assert(parseScopedLimits(undefined).length === 0, 'parseScopedLimits(undefined) should return []');
+    assert(parseScopedLimits([]).length === 0, 'parseScopedLimits([]) should return []');
+    console.log('smoke ok (parseScopedLimits: maps scoped entry, ignores scope:null entries)');
+  }
+
+  // --- usage history (lib/usage-history.mjs via GET /api/usage/history) ------
+  // Fixture-only: fabricated transcript files under a temp BD_CONSOLE_CLAUDE_DIR
+  // — never the real ~/.claude or ~/.codex, never the network.
+  {
+    const histConfigDir = join(tempRoot, 'history-config');
+    const histClaudeDir = join(tempRoot, 'history-claude');
+    const histCodexDir = join(tempRoot, 'history-codex-sessions'); // left empty/nonexistent
+    mkdirSync(histConfigDir, { recursive: true });
+    const histProjectDir = join(histClaudeDir, 'projects', '-x-proj');
+    mkdirSync(histProjectDir, { recursive: true });
+
+    const histNow = Date.now();
+    const HIST_DAY_MS = 24 * 60 * 60 * 1000;
+    const ts1 = histNow - 1 * HIST_DAY_MS;  // model-a, in range, in "current" 7d period
+    const ts2 = histNow - 2 * HIST_DAY_MS;  // model-b, in range, in "current" 7d period
+    const ts3 = histNow - 35 * HIST_DAY_MS; // model-a, OUTSIDE the default 30-day window -> must be excluded
+
+    const histRecord = (ts, model, usage) => JSON.stringify({
+      timestamp: new Date(ts).toISOString(),
+      message: { model, usage }
+    });
+
+    const histLines = [
+      histRecord(ts1, 'model-a', { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 10, cache_creation_input_tokens: 5 }), // total 165
+      histRecord(ts2, 'model-b', { input_tokens: 200, output_tokens: 100, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }), // total 300
+      histRecord(ts3, 'model-a', { input_tokens: 999, output_tokens: 999, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }) // excluded (>30d old)
+    ];
+    writeFileSync(join(histProjectDir, 't.jsonl'), histLines.join('\n') + '\n');
+
+    const histPort = await getPort();
+    const histEnv = {
+      ...process.env,
+      BD_CONSOLE_CONFIG_DIR: histConfigDir,
+      BD_CONSOLE_CLAUDE_DIR: histClaudeDir,
+      BD_CONSOLE_CODEX_DIR: histCodexDir
+    };
+    const histServer = spawn(process.execPath, [serverEntry, '--host', '127.0.0.1', '--port', String(histPort)], {
+      cwd: process.cwd(), env: histEnv, stdio: ['ignore', 'pipe', 'pipe']
+    });
+    try {
+      await waitFor(`http://127.0.0.1:${histPort}/api/meta`);
+
+      const histRes = await fetch(`http://127.0.0.1:${histPort}/api/usage/history`);
+      assert(histRes.status === 200, `/api/usage/history should 200, got ${histRes.status}`);
+      const hist = await histRes.json();
+
+      assert(typeof hist.generatedAt === 'number', '/api/usage/history missing numeric generatedAt');
+      assert(hist.range && typeof hist.range.from === 'number' && typeof hist.range.to === 'number', '/api/usage/history missing numeric range.from/to');
+
+      const claude = hist.claude;
+      assert(claude && claude.available === true, `claude history should be available: ${JSON.stringify(claude)}`);
+      assert(claude.totalTokens === 465, `claude totalTokens should exclude the >30d-old record (165+300=465), got ${claude.totalTokens}`);
+      assert(claude.messages === 2, `claude messages should be 2 (one record excluded), got ${claude.messages}`);
+
+      assert(Array.isArray(claude.byModel) && claude.byModel.length === 2, `claude byModel should have 2 entries, got: ${JSON.stringify(claude.byModel)}`);
+      assert(claude.byModel[0].model === 'model-b' && claude.byModel[0].tokens === 300, `claude byModel should be sorted desc by tokens (model-b first): ${JSON.stringify(claude.byModel)}`);
+      assert(claude.byModel[1].model === 'model-a' && claude.byModel[1].tokens === 165, `claude byModel model-a mismatch: ${JSON.stringify(claude.byModel)}`);
+      assert(
+        claude.byModel[1].input === 100 && claude.byModel[1].output === 50 && claude.byModel[1].cacheRead === 10 && claude.byModel[1].cacheCreate === 5,
+        `claude byModel model-a token breakdown mismatch: ${JSON.stringify(claude.byModel[1])}`
+      );
+
+      assert(Array.isArray(claude.byProject) && claude.byProject.length === 1, `claude byProject should have 1 entry, got: ${JSON.stringify(claude.byProject)}`);
+      assert(claude.byProject[0].project === '-x-proj' && claude.byProject[0].tokens === 465 && claude.byProject[0].messages === 2, `claude byProject mismatch: ${JSON.stringify(claude.byProject)}`);
+      assert(typeof claude.byProject[0].name === 'string' && claude.byProject[0].name, 'claude byProject entry missing readable name');
+
+      assert(Array.isArray(claude.byProjectModel) && claude.byProjectModel.length === 2, `claude byProjectModel should have 2 entries, got: ${JSON.stringify(claude.byProjectModel)}`);
+      const pm300 = claude.byProjectModel.find((e) => e.model === 'model-b');
+      const pm165 = claude.byProjectModel.find((e) => e.model === 'model-a');
+      assert(pm300 && pm300.project === '-x-proj' && pm300.tokens === 300, `claude byProjectModel model-b mismatch: ${JSON.stringify(claude.byProjectModel)}`);
+      assert(pm165 && pm165.project === '-x-proj' && pm165.tokens === 165, `claude byProjectModel model-a mismatch: ${JSON.stringify(claude.byProjectModel)}`);
+
+      const histDateKey = (ts) => new Date(ts).toISOString().slice(0, 10);
+      assert(Array.isArray(claude.daily) && claude.daily.length === 2, `claude daily should have 2 entries, got: ${JSON.stringify(claude.daily)}`);
+      assert(claude.daily[0].date <= claude.daily[1].date, 'claude daily should be ascending by date');
+      const day1 = claude.daily.find((d) => d.date === histDateKey(ts1));
+      const day2 = claude.daily.find((d) => d.date === histDateKey(ts2));
+      assert(day1 && day1.byModel['model-a'] === 165, `claude daily missing/mismatched model-a entry: ${JSON.stringify(claude.daily)}`);
+      assert(day2 && day2.byModel['model-b'] === 300, `claude daily missing/mismatched model-b entry: ${JSON.stringify(claude.daily)}`);
+
+      assert(claude.periods && claude.periods.current.tokens === 465 && claude.periods.current.messages === 2, `claude periods.current mismatch: ${JSON.stringify(claude.periods)}`);
+      assert(claude.periods.previous.tokens === 0 && claude.periods.previous.messages === 0, `claude periods.previous mismatch: ${JSON.stringify(claude.periods)}`);
+      assert(claude.periods.current.windowDays === 7 && claude.periods.previous.windowDays === 7, `claude periods windowDays should be 7: ${JSON.stringify(claude.periods)}`);
+
+      assert(hist.codex && typeof hist.codex.available === 'boolean', '/api/usage/history codex missing boolean available');
+
+      console.log(`smoke ok (usage history: byModel/byProject/daily/periods math, >30d record excluded): totalTokens=${claude.totalTokens}`);
+    } finally {
+      histServer.kill('SIGTERM');
+      await new Promise((resolveP) => histServer.once('exit', () => resolveP()));
+    }
+
+    // --- missing claude dir -> available:false ------------------------------
+    const histMissingConfigDir = join(tempRoot, 'history-missing-config');
+    const histMissingClaudeDir = join(tempRoot, 'history-missing-claude'); // never created
+    mkdirSync(histMissingConfigDir, { recursive: true });
+    const histMissingPort = await getPort();
+    const histMissingEnv = {
+      ...process.env,
+      BD_CONSOLE_CONFIG_DIR: histMissingConfigDir,
+      BD_CONSOLE_CLAUDE_DIR: histMissingClaudeDir,
+      BD_CONSOLE_CODEX_DIR: histCodexDir
+    };
+    const histMissingServer = spawn(process.execPath, [serverEntry, '--host', '127.0.0.1', '--port', String(histMissingPort)], {
+      cwd: process.cwd(), env: histMissingEnv, stdio: ['ignore', 'pipe', 'pipe']
+    });
+    try {
+      await waitFor(`http://127.0.0.1:${histMissingPort}/api/meta`);
+      const missingBody = await fetch(`http://127.0.0.1:${histMissingPort}/api/usage/history`).then((r) => r.json());
+      assert(missingBody.claude.available === false, `missing claude dir should report available:false, got: ${JSON.stringify(missingBody.claude)}`);
+      console.log('smoke ok (usage history: missing claude dir -> available:false)');
+    } finally {
+      histMissingServer.kill('SIGTERM');
+      await new Promise((resolveP) => histMissingServer.once('exit', () => resolveP()));
+    }
+
+    // --- token-gated the same way /api/usage is -----------------------------
+    const histAuthConfigDir = join(tempRoot, 'history-auth-config');
+    mkdirSync(histAuthConfigDir, { recursive: true });
+    const histAuthPort = await getPort();
+    const histAuthEnv = {
+      ...process.env,
+      BD_CONSOLE_CONFIG_DIR: histAuthConfigDir,
+      BD_CONSOLE_TOKEN: 'history-smoke-token',
+      BD_CONSOLE_CLAUDE_DIR: histMissingClaudeDir,
+      BD_CONSOLE_CODEX_DIR: histCodexDir
+    };
+    const histAuthServer = spawn(process.execPath, [serverEntry, '--host', '127.0.0.1', '--port', String(histAuthPort)], {
+      cwd: process.cwd(), env: histAuthEnv, stdio: ['ignore', 'pipe', 'pipe']
+    });
+    try {
+      await waitFor(`http://127.0.0.1:${histAuthPort}/api/meta`);
+      const noAuthRes = await fetch(`http://127.0.0.1:${histAuthPort}/api/usage/history`);
+      assert(noAuthRes.status === 401, `/api/usage/history without a token should 401 when a token is configured, got ${noAuthRes.status}`);
+      const withAuthRes = await fetch(`http://127.0.0.1:${histAuthPort}/api/usage/history`, { headers: { 'x-bd-token': 'history-smoke-token' } });
+      assert(withAuthRes.status === 200, `/api/usage/history with the correct token should 200, got ${withAuthRes.status}`);
+      console.log('smoke ok (usage history: token-gated like /api/usage)');
+    } finally {
+      histAuthServer.kill('SIGTERM');
+      await new Promise((resolveP) => histAuthServer.once('exit', () => resolveP()));
     }
   }
 
