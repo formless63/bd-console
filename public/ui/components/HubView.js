@@ -305,11 +305,11 @@ function ProviderUsageRow({ name, data }) {
         <span class="muted small">${data.message || 'open Claude Code to refresh'}</span>
       </div>`;
   }
-  if (data.status === 'error') {
+  if (data.status === 'error' || data.status === 'rate-limited') {
     return html`
       <div class="usage-row usage-row-quiet">
         <span class="usage-provider-name">${label}</span>
-        <span class="muted small">usage unavailable</span>
+        <span class="muted small">${data.status === 'rate-limited' ? (data.message || 'rate-limited; retrying') : 'usage unavailable'}</span>
       </div>`;
   }
 
