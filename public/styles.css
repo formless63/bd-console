@@ -510,6 +510,121 @@ textarea.field { resize: vertical; }
 .usage-gauge-fill.gauge-warn { background: var(--amber); }
 .usage-gauge-fill.gauge-crit { background: var(--red); }
 
+/* ---- Usage bands (live quota vs. attribution) ------------------------------
+   Two visually-distinct bands inside the Usage section: "Live quota" (the
+   gauges above, from GET /api/usage — authoritative) and "Usage attribution"
+   (charts below, from GET /api/usage/history — estimated from local session
+   logs). Same card language, a label + hairline separator distinguishes them
+   so the two data sources are never confused for one another. */
+.usage-band + .usage-band { margin-top: 16px; padding-top: 16px; border-top: 1px dashed var(--border); }
+.usage-band-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 9px; flex-wrap: wrap; }
+.usage-band-label { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint); }
+.usage-band-label .muted.small { text-transform: none; letter-spacing: normal; font-weight: 500; }
+
+/* Scoped per-model limits (dynamic — only currently-capped models appear).
+   Nested inside .usage-gauges so they share the ok/warn/crit gauge language;
+   the label column just needs to be wider/ellipsized for a model name
+   instead of "5h"/"7d". */
+.usage-scoped-limits { display: flex; flex-direction: column; gap: 9px; padding-top: 4px; border-top: 1px dashed var(--border); }
+.usage-scoped-limit-label { width: auto; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-throttled-badge {
+  flex-shrink: 0; display: inline-flex; align-items: center; gap: 3px; font-size: 10.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.03em; color: var(--red);
+  background: color-mix(in srgb, var(--red) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--red) 40%, transparent);
+  border-radius: var(--radius-pill); padding: 1px 7px;
+}
+/* A critical + currently-active scoped limit means the model is actually
+   throttled right now — loud on purpose (subtle pulse), not just red-filled
+   like a plain "critical" gauge, so it's unmissable at a glance. */
+.usage-scoped-limit.critical-active {
+  padding: 6px 8px; margin: -6px -8px; border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+  animation: usage-crit-pulse 2.2s ease-in-out infinite;
+}
+@keyframes usage-crit-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--red) 38%, transparent); }
+  50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--red) 0%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .usage-scoped-limit.critical-active { animation: none; }
+}
+
+/* Range picker (7/30/90d) + manual refresh, top-right of the attribution band. */
+.usage-range-picker { display: flex; align-items: center; gap: 4px; }
+.usage-range-btn {
+  font: inherit; font-size: 11.5px; font-weight: 600; color: var(--text-dim); cursor: pointer;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-pill);
+  padding: 3px 10px; transition: all 0.15s var(--ease);
+}
+.usage-range-btn:hover { color: var(--text); border-color: var(--border-2); }
+.usage-range-btn.active { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); font-weight: 650; }
+.usage-refresh-btn { width: 26px; height: 26px; font-size: 14px; }
+
+.usage-attrib-provider + .usage-attrib-provider { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--border); }
+.usage-attrib-provider-title { margin: 0 0 8px; font-size: 12.5px; font-weight: 650; color: var(--text-dim); }
+.usage-empty { margin: 0; padding: 10px 0; }
+
+.usage-attrib-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 20px; margin-top: 10px; }
+.usage-chart-block { min-width: 0; margin-top: 14px; }
+.usage-attrib-grid > .usage-chart-block { margin-top: 0; }
+.usage-chart-title { margin: 0 0 8px; font-size: 11.5px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-faint); }
+
+/* Stat tile — current-vs-previous period delta. Value stays plain ink (never
+   the accent hue): a number isn't a data mark, and "more tokens" isn't
+   inherently good or bad, so no green/red judgment is applied either. */
+.usage-stat-tile { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+.usage-stat-label { font-size: 11.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.05em; }
+.usage-stat-value { font-size: 20px; font-weight: 700; font-variant-numeric: proportional-nums; }
+.usage-stat-delta { font-size: 12px; color: var(--text-dim); font-weight: 600; }
+
+/* By-model / by-project bars — sequential single-hue (--accent), reusing
+   .usage-gauge-track's border/pill/bg so it visually matches the live-quota
+   gauges above (same system, different data source). */
+.usage-hbars { display: flex; flex-direction: column; gap: 7px; }
+.usage-hbar-row { display: grid; grid-template-columns: minmax(70px, 0.9fr) minmax(60px, 2fr) auto; align-items: center; gap: 8px; }
+.usage-hbar-label { font-size: 12px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-hbar-track { height: 8px; padding: 0; }
+.usage-hbar-value { font-size: 11.5px; font-weight: 600; white-space: nowrap; text-align: right; }
+
+/* Project × model heat table — sequential --accent wash per cell (computed
+   opacity, not a hardcoded color) plus the token count as always-visible
+   text, so identity/magnitude is never carried by color alone. */
+.usage-matrix-wrap { overflow-x: auto; border-radius: var(--radius-sm); border: 1px solid var(--border); }
+.usage-matrix { width: 100%; border-collapse: collapse; font-size: 11.5px; background: var(--surface); border: none; }
+.usage-matrix th, .usage-matrix td {
+  padding: 6px 9px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+.usage-matrix th[scope="col"] { text-align: right; font-weight: 650; color: var(--text-faint); text-transform: none; background: var(--surface); }
+.usage-matrix th[scope="row"] {
+  text-align: left; font-weight: 600; color: var(--text); background: var(--surface);
+  max-width: 140px; overflow: hidden; text-overflow: ellipsis; position: sticky; left: 0;
+}
+/* Explicit background overrides Open Props normalize.css's `:where(td){
+   background:var(--surface-1)}` — that token only follows the OS
+   prefers-color-scheme media query, not this app's [data-scheme] attribute,
+   so an unstyled <td> can show a stray light/dark-mismatched fill. */
+.usage-matrix td { color: var(--text); background: var(--surface); }
+.usage-matrix tbody tr:last-child th, .usage-matrix tbody tr:last-child td { border-bottom: none; }
+
+/* Daily trend — inline SVG stacked bars, categorical identity (fixed
+   [accent, purple, green] order + muted "Other"), always paired with a text
+   legend and a focus/hover readout so color never carries meaning alone. */
+.usage-trend { min-width: 0; }
+.usage-trend-svg { display: block; width: 100%; height: 110px; }
+.usage-trend-svg rect[role="button"], .usage-trend-svg g[tabindex] { cursor: pointer; }
+.usage-trend-svg g:focus-visible rect:first-child { outline: none; }
+.usage-trend-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; }
+.usage-trend-legend-item { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-dim); }
+.usage-trend-swatch { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+.usage-trend-readout {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px;
+  padding: 7px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+.usage-trend-readout-item { display: inline-flex; align-items: center; gap: 5px; color: var(--text-dim); }
+
 .dot-status { width: 7px; height: 7px; border-radius: 50%; display: inline-block; background: var(--text-faint); }
 .dot-status.st-open, .st-open .dot-status { background: var(--green); }
 .st-open.dot-status { background: var(--green); }
@@ -1024,6 +1139,14 @@ input.edit-input { flex: 1; min-width: 120px; }
   .usage-gauge-pct { order: 2; }
   .usage-gauge-reset { order: 3; }
   .usage-gauge-track { order: 4; flex-basis: 100%; }
+
+  /* Attribution band: single column, full-width bars/table so nothing
+     overflows the viewport horizontally (the matrix table gets its own
+     overflow-x scroller instead of squeezing columns). */
+  .usage-attrib-grid { grid-template-columns: 1fr; gap: 14px; }
+  .usage-hbar-row { grid-template-columns: 64px 1fr auto; gap: 6px; }
+  .usage-band-head { flex-direction: column; align-items: flex-start; }
+  .usage-range-picker { align-self: stretch; justify-content: flex-start; }
 }
 
 @media (max-width: 460px) {

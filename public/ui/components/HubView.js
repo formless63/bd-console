@@ -3,9 +3,10 @@
 // metrics and (optional) git insights.
 import { html } from 'htm/preact';
 import { useEffect, useState } from 'preact/hooks';
-import { store, navigate, loadProjectStats, loadTmux, loadSchedule, loadProjectsGit, loadUsage, toggleHubSection } from '../store.js';
+import { store, navigate, loadProjectStats, loadTmux, loadSchedule, loadProjectsGit, loadUsage, loadUsageHistory, toggleHubSection } from '../store.js';
 import { timeAgo } from './common.js';
 import { SessionRowCompact, HubTmuxHead } from './TmuxView.js';
+import { ProviderAttribution } from './UsageCharts.js';
 
 // Chevron used by the mobile collapsible-section headers (ops strip, tmux
 // strip) — see .hub-section-toggle / .hub-section-body in styles.css. Only
@@ -209,7 +210,12 @@ function TmuxSection() {
 // the same kind of hub-wide, not-project-scoped glanceable status.
 // ---------------------------------------------------------------------------
 const USAGE_POLL_MS = 60000;
+// History (attribution) is a heavier fetch than the live-quota gauges above
+// — refresh it on a slower cadence (5 min) plus on mount / manual refresh /
+// range switch, never on the 60s quota-poll cadence.
+const USAGE_HISTORY_POLL_MS = 5 * 60000;
 const PROVIDER_LABEL = { claude: 'Claude Code', codex: 'Codex' };
+const HISTORY_RANGE_OPTIONS = [7, 30, 90];
 
 // "resets in Xh Ym" / "resets in Ym" — deliberately not timeAgo/relTime
 // (both round to a single unit), since a countdown reading "resets in 1h"
@@ -230,6 +236,15 @@ function gaugeColorClass(percent) {
   return 'gauge-ok';
 }
 
+// Scoped limits carry their own authoritative severity from the server
+// (normal/warning/critical) — map it directly to the same status classes
+// the percent-derived gauges use, rather than re-deriving it from percent.
+function severityGaugeClass(severity) {
+  if (severity === 'critical') return 'gauge-crit';
+  if (severity === 'warning') return 'gauge-warn';
+  return 'gauge-ok';
+}
+
 function UsageGauge({ w }) {
   const pct = typeof w.percent === 'number' ? Math.max(0, Math.min(100, w.percent)) : null;
   return html`
@@ -239,6 +254,26 @@ function UsageGauge({ w }) {
       ${w.resetsAt && html`<span class="usage-gauge-reset muted small">${formatResetIn(w.resetsAt)}</span>`}
       <div class="usage-gauge-track" role="progressbar" aria-valuenow=${pct ?? 0} aria-valuemin="0" aria-valuemax="100">
         <div class=${'usage-gauge-fill ' + gaugeColorClass(pct)} style=${'width:' + (pct ?? 0) + '%'}></div>
+      </div>
+    </div>`;
+}
+
+// A single per-model scoped limit row (GET /api/usage's dynamic
+// scopedLimits[] — only currently-capped models appear). A critical + active
+// entry means the model is actually throttled right now, so it gets a loud
+// treatment (icon + text label, never color alone) in addition to the red
+// fill everything else already gets from severityGaugeClass.
+function ScopedLimitRow({ lim }) {
+  const pct = typeof lim.percent === 'number' ? Math.max(0, Math.min(100, lim.percent)) : null;
+  const loud = lim.severity === 'critical' && lim.active;
+  return html`
+    <div class=${'usage-gauge-row usage-scoped-limit' + (loud ? ' critical-active' : '')}>
+      <span class="usage-gauge-label usage-scoped-limit-label" title=${lim.model}>${lim.model}</span>
+      <span class="usage-gauge-pct">${pct != null ? Math.round(pct) + '%' : '—'}</span>
+      ${loud && html`<span class="usage-throttled-badge" title="Currently rate-limited">⛔ throttled</span>`}
+      ${lim.resetsAt && html`<span class="usage-gauge-reset muted small">${formatResetIn(lim.resetsAt)}</span>`}
+      <div class="usage-gauge-track" role="progressbar" aria-valuenow=${pct ?? 0} aria-valuemin="0" aria-valuemax="100">
+        <div class=${'usage-gauge-fill ' + severityGaugeClass(lim.severity)} style=${'width:' + (pct ?? 0) + '%'}></div>
       </div>
     </div>`;
 }
@@ -292,7 +327,68 @@ function ProviderUsageRow({ name, data }) {
         ${(data.windows || []).length === 0
           ? html`<span class="muted small">no quota data</span>`
           : data.windows.map((w) => html`<${UsageGauge} key=${w.id} w=${w} />`)}
+        ${(data.scopedLimits || []).length > 0 && html`
+          <div class="usage-scoped-limits">
+            ${data.scopedLimits.map((lim) => html`<${ScopedLimitRow} key=${lim.model} lim=${lim} />`)}
+          </div>`}
       </div>
+    </div>`;
+}
+
+// Manual "↻ refresh" — reloads both the live-quota gauges and the (heavier)
+// attribution history at whatever range is currently selected.
+function refreshUsageAll() {
+  loadUsage();
+  loadUsageHistory();
+}
+
+function HistoryRangePicker({ days, onChange }) {
+  return html`
+    <div class="usage-range-picker" role="group" aria-label="History range">
+      ${HISTORY_RANGE_OPTIONS.map((d) => html`
+        <button key=${d} type="button" class=${'usage-range-btn' + (d === days ? ' active' : '')}
+          aria-pressed=${d === days} onClick=${() => onChange(d)}>${d}d</button>`)}
+      <button type="button" class="icon-btn usage-refresh-btn" title="Refresh usage" onClick=${refreshUsageAll}>↻</button>
+    </div>`;
+}
+
+// Attribution band — GET /api/usage/history. Clearly headed as historical/
+// estimated (NOT quota) since it comes from parsing local session logs
+// rather than the provider's own usage endpoint. Degrades to nothing when
+// the route itself is unavailable (older server, or backend still landing);
+// individual providers degrade to a "gathering usage…" note via
+// ProviderAttribution when the route works but has no data yet.
+function AttributionBand() {
+  const days = store.usageHistoryDays.value;
+  useEffect(() => {
+    loadUsageHistory(days);
+    const t = setInterval(() => loadUsageHistory(store.usageHistoryDays.value), USAGE_HISTORY_POLL_MS);
+    return () => clearInterval(t);
+  }, []);
+
+  if (!store.usageHistoryAvailable.value) return null;
+  const history = store.usageHistory.value;
+  if (!history) {
+    return html`
+      <div class="usage-band usage-attrib-band">
+        <div class="usage-band-head">
+          <span class="usage-band-label">Usage attribution <span class="muted small">· estimated, not quota</span></span>
+        </div>
+        <p class="muted small usage-empty">${store.usageHistoryLoading.value ? 'Gathering usage…' : 'No usage history yet.'}</p>
+      </div>`;
+  }
+
+  const claude = history.claude ? { ...history.claude, _days: days } : null;
+  const codex = history.codex ? { ...history.codex, _days: days } : null;
+
+  return html`
+    <div class="usage-band usage-attrib-band">
+      <div class="usage-band-head">
+        <span class="usage-band-label">Usage attribution <span class="muted small">· estimated from local session logs, not quota</span></span>
+        <${HistoryRangePicker} days=${days} onChange=${(d) => loadUsageHistory(d)} />
+      </div>
+      <${ProviderAttribution} label="Claude Code" data=${claude} showProjectCharts=${true} />
+      <${ProviderAttribution} label="Codex" data=${codex} showProjectCharts=${false} />
     </div>`;
 }
 
@@ -324,10 +420,16 @@ function UsageSection() {
         <${ChevronIcon} open=${!collapsed} />
       </div>
       <div class=${'hub-section-body' + (collapsed ? ' collapsed' : '')}>
-        <div class="usage-rows">
-          <${ProviderUsageRow} name="claude" data=${usage.claude} />
-          <${ProviderUsageRow} name="codex" data=${usage.codex} />
+        <div class="usage-band usage-quota-band">
+          <div class="usage-band-head">
+            <span class="usage-band-label">Live quota</span>
+          </div>
+          <div class="usage-rows">
+            <${ProviderUsageRow} name="claude" data=${usage.claude} />
+            <${ProviderUsageRow} name="codex" data=${usage.codex} />
+          </div>
         </div>
+        <${AttributionBand} />
       </div>
     </section>`;
 }

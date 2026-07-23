@@ -92,6 +92,16 @@ export const store = {
   usage: signal({ claude: null, codex: null }),
   usageAvailable: signal(true),
 
+  // provider usage HISTORY (hub-level; GET /api/usage/history?days=N — token
+  // attribution by model/project over a trailing window). A separate,
+  // heavier fetch from /api/usage's live quota gauges above — see
+  // loadUsageHistory(). Distinct signals so the hub can degrade attribution
+  // charts independently of the live-quota band.
+  usageHistory: signal(null),
+  usageHistoryAvailable: signal(true),
+  usageHistoryLoading: signal(false),
+  usageHistoryDays: signal(30),
+
   // hub sections (ops strip, tmux strip, …) collapsed on mobile — collapsed
   // state is a set of section ids, persisted per-browser. Only meaningful at
   // the <=768px breakpoint (see .hub-section-body.collapsed in styles.css);
@@ -522,6 +532,28 @@ export async function loadUsage() {
   } catch (e) {
     store.usageAvailable.value = false;
     console.warn('Usage endpoint unavailable: ' + e.message);
+  }
+}
+
+// Usage/attribution history — GET /api/usage/history?days=N. Distinct from
+// loadUsage() above: this is the heavier, "estimated from local session
+// logs" attribution data (by-model/by-project/daily breakdowns), not the
+// authoritative live-quota gauges. Degrades silently on 404/501/network
+// (older server, or the backend route not landed yet / mid-development)
+// exactly like loadProjectsGit — the attribution band just doesn't render.
+export async function loadUsageHistory(days = store.usageHistoryDays.value) {
+  store.usageHistoryDays.value = days;
+  store.usageHistoryLoading.value = true;
+  try {
+    const data = await apiGetRaw('/api/usage/history?days=' + encodeURIComponent(days));
+    store.usageHistory.value = data;
+    store.usageHistoryAvailable.value = true;
+  } catch (e) {
+    store.usageHistoryAvailable.value = false;
+    store.usageHistory.value = null;
+    console.warn('Usage history unavailable: ' + e.message);
+  } finally {
+    store.usageHistoryLoading.value = false;
   }
 }
 
