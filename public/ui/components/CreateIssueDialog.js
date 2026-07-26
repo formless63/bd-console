@@ -5,7 +5,8 @@
 // native <dialog> for focus/backdrop, same as the other modals in this app.
 import { html } from 'htm/preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { store, createIssue, loadEpics } from '../store.js';
+import { store, createIssue, loadEpics, loadSettings, createEpicInline } from '../store.js';
+import { EpicCombobox } from './common.js';
 
 // Each intent maps to a `bd create` type plus labels applied automatically
 // on top of anything the user adds by hand.
@@ -30,12 +31,27 @@ export function CreateIssueDialog() {
   const [labels, setLabels] = useState([]);
   const [labelInput, setLabelInput] = useState('');
   const [acceptance, setAcceptance] = useState('');
-  const [epicId, setEpicId] = useState('');
+  const [epicId, setEpicIdRaw] = useState('');
+  // Tracks whether the user picked (or created) an epic by hand during THIS
+  // dialog session — once true, the default-epic preselect effect below
+  // never overwrites the field again, even across an intent change. Reset
+  // whenever the dialog transitions closed -> open (a fresh session).
+  const [epicManual, setEpicManual] = useState(false);
   const [assignee, setAssignee] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const [newEpicOpen, setNewEpicOpen] = useState(false);
+  const [newEpicTitle, setNewEpicTitle] = useState('');
+  const [newEpicBusy, setNewEpicBusy] = useState(false);
+  const [newEpicErr, setNewEpicErr] = useState('');
+
+  const setEpicId = (id, manual = false) => {
+    setEpicIdRaw(id);
+    if (manual) setEpicManual(true);
+  };
 
   const intent = INTENTS.find((i) => i.id === intentId) || INTENTS[0];
+  const isEpic = intent.type === 'epic';
 
   useEffect(() => {
     const d = ref.current;
@@ -43,16 +59,49 @@ export function CreateIssueDialog() {
     if (open && !d.open) {
       d.showModal();
       setErr('');
+      setEpicManual(false);
       loadEpics();
+      loadSettings();
       setTimeout(() => d.querySelector('#create-title')?.focus(), 30);
     }
     if (!open && d.open) d.close();
   }, [open]);
 
+  // Preselect the project's configured default epic for the active intent —
+  // opt-in via Settings' "Default epics" card (store.settings.value.defaultEpics,
+  // keyed by project id then intent id). Never runs once the user has picked
+  // an epic by hand this session (epicManual), and never applies to the epic
+  // intent itself (which hides the picker entirely). Re-evaluates whenever
+  // the intent changes so switching intents after an auto-pick still tracks
+  // the newly selected intent's mapping (or clears back to None if it has
+  // none) — only a MANUAL pick is sticky across intent changes.
+  useEffect(() => {
+    if (!open || isEpic || epicManual) return;
+    const projectId = store.projectId.value;
+    const defaults = store.settings.value?.defaultEpics?.[projectId];
+    const mapped = defaults ? defaults[intentId] : null;
+    const stillExists = mapped && store.epics.value.some((e) => e.id === mapped);
+    setEpicIdRaw(stillExists ? mapped : '');
+  }, [open, isEpic, epicManual, intentId, store.settings.value, store.epics.value]);
+
   const close = () => (store.createOpen.value = false);
   const reset = () => {
     setIntentId('idea'); setTitle(''); setDesc(''); setPriority('3');
-    setLabels([]); setLabelInput(''); setAcceptance(''); setEpicId(''); setAssignee('');
+    setLabels([]); setLabelInput(''); setAcceptance(''); setEpicIdRaw(''); setEpicManual(false); setAssignee('');
+    setNewEpicOpen(false); setNewEpicTitle(''); setNewEpicErr('');
+  };
+
+  const submitNewEpic = async () => {
+    const t = newEpicTitle.trim();
+    if (!t || newEpicBusy) return;
+    setNewEpicBusy(true); setNewEpicErr('');
+    try {
+      const id = await createEpicInline({ title: t, priority: Number(priority) || 2 });
+      setEpicId(id, true);
+      setNewEpicOpen(false);
+      setNewEpicTitle('');
+    } catch (e) { setNewEpicErr(e.message); }
+    finally { setNewEpicBusy(false); }
   };
 
   const addLabel = () => {
@@ -76,9 +125,14 @@ export function CreateIssueDialog() {
         priority: Number(priority),
         labels: allLabels,
         description: desc.trim() || undefined,
-        acceptance: acceptance.trim() || undefined,
-        parent: epicId || undefined,
-        assignee: assignee.trim() || undefined,
+        // Epics never carry a parent/assignee/acceptance — the picker,
+        // assignee, and acceptance fields are hidden for this intent (see
+        // the JSX below), so nothing here should be sent either.
+        ...(isEpic ? {} : {
+          acceptance: acceptance.trim() || undefined,
+          parent: epicId || undefined,
+          assignee: assignee.trim() || undefined,
+        }),
       });
       reset();
       close();
@@ -117,13 +171,30 @@ export function CreateIssueDialog() {
               <option value="4">P4</option>
             </select>
           </label>
-          <label class="dialog-field"><span>epic</span>
-            <sl-select class="dialog-select" size="medium" value=${epicId} placeholder="None"
-              onsl-change=${(e) => setEpicId(e.target.value)}>
-              <sl-option value="">None</sl-option>
-              ${store.epics.value.map((e2) => html`<sl-option key=${e2.id} value=${e2.id}>${e2.id} — ${e2.title}</sl-option>`)}
-            </sl-select>
-          </label>
+          ${!isEpic && html`
+            <label class="dialog-field epic-field">
+              <span>
+                epic
+                <button type="button" class="btn-inline-new" onClick=${() => setNewEpicOpen((o) => !o)}>
+                  ${newEpicOpen ? 'cancel' : '+ new epic'}
+                </button>
+              </span>
+              <${EpicCombobox} epics=${store.epics.value} value=${epicId} onChange=${(id) => setEpicId(id, true)} placeholder="None" />
+              ${newEpicOpen && html`
+                <div class="inline-new-epic">
+                  <input class="field" placeholder="New epic title…" value=${newEpicTitle} autofocus
+                    onInput=${(e) => setNewEpicTitle(e.target.value)}
+                    onKeyDown=${(e) => {
+                      if (e.key === 'Enter') { e.preventDefault(); submitNewEpic(); }
+                      if (e.key === 'Escape') { e.stopPropagation(); setNewEpicOpen(false); setNewEpicErr(''); }
+                    }} />
+                  <button type="button" class="btn btn-xs btn-accent" disabled=${newEpicBusy || !newEpicTitle.trim()} onClick=${submitNewEpic}>
+                    ${newEpicBusy ? '…' : 'Create'}
+                  </button>
+                  <button type="button" class="btn btn-xs btn-ghost" onClick=${() => { setNewEpicOpen(false); setNewEpicErr(''); setNewEpicTitle(''); }}>Cancel</button>
+                </div>`}
+              ${newEpicErr && html`<span class="form-err">${newEpicErr}</span>`}
+            </label>`}
         </div>
 
         <label class="dialog-field"><span>labels</span>
@@ -140,12 +211,14 @@ export function CreateIssueDialog() {
           </div>
         </label>
 
-        <label class="dialog-field"><span>acceptance criteria</span>
-          <textarea class="field" rows="2" placeholder="Optional…" value=${acceptance} onInput=${(e) => setAcceptance(e.target.value)}></textarea>
-        </label>
-        <label class="dialog-field"><span>assignee</span>
-          <input class="field" placeholder="Optional" value=${assignee} onInput=${(e) => setAssignee(e.target.value)} />
-        </label>
+        ${!isEpic && html`
+          <label class="dialog-field"><span>acceptance criteria</span>
+            <textarea class="field" rows="2" placeholder="Optional…" value=${acceptance} onInput=${(e) => setAcceptance(e.target.value)}></textarea>
+          </label>`}
+        ${!isEpic && html`
+          <label class="dialog-field"><span>assignee</span>
+            <input class="field" placeholder="Optional" value=${assignee} onInput=${(e) => setAssignee(e.target.value)} />
+          </label>`}
 
         <div class="dialog-actions">
           ${err && html`<span class="form-err">${err}</span>`}

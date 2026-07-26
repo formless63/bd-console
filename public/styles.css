@@ -853,6 +853,18 @@ input.edit-input { flex: 1; min-width: 120px; }
 .intent-chip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .dialog-select { width: 100%; }
 .chip.auto { opacity: 0.7; cursor: default; background: var(--surface-2); }
+.epic-field > span { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.btn-inline-new {
+  background: none; border: none; color: var(--accent); font: inherit; font-size: 11px; font-weight: 600;
+  cursor: pointer; padding: 0; text-transform: none; letter-spacing: normal;
+}
+.btn-inline-new:hover { text-decoration: underline; }
+.inline-new-epic { display: flex; gap: 6px; margin-top: 6px; }
+.inline-new-epic .field { flex: 1; min-width: 0; padding: 6px 9px; font-size: 12.5px; }
+
+/* ---- Default-epics settings card ------------------------------------------ */
+.default-epics-grid { display: flex; flex-direction: column; gap: 12px; }
+.full-width { width: 100%; }
 
 /* ==========================================================================
    Hub nav + ops strip
@@ -962,6 +974,11 @@ input.edit-input { flex: 1; min-width: 120px; }
 .combobox-opt.session-opt { flex-direction: column; align-items: stretch; gap: 2px; }
 .combobox-opt-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .combobox-opt-meta { font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Epic combobox options carry a muted secondary line (the bead id) below
+   the title, same stacked layout as the session combobox's pane summary. */
+.combobox-opt.epic-opt { flex-direction: column; align-items: stretch; gap: 1px; }
+.combobox-opt-title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .saved-prompts { display: inline-block; }
 .saved-prompts-menu { left: auto; right: 0; width: min(320px, 80vw); display: flex; flex-direction: column; gap: 3px; }

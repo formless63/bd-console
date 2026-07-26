@@ -6,9 +6,15 @@
 // the read-only panel is hidden but the browser-token control still works.
 import { html } from 'htm/preact';
 import { useEffect, useState } from 'preact/hooks';
-import { store, loadSettings, saveServerToken, toast } from '../store.js';
+import {
+  store, loadSettings, saveServerToken, toast, loadHub,
+  loadEpicsForProject, saveDefaultEpics, createStandardEpics, DEFAULT_EPIC_INTENTS,
+} from '../store.js';
 import { getToken, setToken } from '../api.js';
 import { THEME_PRESETS, SCHEMES, setPreset, setScheme } from '../theme.js';
+import { EpicCombobox } from './common.js';
+
+const INTENT_CARD_LABEL = { bug: 'Bug', feature: 'Feature', task: 'Task', idea: 'Idea / triage', chore: 'Chore' };
 
 const SOURCE_LABEL = { flag: 'flag', env: 'env', config: 'config', default: 'default' };
 
@@ -160,6 +166,117 @@ function ServerTokenPanel() {
     </section>`;
 }
 
+// Opt-in per-project default epics: for each of the create dialog's five
+// non-epic intents, an optional epic bead this project's stored mapping
+// preselects in CreateIssueDialog (see its `defaultEpics` preselect effect).
+// Nothing is created or persisted here until the user explicitly clicks
+// Save or "Create the 5 standard epics" — this card only edits local state
+// on every keystroke/selection.
+function DefaultEpicsPanel() {
+  const settings = store.settings.value;
+  const storedMap = settings?.defaultEpics || {};
+  const projects = store.projects.value;
+  const projectIds = Object.keys(projects).sort((a, b) => a.localeCompare(b));
+
+  const [projectId, setProjectId] = useState('');
+  const [epics, setEpics] = useState([]);
+  const [epicsLoading, setEpicsLoading] = useState(false);
+  const [localMap, setLocalMap] = useState({});
+  const [busy, setBusy] = useState(false);
+  const [stdBusy, setStdBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [notice, setNotice] = useState('');
+
+  useEffect(() => { loadHub(); }, []);
+
+  // Default the project picker to the first registered project once the
+  // registry has loaded, but never stomp a selection the user already made.
+  useEffect(() => {
+    if (!projectId && projectIds.length) setProjectId(projectIds[0]);
+  }, [projectIds.join(',')]);
+
+  useEffect(() => {
+    setErr(''); setNotice('');
+    if (!projectId) { setEpics([]); setLocalMap({}); return; }
+    const stored = storedMap[projectId] || {};
+    setLocalMap(Object.fromEntries(DEFAULT_EPIC_INTENTS.map((k) => [k, stored[k] || ''])));
+    setEpicsLoading(true);
+    loadEpicsForProject(projectId).then((list) => setEpics(list)).finally(() => setEpicsLoading(false));
+    // storedMap is derived from store.settings.value every render; only
+    // re-run this sync when the selected project itself changes, not on
+    // every settings refresh (which would clobber in-progress local edits).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
+
+  const setIntentEpic = (intent, id) => setLocalMap((m) => ({ ...m, [intent]: id }));
+
+  const save = async () => {
+    if (!projectId) return;
+    setBusy(true); setErr(''); setNotice('');
+    try {
+      await saveDefaultEpics({ [projectId]: localMap });
+      setNotice('Saved.');
+      toast(`Default epics saved for ${projectId}`);
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  };
+
+  const createStandard = async () => {
+    if (!projectId) return;
+    setStdBusy(true); setErr(''); setNotice('');
+    try {
+      const { map, created, reused } = await createStandardEpics(projectId);
+      setLocalMap(map);
+      setEpicsLoading(true);
+      loadEpicsForProject(projectId).then((list) => setEpics(list)).finally(() => setEpicsLoading(false));
+      toast(created
+        ? `Created ${created} epic${created === 1 ? '' : 's'}${reused ? ` (reused ${reused} existing)` : ''} and mapped them`
+        : `All 5 standard epics already existed — reused them, mapped them`);
+    } catch (e) { setErr(e.message); }
+    finally { setStdBusy(false); }
+  };
+
+  return html`
+    <section class="settings-card">
+      <h2 class="settings-card-title">Default epics</h2>
+      <p class="muted small">
+        Opt-in per-project defaults. When a mapping is set, the create-issue dialog preselects that epic for
+        matching issue types (you can always change it before creating). Nothing here takes effect until you
+        click Save.
+      </p>
+      ${projectIds.length === 0
+        ? html`<p class="muted small">No registered projects yet.</p>`
+        : html`
+          <div class="edit-block">
+            <span class="edit-label">Project</span>
+            <select class="edit-input full-width" value=${projectId} onChange=${(e) => setProjectId(e.target.value)}>
+              ${projectIds.map((id) => html`<option key=${id} value=${id}>${id}</option>`)}
+            </select>
+          </div>
+          <div class="default-epics-grid">
+            ${DEFAULT_EPIC_INTENTS.map((intent) => html`
+              <label key=${intent} class="dialog-field"><span>${INTENT_CARD_LABEL[intent]}</span>
+                <${EpicCombobox} epics=${epics} value=${localMap[intent] || ''}
+                  onChange=${(id) => setIntentEpic(intent, id)} placeholder="None" />
+              </label>`)}
+          </div>
+          ${epicsLoading && html`<p class="muted small">Loading epics…</p>`}
+          <div class="settings-form-row">
+            <button class="btn btn-ghost" disabled=${stdBusy} onClick=${createStandard}>
+              ${stdBusy ? 'Creating…' : 'Create the 5 standard epics'}
+            </button>
+            <button class="btn btn-accent" disabled=${busy} onClick=${save}>Save</button>
+          </div>
+          ${err && html`<span class="form-err">${err}</span>`}
+          ${notice && html`<p class="muted small settings-notice">${notice}</p>`}
+          <p class="muted small">
+            "Create the 5 standard epics" creates 5 new beads (Bugs / Features / Tasks / Ideas / Chores) in the
+            selected project and maps them to the five intents above in one action — an existing open epic with a
+            matching title is reused instead of duplicated, so clicking it again creates nothing new.
+          </p>`}
+    </section>`;
+}
+
 export function SettingsView() {
   useEffect(() => { loadSettings(); }, []);
   const loading = store.settingsLoading.value;
@@ -181,6 +298,7 @@ export function SettingsView() {
         <${AppearancePanel} />
         <${BrowserTokenPanel} />
         <${ServerTokenPanel} />
+        <${DefaultEpicsPanel} />
       </div>
     </main>`;
 }

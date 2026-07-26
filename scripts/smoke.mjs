@@ -436,6 +436,69 @@ try {
 
   console.log('smoke ok (settings API: GET shape + POST token set/clear round-trip + 400 on host)');
 
+  // --- settings API: opt-in per-project default epics (defaultEpics) --------
+  // Fixture-only: reuses `epicRes` (the "Smoke epic" created above, in THIS
+  // fixture repo) as the epic id mapped into the config — never touches a
+  // real repo.
+  const defaultEpicsGet0 = await fetch(`http://127.0.0.1:${port}/api/settings`).then((r) => r.json());
+  assert(defaultEpicsGet0.defaultEpics && typeof defaultEpicsGet0.defaultEpics === 'object' && !Array.isArray(defaultEpicsGet0.defaultEpics),
+    `/api/settings GET missing a defaultEpics object: ${JSON.stringify(defaultEpicsGet0.defaultEpics)}`);
+  assert(!defaultEpicsGet0.defaultEpics[projectId], 'defaultEpics should start empty for the fixture project');
+
+  const defaultEpicsSet1 = await fetch(`http://127.0.0.1:${port}/api/settings`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ defaultEpics: { [projectId]: { bug: epicRes.id, feature: null } } })
+  }).then((r) => r.json());
+  assert(defaultEpicsSet1.ok && defaultEpicsSet1.restartRequired === false,
+    `defaultEpics set failed (or wrongly required a restart): ${JSON.stringify(defaultEpicsSet1)}`);
+
+  const configAfterDefaultEpics1 = JSON.parse(readFileSync(join(configDir, 'config.json'), 'utf8'));
+  assert(configAfterDefaultEpics1.defaultEpics?.[projectId]?.bug === epicRes.id,
+    `defaultEpics did not persist to config.json: ${JSON.stringify(configAfterDefaultEpics1.defaultEpics)}`);
+  assert(configAfterDefaultEpics1.defaultEpics[projectId].feature === null, 'defaultEpics feature:null did not persist as null');
+
+  const defaultEpicsGet1 = await fetch(`http://127.0.0.1:${port}/api/settings`).then((r) => r.json());
+  assert(defaultEpicsGet1.defaultEpics[projectId].bug === epicRes.id,
+    `defaultEpics GET round-trip mismatch: ${JSON.stringify(defaultEpicsGet1.defaultEpics)}`);
+
+  // A second POST touching only `task` must merge, not clobber, the `bug`
+  // mapping already saved above.
+  const defaultEpicsSet2 = await fetch(`http://127.0.0.1:${port}/api/settings`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ defaultEpics: { [projectId]: { task: epicRes.id } } })
+  }).then((r) => r.json());
+  assert(defaultEpicsSet2.ok, `defaultEpics merge-set failed: ${JSON.stringify(defaultEpicsSet2)}`);
+  const configAfterMerge = JSON.parse(readFileSync(join(configDir, 'config.json'), 'utf8'));
+  assert(configAfterMerge.defaultEpics[projectId].bug === epicRes.id && configAfterMerge.defaultEpics[projectId].task === epicRes.id,
+    `defaultEpics merge clobbered a previously-set intent: ${JSON.stringify(configAfterMerge.defaultEpics[projectId])}`);
+
+  // Validation: bad epic id, bad intent key, and bad top-level shape must all 400.
+  const defaultEpicsBadId = await fetch(`http://127.0.0.1:${port}/api/settings`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ defaultEpics: { [projectId]: { bug: 'not a valid id!' } } })
+  });
+  assert(defaultEpicsBadId.status === 400, `defaultEpics with a bad epic id should 400, got ${defaultEpicsBadId.status}`);
+
+  const defaultEpicsBadIntent = await fetch(`http://127.0.0.1:${port}/api/settings`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ defaultEpics: { [projectId]: { notarealintent: epicRes.id } } })
+  });
+  assert(defaultEpicsBadIntent.status === 400, `defaultEpics with an unknown intent key should 400, got ${defaultEpicsBadIntent.status}`);
+
+  const defaultEpicsBadShape = await fetch(`http://127.0.0.1:${port}/api/settings`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ defaultEpics: 'nope' })
+  });
+  assert(defaultEpicsBadShape.status === 400, `defaultEpics with a non-object value should 400, got ${defaultEpicsBadShape.status}`);
+
+  // A rejected write must not have partially applied — bug/task mappings
+  // from before the bad requests above must be untouched.
+  const configAfterBadRequests = JSON.parse(readFileSync(join(configDir, 'config.json'), 'utf8'));
+  assert(configAfterBadRequests.defaultEpics[projectId].bug === epicRes.id && configAfterBadRequests.defaultEpics[projectId].task === epicRes.id,
+    'a rejected defaultEpics POST should not have mutated config.json');
+
+  console.log('smoke ok (settings API: defaultEpics round-trip + merge + validation rejection)');
+
   // --- saved prompts API ---------------------------------------------------------
   const promptsGet0 = await fetch(`http://127.0.0.1:${port}/api/prompts`);
   assert(promptsGet0.status === 200 || promptsGet0.status === 501, `/api/prompts GET unexpected status ${promptsGet0.status}`);

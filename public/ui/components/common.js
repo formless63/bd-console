@@ -1,5 +1,6 @@
 // common.js — shared presentational helpers and formatters used across views.
 import { html } from 'htm/preact';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { PRI_LABEL, effStatus } from '../store.js';
 
 export function timeAgo(s) {
@@ -141,4 +142,112 @@ export async function copyToClipboard(text) {
 
 export function CopyIcon() {
   return html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M4 1.5A1.5 1.5 0 0 0 2.5 3v7A1.5 1.5 0 0 0 4 11.5h1v-1H4a.5.5 0 0 1-.5-.5V3a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 .5.5v1h1V3A1.5 1.5 0 0 0 9 1.5H4Zm3 3A1.5 1.5 0 0 0 5.5 6v7A1.5 1.5 0 0 0 7 14.5h5a1.5 1.5 0 0 0 1.5-1.5V6A1.5 1.5 0 0 0 12 4.5H7ZM6.5 6a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 .5.5v7a.5.5 0 0 1-.5.5H7a.5.5 0 0 1-.5-.5V6Z"/></svg>`;
+}
+
+// ---------------------------------------------------------------------------
+// EpicCombobox — searchable epic picker, shared by CreateIssueDialog's epic/
+// parent field and the Settings page's per-intent "Default epics" pickers.
+//
+// Modeled on ScheduleView's SessionCombobox (a themed <input> + absolutely
+// positioned, filtered <ul> menu — see that file's header comment for why a
+// native <sl-select>/<datalist> was rejected: no filtering support and an
+// unstyleable/unreliable native popover). The key difference from
+// SessionCombobox: there, the input's value IS the selected value (a
+// freeform session name) so opening the menu never has to reconcile
+// "selected value" vs "search text". Here `value` is an epic BEAD ID, but
+// the field displays the epic's TITLE — so this component tracks its own
+// `query` text (live while the menu is open) separately from the committed
+// `value` prop, and always opens showing the FULL unfiltered list (per spec:
+// "opens the full list on focus/click"), never pre-filtered to whatever the
+// previously selected title happens to be.
+//
+// Sorting is done HERE, in the frontend, by title (case-insensitive
+// localeCompare) — never trusts API order — so id/title sort order can
+// diverge (e.g. an epic titled "Zebra" created first, hence a low id, still
+// sorts last) and the picker is correct regardless of what the backend
+// returns.
+export function EpicCombobox({ epics, value, onChange, placeholder = 'None' }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [hi, setHi] = useState(-1);
+  const wrapRef = useRef(null);
+
+  const sorted = useMemo(
+    () => (epics || []).slice().sort((a, b) => (a.title || '').toLowerCase().localeCompare((b.title || '').toLowerCase())),
+    [epics]
+  );
+  const selected = value ? sorted.find((e) => e.id === value) : null;
+
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? sorted.filter((e) => (e.title || '').toLowerCase().includes(q) || (e.id || '').toLowerCase().includes(q))
+    : sorted;
+
+  useEffect(() => {
+    function onDocClick(e) { if (wrapRef.current && !wrapRef.current.contains(e.target)) { setOpen(false); setHi(-1); } }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
+
+  const openMenu = () => { setQuery(''); setOpen(true); setHi(-1); };
+  const pick = (id) => { onChange(id); setOpen(false); setQuery(''); setHi(-1); };
+
+  const onKeyDown = (e) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (!open) { openMenu(); return; }
+      setHi((i) => Math.min(i + 1, filtered.length));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!open) return;
+      setHi((i) => Math.max(i - 1, 0));
+    } else if (e.key === 'Enter') {
+      if (!open) return;
+      e.preventDefault();
+      if (hi <= 0) pick('');
+      else if (filtered[hi - 1]) pick(filtered[hi - 1].id);
+    } else if (e.key === 'Escape') {
+      if (open) {
+        // Escape must close ONLY this menu, never the enclosing dialog. Per
+        // the close-requests spec, a native <dialog>'s Escape-to-close only
+        // fires if the Escape keydown event reaches the UA un-canceled —
+        // preventDefault() here suppresses that default action outright
+        // (stopPropagation alone only stops OUR OWN bubbling handlers, e.g.
+        // the dialog body's Escape-to-close listener; it does nothing to
+        // the browser's separate native dialog-close behavior).
+        e.preventDefault();
+        e.stopPropagation();
+        setOpen(false);
+        setHi(-1);
+      }
+    }
+  };
+
+  const displayValue = open ? query : (selected ? selected.title : '');
+
+  return html`
+    <div class="combobox epic-combobox" ref=${wrapRef}>
+      <input class="field" placeholder=${placeholder} value=${displayValue} autocomplete="off"
+        onFocus=${openMenu}
+        onClick=${openMenu}
+        onInput=${(e) => { setQuery(e.target.value); setOpen(true); setHi(-1); }}
+        onKeyDown=${onKeyDown} />
+      ${open && html`
+        <ul class="combobox-menu" role="listbox">
+          <li role="option" aria-selected=${!value && hi <= 0}
+            class=${'combobox-opt epic-opt' + (hi <= 0 ? ' hi' : '')}
+            onMouseDown=${(e) => { e.preventDefault(); pick(''); }}
+            onMouseEnter=${() => setHi(0)}>
+            <span class="combobox-opt-title">None</span>
+          </li>
+          ${filtered.map((e2, i) => html`
+            <li key=${e2.id} role="option" aria-selected=${hi === i + 1}
+              class=${'combobox-opt epic-opt' + (hi === i + 1 ? ' hi' : '')}
+              onMouseDown=${(ev) => { ev.preventDefault(); pick(e2.id); }}
+              onMouseEnter=${() => setHi(i + 1)}>
+              <span class="combobox-opt-title">${e2.title}</span>
+              <span class="combobox-opt-meta muted small">${e2.id}</span>
+            </li>`)}
+        </ul>`}
+    </div>`;
 }

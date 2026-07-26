@@ -51,3 +51,16 @@ export async function apiPost(path, body) {
   const r = await fetch(apiUrl(path), { method: 'POST', headers, body: JSON.stringify(body) });
   return parse(r);
 }
+
+// Raw POST without project prefixing — for hub-level routes (/api/settings)
+// and for calls that must target an explicit project id that may not match
+// the currently-active store.projectId (e.g. the Settings page's "Default
+// epics" card, which lets the user act on any registered project while
+// store.projectId itself stays null on #/settings).
+export async function apiPostRaw(path, body) {
+  const headers = { 'content-type': 'application/json' };
+  const tokenRequired = store.meta.value?.tokenRequired;
+  if (tokenRequired) headers['x-bd-token'] = getToken();
+  const r = await fetch(path, { method: 'POST', headers, body: JSON.stringify(body) });
+  return parse(r);
+}

@@ -2,7 +2,7 @@
 // it. Everything reactive lives here; components read signals and call actions.
 
 import { signal, computed } from '@preact/signals';
-import { apiGet, apiGetRaw, apiPost, AuthError } from './api.js';
+import { apiGet, apiGetRaw, apiPost, apiPostRaw, AuthError } from './api.js';
 
 // Server text for the 501 the scheduler routes return when node:sqlite isn't
 // available (Node < 22) — used to tell "feature unavailable" apart from a
@@ -427,6 +427,40 @@ export async function loadEpics() {
   } catch (e) { store.epics.value = []; }
 }
 
+// Open epics for an ARBITRARY project id, independent of store.projectId —
+// used by the Settings page's "Default epics" card, which lets the user
+// pick any registered project while store.projectId itself stays null on
+// #/settings. Returns [] on any failure rather than throwing (mirrors
+// loadEpics()'s degrade-quietly behavior).
+export async function loadEpicsForProject(projectId) {
+  if (!projectId) return [];
+  try {
+    const data = await apiGetRaw('/api/p/' + encodeURIComponent(projectId) + '/epics');
+    return data.epics || [];
+  } catch (e) { return []; }
+}
+
+// Creates an epic in an arbitrary project (not necessarily the active one) —
+// backs the Settings page's "Create the 5 standard epics" button. Returns
+// the raw /api/p/<id>/create response ({ ok, id, issue, export }).
+export async function createEpicForProject(projectId, { title, priority = 2 }) {
+  return withAuth(() => apiPostRaw('/api/p/' + encodeURIComponent(projectId) + '/create', { title, type: 'epic', priority }));
+}
+
+// Creates an epic in the CURRENTLY ACTIVE project — backs the "+ new epic"
+// inline row in CreateIssueDialog's epic picker. Deliberately does not call
+// loadIssues()/selectIssue() (unlike createIssue() below): it must not steal
+// focus from whatever issue is currently selected behind the still-open
+// create-issue dialog. Refreshes the epic list so the new epic is
+// immediately selectable, and toasts on success (errors are surfaced inline
+// by the caller instead, so the dialog's in-progress state is never lost).
+export async function createEpicInline({ title, priority = 2 }) {
+  const data = await withAuth(() => apiPost('/api/create', { title, type: 'epic', priority }));
+  await loadEpics();
+  toast('Created epic ' + data.id);
+  return data.id;
+}
+
 // ---------------------------------------------------------------------------
 // tmux sessions (hub-level — always fetched unprefixed via apiGetRaw)
 // ---------------------------------------------------------------------------
@@ -580,6 +614,45 @@ export async function saveServerToken(token) {
   const data = await withAuth(() => apiPost('/api/settings', { token }));
   await loadSettings();
   return data;
+}
+
+// ---------------------------------------------------------------------------
+// Per-project default epics (opt-in — see Settings' "Default epics" card and
+// CreateIssueDialog's preselect-on-intent-change behavior). Server-side this
+// is one global-config map keyed by project id -> intent -> epic bead id;
+// see POST /api/settings' `defaultEpics` handling in lib/routes.mjs.
+// ---------------------------------------------------------------------------
+export const DEFAULT_EPIC_INTENTS = ['bug', 'feature', 'task', 'idea', 'chore'];
+const STANDARD_EPIC_TITLES = { bug: 'Bugs', feature: 'Features', task: 'Tasks', idea: 'Ideas', chore: 'Chores' };
+
+// map: { <projectId>: { bug|feature|task|idea|chore: <epicId|null> } } — merged
+// server-side into the stored map (other projects' entries are untouched).
+export async function saveDefaultEpics(map) {
+  const data = await withAuth(() => apiPost('/api/settings', { defaultEpics: map }));
+  await loadSettings();
+  return data;
+}
+
+// Creates the five standard epics (Bugs / Features / Tasks / Ideas / Chores)
+// in `projectId` and maps them to the five create-dialog intents in one
+// action. Idempotent-ish: an existing OPEN epic whose title case-insensitively
+// matches is reused instead of creating a duplicate, so a second click
+// creates zero new epics. Returns { map, created, reused } — `map` is ready
+// to hand straight to saveDefaultEpics({ [projectId]: map }).
+export async function createStandardEpics(projectId) {
+  const existing = await loadEpicsForProject(projectId);
+  const map = {};
+  let created = 0;
+  for (const intent of DEFAULT_EPIC_INTENTS) {
+    const title = STANDARD_EPIC_TITLES[intent];
+    const match = existing.find((e) => e.title.trim().toLowerCase() === title.toLowerCase());
+    if (match) { map[intent] = match.id; continue; }
+    const result = await createEpicForProject(projectId, { title, priority: 2 });
+    map[intent] = result.id;
+    created++;
+  }
+  await saveDefaultEpics({ [projectId]: map });
+  return { map, created, reused: DEFAULT_EPIC_INTENTS.length - created };
 }
 
 // ---------------------------------------------------------------------------
