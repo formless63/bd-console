@@ -9,6 +9,8 @@ import {
   parentOf, childrenOf, blocksList,
 } from '../store.js';
 import { c2 } from './state.js';
+import { buildGraph, OVERLAY_DEP_TYPES, OVERLAY_TOGGLE_TYPES } from './graphModel.js';
+export { OVERLAY_DEP_TYPES, OVERLAY_TOGGLE_TYPES };
 
 export const DAY = 86400000;
 export const STALE_DAYS = 21;
@@ -113,113 +115,14 @@ export function unblockHint() {
   return best;
 }
 
-// Layered DAG layout for MAP over non-closed issues. Roots (nothing blocks
-// them) on the left; blocker → blocked edges point rightward. Longest-path
-// layering + one barycenter ordering pass. Returns nodes with {col,row,x,y}.
+// Layered DAG layout + edge model for MAP over non-closed issues. Thin
+// signal-reading wrapper: all the actual derivation (layering, critical
+// chain, layoutEdges-vs-overlayEdges split) lives in the pure, store-free
+// graphModel.js so it can be unit-tested from plain Node (see
+// scripts/smoke.mjs) without a signals runtime. Returns
+// { nodes, layoutEdges, overlayEdges, width, height, criticalChain }.
 export function graphLayout() {
-  const issues = store.issues.value.filter((i) => i.status !== 'closed');
-  const set = new Set(issues.map((i) => i.id));
-  const m = byId.value;
-
-  // edges: blocker -> blocked (both in set)
-  const inEdges = new Map();   // node -> [blockers]
-  const outEdges = new Map();  // node -> [blocked dependents]
-  for (const id of set) { inEdges.set(id, []); outEdges.set(id, []); }
-  const edges = [];
-  for (const i of issues) {
-    for (const b of openBlockersOf(i)) {
-      if (!set.has(b)) continue;
-      inEdges.get(i.id).push(b);
-      outEdges.get(b).push(i.id);
-      edges.push({ from: b, to: i.id });
-    }
-  }
-
-  // longest-path layer via memoised DFS (graph is a DAG in practice)
-  const layer = new Map();
-  const visiting = new Set();
-  const depth = (id) => {
-    if (layer.has(id)) return layer.get(id);
-    if (visiting.has(id)) return 0; // cycle guard
-    visiting.add(id);
-    let d = 0;
-    for (const b of inEdges.get(id)) d = Math.max(d, depth(b) + 1);
-    visiting.delete(id);
-    layer.set(id, d);
-    return d;
-  };
-  for (const id of set) depth(id);
-
-  // group by column
-  const cols = [];
-  for (const id of set) {
-    const c = layer.get(id);
-    (cols[c] || (cols[c] = [])).push(id);
-  }
-
-  // initial order: priority then id
-  for (const c of cols) c.sort((a, b) => {
-    const ia = m.get(a), ib = m.get(b);
-    return ia.priority - ib.priority || a.localeCompare(b);
-  });
-
-  // barycenter pass (order each column by mean row of its blockers)
-  const rowOf = new Map();
-  cols.forEach((c) => c.forEach((id, r) => rowOf.set(id, r)));
-  for (let c = 1; c < cols.length; c++) {
-    cols[c].sort((a, b) => {
-      const ba = mean(inEdges.get(a).map((x) => rowOf.get(x) ?? 0));
-      const bb = mean(inEdges.get(b).map((x) => rowOf.get(x) ?? 0));
-      return ba - bb || (m.get(a).priority - m.get(b).priority);
-    });
-    cols[c].forEach((id, r) => rowOf.set(id, r));
-  }
-
-  // geometry
-  const COL_W = 210, ROW_H = 92, PAD = 40;
-  const nodes = [];
-  cols.forEach((c, ci) => c.forEach((id, ri) => {
-    nodes.push({
-      id, issue: m.get(id), col: ci, row: ri,
-      x: PAD + ci * COL_W, y: PAD + ri * ROW_H,
-    });
-  }));
-  const pos = new Map(nodes.map((n) => [n.id, n]));
-  const laidEdges = edges.map((e) => ({ ...e, a: pos.get(e.from), b: pos.get(e.to) }));
-
-  const maxRows = Math.max(1, ...cols.map((c) => c.length));
-  const width = PAD * 2 + Math.max(1, cols.length) * COL_W;
-  const height = PAD * 2 + maxRows * ROW_H;
-
-  return { nodes, edges: laidEdges, width, height, criticalChain: criticalChain(inEdges, set) };
-}
-
-function mean(a) { return a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0; }
-
-// Longest blocking path (by node count) through the open subgraph.
-function criticalChain(inEdges, set) {
-  const memo = new Map();
-  const prev = new Map();
-  const visiting = new Set();
-  const len = (id) => {
-    if (memo.has(id)) return memo.get(id);
-    if (visiting.has(id)) return 1;
-    visiting.add(id);
-    let best = 1, p = null;
-    for (const b of inEdges.get(id)) {
-      const l = len(b) + 1;
-      if (l > best) { best = l; p = b; }
-    }
-    visiting.delete(id);
-    memo.set(id, best); prev.set(id, p);
-    return best;
-  };
-  let tail = null, max = 0;
-  for (const id of set) { const l = len(id); if (l > max) { max = l; tail = id; } }
-  const chain = new Set();
-  let cur = tail;
-  while (cur) { chain.add(cur); cur = prev.get(cur); }
-  return max > 1 ? chain : new Set();
+  return buildGraph(store.issues.value);
 }
 
 // ---------------------------------------------------------------------------

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import net from 'node:net';
+import { createServer } from 'node:http';
 import { renderServiceUnit } from '../lib/systemd.mjs';
 // Pure frontend derivation, importable in Node — see public/ui/relationships.js
 import {
@@ -11,8 +12,13 @@ import {
   supersededBy, duplicateOf, supersedes, duplicatedBy, retiredState,
   LINK_TYPES as UI_LINK_TYPES,
 } from '../public/ui/relationships.js';
+// Pure MapView edge-model derivation (docs/beads-coverage.md Phase 2) — see
+// public/ui/console2/graphModel.js's header for why it's signal-free and
+// therefore importable here exactly like relationships.js above.
+import { buildGraph } from '../public/ui/console2/graphModel.js';
 import { LINK_TYPES as SERVER_LINK_TYPES } from '../lib/bd.mjs';
 import { parseScopedLimits } from '../lib/usage.mjs';
+import { parseBdVersionStdout, compareVersions, isBehind } from '../lib/bdversion.mjs';
 
 function run(cmd, args, options = {}) {
   return execFileSync(cmd, args, {
@@ -1391,6 +1397,199 @@ try {
       histAuthServer.kill('SIGTERM');
       await new Promise((resolveP) => histAuthServer.once('exit', () => resolveP()));
     }
+  }
+
+  // --- bd (beads CLI) version check (lib/bdversion.mjs + GET /api/bd-version)
+  // Pure-function assertions first (no server, no network), then the live
+  // route against the real installed `bd`, with the GitHub lookup redirected
+  // via BD_CONSOLE_GITHUB_API_BASE — either at an unroutable port (offline)
+  // or a local stub server (fabricated "behind" release) — never the real
+  // GitHub API, so this suite is offline-safe and never touches the real
+  // 60/hr/IP rate limit.
+  {
+    // --- pure: `bd version` stdout parsing ---------------------------------
+    assert(parseBdVersionStdout('bd version 1.1.0 (8e4e59d39: HEAD@8e4e59d39f34)\n') === '1.1.0',
+      'parseBdVersionStdout should extract the version out of real bd stdout');
+    assert(parseBdVersionStdout('bd version v2.0.0-beta.1 (abc: HEAD)') === '2.0.0-beta.1',
+      'parseBdVersionStdout should tolerate a v-prefixed, pre-release version');
+    assert(parseBdVersionStdout('garbage, no version here') === null,
+      'parseBdVersionStdout should return null on malformed stdout');
+    assert(parseBdVersionStdout('') === null, 'parseBdVersionStdout should return null on empty stdout');
+    assert(parseBdVersionStdout(null) === null, 'parseBdVersionStdout should return null on null stdout');
+
+    // --- pure: version compare / behind -------------------------------------
+    assert(compareVersions('v1.2.0', '1.2.0') === 0, 'compareVersions should ignore a v prefix');
+    assert(compareVersions('1.1.0', '1.2.0') === -1, 'compareVersions should report installed < latest as -1');
+    assert(compareVersions('1.3.0', '1.2.0') === 1, 'compareVersions should report installed > latest as 1');
+    assert(compareVersions('abc', '1.2.0') === null, 'compareVersions should return null for an unparseable version');
+    assert(compareVersions('1.2.0', null) === null, 'compareVersions should return null when one side is missing');
+
+    assert(isBehind('1.1.0', '1.2.0') === true, 'isBehind should be true when installed < latest');
+    assert(isBehind('1.2.0', '1.2.0') === false, 'isBehind should be false on an EXACT match (never nag)');
+    assert(isBehind('1.3.0', '1.2.0') === false, 'isBehind should be false when installed is NEWER than latest (never nag a pre-release runner)');
+    assert(isBehind(null, '1.2.0') === null, 'isBehind should be null when installed is unknown');
+    assert(isBehind('1.2.0', null) === null, 'isBehind should be null when latest is unknown');
+
+    console.log('smoke ok (bd version: stdout parsing + version compare — v-prefix/equal/behind/ahead/malformed/null)');
+
+    // --- API: real bd, GitHub lookup pointed at an unreachable port --------
+    // Nothing listens on 127.0.0.1:1 — connections fail immediately
+    // (ECONNREFUSED) rather than needing a slow black-hole-route timeout,
+    // simulating "offline" cheaply. Must never throw, and must never lose
+    // the local "installed" fact just because the network is unreachable.
+    const bdvConfigDir = join(tempRoot, 'bdversion-offline-config');
+    mkdirSync(bdvConfigDir, { recursive: true });
+    const bdvPort = await getPort();
+    const bdvEnv = {
+      ...process.env,
+      BD_CONSOLE_CONFIG_DIR: bdvConfigDir,
+      BD_CONSOLE_GITHUB_API_BASE: 'http://127.0.0.1:1'
+    };
+    const bdvServer = spawn(process.execPath, [serverEntry, '--host', '127.0.0.1', '--port', String(bdvPort)], {
+      cwd: process.cwd(), env: bdvEnv, stdio: ['ignore', 'pipe', 'pipe']
+    });
+    try {
+      await waitFor(`http://127.0.0.1:${bdvPort}/api/meta`);
+      const res = await fetch(`http://127.0.0.1:${bdvPort}/api/bd-version`);
+      assert(res.status === 200, `/api/bd-version should 200, got ${res.status}`);
+      const body = await res.json();
+      assert(typeof body.installed === 'string' && body.installed, `/api/bd-version should report a non-null installed version on this machine, got: ${JSON.stringify(body)}`);
+      assert(body.latest === null, `/api/bd-version should report latest:null when GitHub is unreachable, got: ${JSON.stringify(body.latest)}`);
+      assert(body.latestSource === null, `/api/bd-version latestSource should be null when GitHub is unreachable, got: ${body.latestSource}`);
+      assert(body.behind === null, `/api/bd-version behind should be null when latest is unknown, got: ${body.behind}`);
+      assert(Array.isArray(body.binaries) && body.binaries.length > 0, `/api/bd-version should list at least one bd binary, got: ${JSON.stringify(body.binaries)}`);
+      assert(typeof body.multipleBinaries === 'boolean', '/api/bd-version missing boolean multipleBinaries');
+      assert(['brew', 'npm', 'script', 'unknown'].includes(body.installFlavor), `/api/bd-version installFlavor should be one of the known flavors, got: ${body.installFlavor}`);
+      assert(typeof body.checkedAt === 'number' && body.checkedAt > 0, '/api/bd-version missing numeric checkedAt');
+      console.log(`smoke ok (bd version API: offline GitHub -> installed=${body.installed} still reported, latest:null, never throws)`);
+    } finally {
+      bdvServer.kill('SIGTERM');
+      await new Promise((resolveP) => bdvServer.once('exit', () => resolveP()));
+    }
+
+    // --- API: stub GitHub -> "behind" + update hint + cache reuse ----------
+    let stubHits = 0;
+    const stubTag = 'v99.0.0';
+    const stub = createServer((req, res) => {
+      if (req.url === '/repos/gastownhall/beads/releases/latest') {
+        stubHits++;
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ tag_name: stubTag }));
+      } else {
+        res.writeHead(404); res.end('{}');
+      }
+    });
+    const stubPort = await getPort();
+    await new Promise((resolveP) => stub.listen(stubPort, '127.0.0.1', resolveP));
+    try {
+      const bdvBehindConfigDir = join(tempRoot, 'bdversion-behind-config');
+      mkdirSync(bdvBehindConfigDir, { recursive: true });
+      const bdvBehindPort = await getPort();
+      const bdvBehindEnv = {
+        ...process.env,
+        BD_CONSOLE_CONFIG_DIR: bdvBehindConfigDir,
+        BD_CONSOLE_GITHUB_API_BASE: `http://127.0.0.1:${stubPort}`
+      };
+      const bdvBehindServer = spawn(process.execPath, [serverEntry, '--host', '127.0.0.1', '--port', String(bdvBehindPort)], {
+        cwd: process.cwd(), env: bdvBehindEnv, stdio: ['ignore', 'pipe', 'pipe']
+      });
+      try {
+        await waitFor(`http://127.0.0.1:${bdvBehindPort}/api/meta`);
+        const res1 = await fetch(`http://127.0.0.1:${bdvBehindPort}/api/bd-version`);
+        const body1 = await res1.json();
+        assert(body1.latest === '99.0.0', `/api/bd-version should normalize the v-prefixed tag, got: ${JSON.stringify(body1.latest)}`);
+        assert(body1.latestSource === 'github', `first call should hit the stub GitHub server (source: 'github'), got: ${body1.latestSource}`);
+        assert(body1.behind === true, `installed (real bd, ~1.x) should be behind the fabricated v99.0.0, got: ${JSON.stringify(body1)}`);
+        assert(typeof body1.updateHint === 'string' && body1.updateHint.length > 0, `/api/bd-version should offer an updateHint when behind, got: ${body1.updateHint}`);
+
+        const res2 = await fetch(`http://127.0.0.1:${bdvBehindPort}/api/bd-version`);
+        const body2 = await res2.json();
+        assert(body2.latestSource === 'cache', `a second call within the TTL should be served from cache, got: ${body2.latestSource}`);
+        assert(stubHits === 1, `stub GitHub server should have been hit exactly once (second call cached), got ${stubHits} hits`);
+
+        console.log('smoke ok (bd version API: fabricated newer release -> behind:true, updateHint present, second call served from cache)');
+      } finally {
+        bdvBehindServer.kill('SIGTERM');
+        await new Promise((resolveP) => bdvBehindServer.once('exit', () => resolveP()));
+      }
+    } finally {
+      await new Promise((resolveP) => stub.close(resolveP));
+    }
+
+    // --- token-gated the same way /api/usage is -----------------------------
+    const bdvAuthConfigDir = join(tempRoot, 'bdversion-auth-config');
+    mkdirSync(bdvAuthConfigDir, { recursive: true });
+    const bdvAuthPort = await getPort();
+    const bdvAuthEnv = {
+      ...process.env,
+      BD_CONSOLE_CONFIG_DIR: bdvAuthConfigDir,
+      BD_CONSOLE_TOKEN: 'bdversion-smoke-token',
+      BD_CONSOLE_GITHUB_API_BASE: 'http://127.0.0.1:1'
+    };
+    const bdvAuthServer = spawn(process.execPath, [serverEntry, '--host', '127.0.0.1', '--port', String(bdvAuthPort)], {
+      cwd: process.cwd(), env: bdvAuthEnv, stdio: ['ignore', 'pipe', 'pipe']
+    });
+    try {
+      await waitFor(`http://127.0.0.1:${bdvAuthPort}/api/meta`);
+      const noAuthRes = await fetch(`http://127.0.0.1:${bdvAuthPort}/api/bd-version`);
+      assert(noAuthRes.status === 401, `/api/bd-version without a token should 401 when a token is configured, got ${noAuthRes.status}`);
+      const withAuthRes = await fetch(`http://127.0.0.1:${bdvAuthPort}/api/bd-version`, { headers: { 'x-bd-token': 'bdversion-smoke-token' } });
+      assert(withAuthRes.status === 200, `/api/bd-version with the correct token should 200, got ${withAuthRes.status}`);
+      console.log('smoke ok (bd version API: token-gated like /api/usage)');
+    } finally {
+      bdvAuthServer.kill('SIGTERM');
+      await new Promise((resolveP) => bdvAuthServer.once('exit', () => resolveP()));
+    }
+  }
+
+  // --- Phase 2: MapView edge-model split (layoutEdges vs overlayEdges) -----
+  // Pure, fixture-driven — buildGraph() is signal/store-free (a plain issues
+  // array in, a plain object out — see public/ui/console2/graphModel.js), so
+  // this pins the load-bearing constraint from docs/beads-coverage.md Phase 2
+  // directly, with no server/daemon/bd involved: non-blocking link types
+  // must NEVER reach layoutEdges (the layering/critical-chain input) — every
+  // other present type must be routed to overlayEdges instead, tagged with
+  // its type, deduped for the bidirectional related/relates-to pair, and
+  // restricted to endpoints buildGraph actually placed (closed issues never
+  // become nodes, so an edge touching one must not leak into either set).
+  {
+    const gmIssues = [
+      { id: 'g-a', status: 'open', priority: 2, dependencies: [] },
+      { id: 'g-b', status: 'open', priority: 2, dependencies: [{ issue_id: 'g-b', depends_on_id: 'g-a', type: 'blocks' }] },
+      { id: 'g-c', status: 'open', priority: 2, dependencies: [{ issue_id: 'g-c', depends_on_id: 'g-b', type: 'blocks' }] },
+      { id: 'g-d', status: 'open', priority: 2, dependencies: [{ issue_id: 'g-d', depends_on_id: 'g-a', type: 'related' }] },
+      { id: 'g-e', status: 'open', priority: 2, dependencies: [{ issue_id: 'g-e', depends_on_id: 'g-d', type: 'relates-to' }] },
+      { id: 'g-f', status: 'open', priority: 2, dependencies: [{ issue_id: 'g-f', depends_on_id: 'g-a', type: 'discovered-from' }] },
+      { id: 'g-g', status: 'open', priority: 2, dependencies: [{ issue_id: 'g-g', depends_on_id: 'g-a', type: 'tracks' }] },
+      // closed: its outbound related row must not leak into either edge set
+      // (buildGraph/graphLayout only ever place non-closed issues as nodes).
+      { id: 'g-h', status: 'closed', priority: 2, dependencies: [{ issue_id: 'g-h', depends_on_id: 'g-a', type: 'related' }] },
+    ];
+    const graph = buildGraph(gmIssues);
+
+    assert(graph.nodes.every((n) => n.issue.status !== 'closed'), 'buildGraph must never place a closed issue as a node');
+    assert(!graph.nodes.some((n) => n.id === 'g-h'), 'a closed issue must not appear as a node');
+
+    const layoutPairs = graph.layoutEdges.map((e) => e.from + '->' + e.to).sort();
+    assert(JSON.stringify(layoutPairs) === JSON.stringify(['g-a->g-b', 'g-b->g-c']),
+      `layoutEdges must contain ONLY the blocking chain; got ${JSON.stringify(layoutPairs)}`);
+    // THE regression this pins: a non-blocking-typed edge must never reach layoutEdges.
+    const nonBlockingIds = ['g-d', 'g-e', 'g-f', 'g-g'];
+    assert(!graph.layoutEdges.some((e) => nonBlockingIds.includes(e.from) || nonBlockingIds.includes(e.to)),
+      `a non-blocking-typed issue must never appear on a layoutEdges endpoint; got ${JSON.stringify(layoutPairs)}`);
+
+    const overlayByType = {};
+    for (const e of graph.overlayEdges) (overlayByType[e.type] || (overlayByType[e.type] = [])).push(e.from + '->' + e.to);
+    assert((overlayByType.related || []).length === 2, `expected 2 deduped related overlay edges, got ${JSON.stringify(overlayByType.related)}`);
+    assert((overlayByType.related || []).includes('g-a->g-d'), `related overlay edge g-a<->g-d missing; got ${JSON.stringify(overlayByType.related)}`);
+    assert((overlayByType.related || []).includes('g-d->g-e'),
+      `related/relates-to must fold into one deduped "related" overlay edge; got ${JSON.stringify(overlayByType.related)}`);
+    assert((overlayByType['discovered-from'] || []).includes('g-f->g-a'), 'discovered-from overlay edge missing');
+    assert((overlayByType['tracks'] || []).includes('g-g->g-a'), 'tracks overlay edge missing');
+    assert(!('blocks' in overlayByType), 'overlayEdges must never contain a blocking-typed edge');
+    assert(!graph.overlayEdges.some((e) => e.from === 'g-h' || e.to === 'g-h'), 'a closed issue must not appear on any overlay edge');
+
+    console.log(`smoke ok (graph edge model: layoutEdges excludes non-blocking types, related deduped): ${layoutPairs.join(',')}`);
   }
 
   console.log(`smoke ok: ${seedId}, ${quickRes.id}`);

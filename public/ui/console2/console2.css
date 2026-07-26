@@ -424,12 +424,69 @@
 .c2-edge.lit { stroke: var(--c2-neon); opacity: 1; stroke-width: 2; }
 .c2-edge.crit { stroke: var(--c2-synergy); stroke-width: 2.2; opacity: 0.95; }
 .c2-arrowhead { fill: var(--c2-line-2); }
+
+/* ---- Overlay edges (docs/beads-coverage.md Phase 2) ----------------------
+   Non-blocking link types drawn on top of the blocking DAG: thinner, always
+   dashed (never solid, so they're never mistaken for a blocking edge at a
+   glance even before color registers — colorblind-safe per this app's
+   existing "shape, not just color" convention), no arrowhead for the
+   symmetric `related` type, arrowhead kept for every directional type. Each
+   type gets its own theme-token color AND its own dash rhythm so two overlay
+   types are still distinguishable from each other, not just from blocking
+   edges. Every color below is a bare semantic token (--green/--amber/--red/
+   --purple/--accent/--text-dim/--text-faint) or a color-mix() of them, so
+   this holds across all 6 presets × light/dark with zero hardcoded hexes. */
+.c2-edge-overlay { stroke-width: 1.1; opacity: 0.55; }
+.c2-edge-overlay.dim { opacity: 0.08; }
+.c2-edge-overlay.ov-lit { opacity: 1; stroke-width: 1.8; }
+.c2-edge-type-related { stroke: var(--text-dim); stroke-dasharray: 2 5; }
+.c2-edge-type-tracks { stroke: var(--accent); stroke-dasharray: 8 3; }
+.c2-edge-type-discovered-from { stroke: var(--amber); stroke-dasharray: 5 4; }
+.c2-edge-type-caused-by { stroke: var(--red); stroke-dasharray: 3 3; }
+.c2-edge-type-validates { stroke: var(--green); stroke-dasharray: 1 4; }
+.c2-edge-type-supersedes { stroke: var(--purple); stroke-dasharray: 9 3 2 3; }
+.c2-edge-type-duplicates { stroke: color-mix(in srgb, var(--purple) 55%, var(--text-faint)); stroke-dasharray: 1 3 5 3; }
+.c2-arrow-ov-tracks { fill: var(--accent); }
+.c2-arrow-ov-discovered-from { fill: var(--amber); }
+.c2-arrow-ov-caused-by { fill: var(--red); }
+.c2-arrow-ov-validates { fill: var(--green); }
+.c2-arrow-ov-supersedes { fill: var(--purple); }
+.c2-arrow-ov-duplicates { fill: color-mix(in srgb, var(--purple) 55%, var(--text-faint)); }
+
+/* ---- Overlay toggle bar + legend ------------------------------------------
+   A second toolbar row, only rendered when the current graph has at least
+   one overlay-eligible edge — a checkbox per PRESENT type doubles as the
+   legend (swatch + label + live count), so there's no separate "legend" UI
+   to keep in sync with the toggles. The static "Blocking" entry is not a
+   toggle (blocking edges always render — they define the layout) but uses
+   the same swatch language so the two edge languages read as one system. */
+.c2-map-overlaybar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; padding: 2px 16px 8px; }
+.c2-ov-static { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-faint); }
+.c2-ovtoggle { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-dim); cursor: pointer; user-select: none; }
+.c2-ovtoggle input { accent-color: var(--c2-accent); cursor: pointer; }
+.c2-ovswatch { width: 16px; height: 3px; border-radius: 2px; display: inline-block; flex: none; background: var(--c2-line-2); }
+.c2-ovswatch-blocking { background: var(--c2-line-2); }
+.c2-ovswatch-related { background: var(--text-dim); }
+.c2-ovswatch-tracks { background: var(--accent); }
+.c2-ovswatch-discovered-from { background: var(--amber); }
+.c2-ovswatch-caused-by { background: var(--red); }
+.c2-ovswatch-validates { background: var(--green); }
+.c2-ovswatch-supersedes { background: var(--purple); }
+.c2-ovswatch-duplicates { background: color-mix(in srgb, var(--purple) 55%, var(--text-faint)); }
+.c2-ovlabel { white-space: nowrap; }
+.c2-ovcount { font-family: var(--font-mono); font-size: 10px; color: var(--text-faint); }
+
 .c2-node-box { fill: var(--c2-glass-3); stroke: var(--c2-line-2); stroke-width: 1; }
 .c2-node.st-ready .c2-node-box { stroke: var(--green); }
 .c2-node.st-in_progress .c2-node-box { stroke: var(--accent); }
 .c2-node.st-blocked .c2-node-box { stroke: var(--red); }
 .c2-node.crit .c2-node-box { stroke: var(--c2-synergy); stroke-width: 2; }
 .c2-node.lit .c2-node-box { filter: drop-shadow(0 0 6px color-mix(in srgb, var(--c2-neon) 60%, transparent)); }
+/* Overlay-neighbor hover highlight — visibly distinct from the blocking-chain
+   `.lit` glow above (synergy purple vs neon green), so a node that's both a
+   blocking-chain member AND an overlay neighbor of the hovered node reads as
+   two simultaneous, separately-colored glows rather than one ambiguous one. */
+.c2-node.ov-lit .c2-node-box { filter: drop-shadow(0 0 6px color-mix(in srgb, var(--c2-synergy) 60%, transparent)); }
 .c2-node.dim { opacity: 0.28; }
 .c2-node-glyph { fill: var(--text); font-size: 13px; }
 .c2-node-id { fill: var(--text-faint); font-family: var(--font-mono); font-size: 10px; }
@@ -629,6 +686,12 @@ select.c2-linktype { flex: 0 0 auto; max-width: 140px; }
   /* ---- map: fills the viewport width; zoom buttons as a touch fallback --- */
   .c2-map-toolbar { padding: 8px 12px; flex-wrap: wrap; row-gap: 6px; }
   .c2-map-legend { display: none; }
+  /* Overlay toggle bar folds to its own wrapped rows at narrow widths (390px
+     included) rather than the desktop single line — flex-wrap already
+     handles the reflow, this just tightens the gutters and keeps each
+     toggle's tap target usable on touch. */
+  .c2-map-overlaybar { padding: 4px 12px 8px; gap: 8px 12px; }
+  .c2-ovtoggle, .c2-ov-static { min-height: 32px; }
   .c2-map-zoombtns {
     display: flex; flex-direction: column; gap: 8px; position: absolute; z-index: 5;
     right: calc(12px + env(safe-area-inset-right)); bottom: calc(12px + env(safe-area-inset-bottom));

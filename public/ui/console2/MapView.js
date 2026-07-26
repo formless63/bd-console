@@ -1,21 +1,39 @@
 // console2/MapView.js — dependency graph of open issues as a layered SVG DAG.
 // Roots left, dependents right; blocker→blocked edges as curves. Pan/zoom via a
 // wheel+drag transform, no libraries. Hovering a node lights its full up/down
-// stream chain; the longest blocking path (critical chain) is always emphasized.
+// stream blocking chain; the longest blocking path (critical chain) is always
+// emphasized.
+//
+// docs/beads-coverage.md Phase 2: alongside the blocking DAG above, MapView
+// also draws OVERLAY edges (related/tracks/discovered-from/caused-by/
+// validates/supersedes/duplicates) — non-blocking link types that do NOT
+// affect layering (see graphModel.js's buildGraph). They're toggled per type
+// via the compact control in the toolbar, default to blocking+related only
+// (the doc's own rationale: all ~7 overlay types at once is unreadable), and
+// persist per-project in localStorage (console2/state.js).
 import { html } from 'htm/preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { store, selectIssue } from '../store.js';
-import { graphLayout } from './derive.js';
+import { graphLayout, OVERLAY_TOGGLE_TYPES } from './derive.js';
+import { c2, loadMapOverlayPref, setMapOverlayPref } from './state.js';
 import { TYPE_GLYPH, glyphStatus, STATUS_GLYPH_CHAR, STATUS_GLYPH_LABEL } from './ui.js';
 
 const NODE_W = 168, NODE_H = 54;
 const ZOOM_MIN = 0.3, ZOOM_MAX = 2.4;
 
+// Overlay types that read as a symmetric "see also" edge get no arrowhead;
+// every other present overlay type is directional and keeps one.
+const SYMMETRIC_OVERLAY_TYPES = new Set(['related']);
+const OVERLAY_TYPE_LABEL = {
+  related: 'Related', tracks: 'Tracks', 'discovered-from': 'Discovered from',
+  'caused-by': 'Caused by', validates: 'Validates', supersedes: 'Supersedes', duplicates: 'Duplicates',
+};
+
 function dist(t0, t1) { return Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY); }
 function mid(t0, t1) { return { x: (t0.clientX + t1.clientX) / 2, y: (t0.clientY + t1.clientY) / 2 }; }
 
 function chainFrom(id, edges) {
-  // gather up + downstream reachable from id
+  // gather up + downstream reachable from id over BLOCKING edges only
   const up = new Map(), down = new Map();
   for (const e of edges) {
     (up.get(e.to) || up.set(e.to, []).get(e.to)).push(e.from);
@@ -33,10 +51,53 @@ function chainFrom(id, edges) {
   return acc;
 }
 
+// Direct overlay neighbors of `id` among the currently-VISIBLE overlay edges
+// (i.e. after the toggle-set filter). Deliberately NOT transitive — the
+// spec calls for lighting "visible overlay neighbors", not a whole connected
+// component (which for a busy `related` web could be most of the graph).
+function overlayNeighborsOf(id, visibleOverlayEdges) {
+  const out = new Set();
+  for (const e of visibleOverlayEdges) {
+    if (e.from === id) out.add(e.to);
+    else if (e.to === id) out.add(e.from);
+  }
+  return out;
+}
+
+// Cubic curve for a layout (blocking) edge: right edge of `a` to left edge of
+// `b` — unchanged from the pre-Phase-2 rendering, since layout guarantees `a`
+// is strictly left of `b`.
+function layoutPath(e) {
+  const x1 = e.a.x + NODE_W, y1 = e.a.y + NODE_H / 2;
+  const x2 = e.b.x, y2 = e.b.y + NODE_H / 2;
+  const mx = (x1 + x2) / 2;
+  return `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`;
+}
+
+// Bowed curve for an overlay edge, between arbitrary (not necessarily
+// left-to-right) node positions — pulled back off each node's center so an
+// arrowhead lands outside the node box instead of underneath it, and bowed
+// perpendicular to the a→b line so it never overlaps a straight layout edge
+// running between the same two columns.
+function overlayPath(e) {
+  const ax = e.a.x + NODE_W / 2, ay = e.a.y + NODE_H / 2;
+  const bx = e.b.x + NODE_W / 2, by = e.b.y + NODE_H / 2;
+  const dx = bx - ax, dy = by - ay;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len, uy = dy / len;
+  const pullback = NODE_W / 2 + 12;
+  const sx = ax + ux * pullback, sy = ay + uy * pullback;
+  const ex = bx - ux * pullback, ey = by - uy * pullback;
+  const nx = -uy, ny = ux;
+  const bow = Math.min(46, len * 0.22);
+  const cx = (sx + ex) / 2 + nx * bow, cy = (sy + ey) / 2 + ny * bow;
+  return `M ${sx} ${sy} Q ${cx} ${cy} ${ex} ${ey}`;
+}
+
 export function MapView() {
   const issues = store.issues.value; // subscribe
   const layout = useMemo(() => graphLayout(), [issues]);
-  const { nodes, edges, width, height, criticalChain } = layout;
+  const { nodes, layoutEdges, overlayEdges, width, height, criticalChain } = layout;
 
   const [view, setView] = useState({ x: 0, y: 0, k: 1 });
   const [hover, setHover] = useState(null);
@@ -44,7 +105,33 @@ export function MapView() {
   const pinch = useRef(null);
   const svgRef = useRef(null);
 
-  const highlight = hover ? chainFrom(hover, edges) : null;
+  // Per-project overlay-type toggle set — loaded on project switch, then
+  // read reactively off c2.mapOverlayTypes (subscribed via .value below).
+  useEffect(() => {
+    c2.mapOverlayTypes.value = loadMapOverlayPref(store.projectId.value);
+  }, [store.projectId.value]);
+  const enabledOverlay = c2.mapOverlayTypes.value;
+  // Reads c2.mapOverlayTypes.value FRESH at click time rather than closing
+  // over the `enabledOverlay` render-scoped snapshot above — two toggles
+  // clicked in quick succession (e.g. an automated "enable all" pass, or
+  // just a fast double-click) would otherwise both compute `next` from the
+  // same stale pre-render Set and the second click's write would silently
+  // clobber the first's.
+  const toggleOverlayType = (type) => {
+    const next = new Set(c2.mapOverlayTypes.value);
+    next.has(type) ? next.delete(type) : next.add(type);
+    setMapOverlayPref(store.projectId.value, next);
+  };
+
+  // Only offer toggles/legend entries for types with at least one edge in
+  // the CURRENT graph — never render a checkbox for a type with zero edges.
+  const overlayCounts = new Map();
+  for (const e of overlayEdges) overlayCounts.set(e.type, (overlayCounts.get(e.type) || 0) + 1);
+  const presentOverlayTypes = OVERLAY_TOGGLE_TYPES.filter((t) => overlayCounts.has(t));
+  const visibleOverlayEdges = overlayEdges.filter((e) => enabledOverlay.has(e.type));
+
+  const highlight = hover ? chainFrom(hover, layoutEdges) : null;
+  const overlayHighlight = hover ? overlayNeighborsOf(hover, visibleOverlayEdges) : null;
 
   const onWheel = (e) => {
     e.preventDefault();
@@ -114,15 +201,21 @@ export function MapView() {
     return html`<div class="c2-map"><div class="c2-map-empty">No open issues to map.</div></div>`;
   }
 
-  const edge = (e, i) => {
-    const x1 = e.a.x + NODE_W, y1 = e.a.y + NODE_H / 2;
-    const x2 = e.b.x, y2 = e.b.y + NODE_H / 2;
-    const mx = (x1 + x2) / 2;
-    const d = `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`;
+  const layoutEdge = (e, i) => {
+    const d = layoutPath(e);
     const onChain = criticalChain.has(e.from) && criticalChain.has(e.to);
     const lit = highlight && highlight.has(e.from) && highlight.has(e.to);
     const dim = highlight && !lit;
-    return html`<path key=${i} d=${d} class=${'c2-edge' + (onChain ? ' crit' : '') + (lit ? ' lit' : '') + (dim ? ' dim' : '')} marker-end="url(#c2arrow)" />`;
+    return html`<path key=${'l' + i} d=${d} class=${'c2-edge' + (onChain ? ' crit' : '') + (lit ? ' lit' : '') + (dim ? ' dim' : '')} marker-end="url(#c2arrow)" />`;
+  };
+
+  const overlayEdge = (e, i) => {
+    const d = overlayPath(e);
+    const lit = overlayHighlight && (e.from === hover || e.to === hover);
+    const dim = hover && !lit;
+    const symmetric = SYMMETRIC_OVERLAY_TYPES.has(e.type);
+    const cls = 'c2-edge c2-edge-overlay c2-edge-type-' + e.type + (lit ? ' ov-lit' : '') + (dim ? ' dim' : '');
+    return html`<path key=${'o' + i} d=${d} class=${cls} marker-end=${symmetric ? undefined : `url(#c2arrow-ov-${e.type})`} />`;
   };
 
   const node = (n) => {
@@ -131,15 +224,18 @@ export function MapView() {
     // safety — never color alone). glyphStatus splits effStatus's plain
     // "open" into ready/deferred so nodes actually get distinguished; closed
     // issues never reach here (graphLayout only lays out non-closed issues).
+    // TYPE_GLYPH falls back to a plain bullet for any issue_type it doesn't
+    // recognize (e.g. `molecule`), so an unfamiliar type renders, not crashes.
     const s = glyphStatus(n.issue);
     const onChain = criticalChain.has(n.id);
-    const lit = highlight && highlight.has(n.id);
-    const dim = highlight && !lit;
+    const litBlocking = highlight && highlight.has(n.id);
+    const litOverlay = overlayHighlight && overlayHighlight.has(n.id);
+    const dim = hover && !litBlocking && !litOverlay;
     const scale = 1 + (4 - n.issue.priority) * 0.04; // higher priority (lower number) = bigger
     const w = NODE_W * scale, h = NODE_H * scale;
     return html`
       <g key=${n.id} transform=${`translate(${n.x - (w - NODE_W) / 2} ${n.y - (h - NODE_H) / 2})`}
-         class=${'c2-node st-' + s + (onChain ? ' crit' : '') + (lit ? ' lit' : '') + (dim ? ' dim' : '')}
+         class=${'c2-node st-' + s + (onChain ? ' crit' : '') + (litBlocking ? ' lit' : '') + (litOverlay ? ' ov-lit' : '') + (dim ? ' dim' : '')}
          onMouseEnter=${() => setHover(n.id)} onMouseLeave=${() => setHover(null)}
          onClick=${() => selectIssue(n.id)} style="cursor:pointer">
         <rect width=${w} height=${h} rx="10" class="c2-node-box" />
@@ -150,6 +246,8 @@ export function MapView() {
       </g>`;
   };
 
+  const directionalTypes = OVERLAY_TOGGLE_TYPES.filter((t) => !SYMMETRIC_OVERLAY_TYPES.has(t));
+
   return html`
     <div class="c2-map">
       <div class="c2-map-toolbar">
@@ -157,6 +255,17 @@ export function MapView() {
         <span class="c2-map-legend"><i class="lg crit"></i> critical chain · scroll to zoom · drag to pan</span>
         <button class="c2-mini" onClick=${reset}>reset view</button>
       </div>
+      ${presentOverlayTypes.length ? html`
+        <div class="c2-map-overlaybar" role="group" aria-label="Overlay link types">
+          <span class="c2-ov-static"><i class="c2-ovswatch c2-ovswatch-blocking"></i>Blocking</span>
+          ${presentOverlayTypes.map((t) => html`
+            <label key=${t} class="c2-ovtoggle">
+              <input type="checkbox" checked=${enabledOverlay.has(t)} onChange=${() => toggleOverlayType(t)} />
+              <i class=${'c2-ovswatch c2-ovswatch-' + t}></i>
+              <span class="c2-ovlabel">${OVERLAY_TYPE_LABEL[t] || t}</span>
+              <span class="c2-ovcount">${overlayCounts.get(t)}</span>
+            </label>`)}
+        </div>` : ''}
       <div class="c2-map-zoombtns">
         <button class="c2-map-zoombtn" aria-label="Zoom in" onClick=${() => zoomBy(1.25)}>+</button>
         <button class="c2-map-zoombtn" aria-label="Zoom out" onClick=${() => zoomBy(1 / 1.25)}>−</button>
@@ -166,9 +275,14 @@ export function MapView() {
           <marker id="c2arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
             <path d="M 0 0 L 10 5 L 0 10 z" class="c2-arrowhead" />
           </marker>
+          ${directionalTypes.map((t) => html`
+            <marker key=${t} id=${'c2arrow-ov-' + t} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" class=${'c2-arrowhead c2-arrow-ov-' + t} />
+            </marker>`)}
         </defs>
         <g transform=${`translate(${view.x} ${view.y}) scale(${view.k})`}>
-          <g class="c2-edges">${edges.map(edge)}</g>
+          <g class="c2-edges">${layoutEdges.map(layoutEdge)}</g>
+          <g class="c2-edges-overlay">${visibleOverlayEdges.map(overlayEdge)}</g>
           <g class="c2-nodes">${nodes.map(node)}</g>
         </g>
       </svg>

@@ -16,6 +16,11 @@ export const c2 = {
   epicGroup: signal(true),       // Flow: regroup lanes into epic rows (default ON — see loadEpicGroupPref)
   laneFocus: signal(null),       // Pulse click → focus a lane/status bucket
 
+  // Map: which OVERLAY link types (everything but blocking, which is always
+  // on) are currently drawn — a Set of display type strings, e.g. {'related'}.
+  // Default/persistence: see loadMapOverlayPref/setMapOverlayPref below.
+  mapOverlayTypes: signal(new Set(['related'])),
+
   delegatePreset: signal(null),  // Pulse "delegate here" → session name Detail's Delegate composer should preselect once
 
   docTreeOpen: signal(false),    // mobile: doc tree shown as a drawer
@@ -65,5 +70,34 @@ export function setEpicGroup(pid, val) {
     const map = readEpicGroupMap();
     map[pid] = val;
     localStorage.setItem(EPIC_GROUP_KEY, JSON.stringify(map));
+  } catch { /* ignore */ }
+}
+
+// ---------------------------------------------------------------------------
+// Map overlay-edge toggles (docs/beads-coverage.md Phase 2) — which non-
+// blocking link types MapView draws, persisted per-project the same way
+// epicGroup is above. Blocking edges are never part of this set (they always
+// render — they define the layout). Default is {'related'} only: the doc's
+// own rationale is that rendering all ~7 overlay types at once on top of the
+// blocking DAG is unreadable, and `related` is the one the owner specifically
+// flagged as useful, so it's the one non-blocking type on by default.
+// ---------------------------------------------------------------------------
+const MAP_OVERLAY_KEY = 'bd_c2_map_overlay';
+const DEFAULT_MAP_OVERLAY_TYPES = ['related'];
+function readMapOverlayMap() {
+  try { return JSON.parse(localStorage.getItem(MAP_OVERLAY_KEY)) || {}; } catch { return {}; }
+}
+export function loadMapOverlayPref(pid) {
+  if (!pid) return new Set(DEFAULT_MAP_OVERLAY_TYPES);
+  const v = readMapOverlayMap()[pid];
+  return new Set(Array.isArray(v) ? v : DEFAULT_MAP_OVERLAY_TYPES);
+}
+export function setMapOverlayPref(pid, set) {
+  c2.mapOverlayTypes.value = set;
+  if (!pid) return;
+  try {
+    const map = readMapOverlayMap();
+    map[pid] = [...set];
+    localStorage.setItem(MAP_OVERLAY_KEY, JSON.stringify(map));
   } catch { /* ignore */ }
 }
