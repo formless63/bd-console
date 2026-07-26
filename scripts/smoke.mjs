@@ -6,7 +6,12 @@ import { execFileSync, spawn } from 'node:child_process';
 import net from 'node:net';
 import { renderServiceUnit } from '../lib/systemd.mjs';
 // Pure frontend derivation, importable in Node — see public/ui/relationships.js
-import { blockersOf, blockedByIssue } from '../public/ui/relationships.js';
+import {
+  blockersOf, blockedByIssue, dependenciesByType, relatedTo, linkSections,
+  supersededBy, duplicateOf, supersedes, duplicatedBy, retiredState,
+  LINK_TYPES as UI_LINK_TYPES,
+} from '../public/ui/relationships.js';
+import { LINK_TYPES as SERVER_LINK_TYPES } from '../lib/bd.mjs';
 import { parseScopedLimits } from '../lib/usage.mjs';
 
 function run(cmd, args, options = {}) {
@@ -285,6 +290,165 @@ try {
     'a parent-child row must not make a child look blocked');
 
   console.log(`smoke ok (blocker direction): ${depB} blocks ${depA}`);
+
+  // --- link types: enum parity with the installed bd ------------------------
+  // The frontend can't import lib/bd.mjs, so relationships.js mirrors its
+  // LINK_TYPES. Pin BOTH copies to the enum the installed binary actually
+  // prints, so a bd upgrade that changes the vocabulary fails loudly here
+  // instead of producing a dropdown full of types bd will reject.
+  const depAddHelp = run('bd', ['dep', 'add', '--help'], { cwd: repoDir });
+  const enumMatch = depAddHelp.match(/Dependency type \(([^)]+)\)/);
+  assert(enumMatch, 'could not parse the --type enum out of `bd dep add --help`');
+  const cliLinkTypes = enumMatch[1].split('|').map((s) => s.trim()).filter(Boolean);
+  assert(cliLinkTypes.length === 10, `expected 10 dep types from bd, got ${cliLinkTypes.length}: ${cliLinkTypes.join(',')}`);
+  const sameSet = (a, b) => a.length === b.length && [...a].sort().join(',') === [...b].sort().join(',');
+  assert(sameSet(SERVER_LINK_TYPES, cliLinkTypes),
+    `lib/bd.mjs LINK_TYPES drifted from \`bd dep add --help\`:\n  bd:  ${cliLinkTypes.join('|')}\n  lib: ${SERVER_LINK_TYPES.join('|')}`);
+  assert(sameSet(UI_LINK_TYPES, SERVER_LINK_TYPES),
+    `public/ui/relationships.js LINK_TYPES mirror drifted from lib/bd.mjs:\n  lib: ${SERVER_LINK_TYPES.join('|')}\n  ui:  ${UI_LINK_TYPES.join('|')}`);
+
+  console.log(`smoke ok (link-type enum parity): ${cliLinkTypes.join('|')}`);
+
+  // --- non-blocking link types must NOT read as blockers --------------------
+  // The regression this pins: if `related`/`discovered-from` ever leak into
+  // BLOCKING_DEP_TYPES (or blockersOf stops filtering by type), every issue
+  // with a see-also link silently becomes phantom-blocked and drops out of
+  // ready work. Created with the real CLI, not a hand-written fixture.
+  const linkHub = trimLastLine(run('bd', ['create', '--silent', '--type', 'task', '-p', '2', '--title', 'Link hub'], { cwd: repoDir }));
+  const linkPeer = trimLastLine(run('bd', ['create', '--silent', '--type', 'task', '-p', '2', '--title', 'Link peer'], { cwd: repoDir }));
+  const linkOrigin = trimLastLine(run('bd', ['create', '--silent', '--type', 'task', '-p', '2', '--title', 'Link origin'], { cwd: repoDir }));
+  run('bd', ['dep', 'add', linkHub, linkPeer, '--type', 'related'], { cwd: repoDir });
+  run('bd', ['dep', 'add', linkHub, linkOrigin, '--type', 'discovered-from'], { cwd: repoDir });
+  run('bd', ['export', '-o', '.beads/issues.jsonl'], { cwd: repoDir });
+
+  const linkIssues = (await fetch(p('/issues')).then((r) => r.json())).issues;
+  const hubIssue = linkIssues.find((i) => i.id === linkHub);
+  const peerIssue = linkIssues.find((i) => i.id === linkPeer);
+  const originIssue = linkIssues.find((i) => i.id === linkOrigin);
+  assert(hubIssue && peerIssue && originIssue, 'link fixture issues missing from the export');
+
+  assert(dependenciesByType(hubIssue, 'related').includes(linkPeer),
+    `dependenciesByType(hub,'related') must contain the peer; got ${JSON.stringify(dependenciesByType(hubIssue, 'related'))}`);
+  assert(dependenciesByType(hubIssue, 'discovered-from').includes(linkOrigin),
+    `dependenciesByType(hub,'discovered-from') must contain the origin; got ${JSON.stringify(dependenciesByType(hubIssue, 'discovered-from'))}`);
+
+  // THE regression guard: neither link may make anything look blocked.
+  assert(blockersOf(hubIssue).length === 0,
+    `a related/discovered-from row must not make an issue blocked; blockersOf(hub) = ${JSON.stringify(blockersOf(hubIssue))}`);
+  assert(blockersOf(peerIssue).length === 0, 'the related peer must not be blocked');
+  assert(blockersOf(originIssue).length === 0, 'the discovered-from origin must not be blocked');
+  assert(!blockedByIssue(linkPeer, linkIssues).includes(linkHub), 'a related row must not register as a blocks edge');
+
+  // `related` is stored one-sided by `bd dep add --type related`, so the
+  // bidirectional read has to find it from BOTH ends and dedupe.
+  assert(relatedTo(hubIssue, linkIssues).includes(linkPeer), 'relatedTo(hub) must contain the peer (row lives on hub)');
+  assert(relatedTo(peerIssue, linkIssues).includes(linkHub), 'relatedTo(peer) must contain the hub (row lives on the OTHER side)');
+  assert(relatedTo(hubIssue, linkIssues).length === new Set(relatedTo(hubIssue, linkIssues)).size, 'relatedTo must dedupe');
+  assert(!relatedTo(hubIssue, linkIssues).includes(linkHub), 'relatedTo must never include the issue itself');
+  assert(!relatedTo(hubIssue, linkIssues).includes(linkOrigin), 'discovered-from must not be read as related');
+
+  // Sections: outbound discovered-from on the hub, inbound on the origin.
+  const hubSections = linkSections(hubIssue, linkIssues);
+  assert(hubSections.some((s) => s.type === 'discovered-from' && s.dir === 'out' && s.ids.includes(linkOrigin)),
+    `hub must expose an outbound discovered-from section; got ${JSON.stringify(hubSections.map((s) => s.key))}`);
+  assert(!hubSections.some((s) => s.type === 'related'), 'related must not double-render as a generic section');
+  const originSections = linkSections(originIssue, linkIssues);
+  assert(originSections.some((s) => s.type === 'discovered-from' && s.dir === 'in' && s.ids.includes(linkHub)),
+    `origin must expose an inbound discovered-from section; got ${JSON.stringify(originSections.map((s) => s.key))}`);
+  assert(linkSections(peerIssue, linkIssues).length === 0, 'a peer with only a related edge needs no generic sections');
+
+  console.log(`smoke ok (link types): related=${linkPeer}, discovered-from=${linkOrigin}, neither blocks ${linkHub}`);
+
+  // --- add-link / remove-link over HTTP -------------------------------------
+  const trackTarget = trimLastLine(run('bd', ['create', '--silent', '--type', 'task', '-p', '2', '--title', 'Track target'], { cwd: repoDir }));
+  const editJson = async (payload) => {
+    const r = await fetch(p('/edit'), {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    return { status: r.status, body: await r.json() };
+  };
+  const issuesNow = async () => (await fetch(p('/issues')).then((r) => r.json())).issues;
+
+  const addTracks = await editJson({ id: linkHub, op: 'add-link', other: trackTarget, type: 'tracks' });
+  assert(addTracks.status === 200 && addTracks.body.ok, `add-link tracks failed: ${JSON.stringify(addTracks.body)}`);
+  assert(addTracks.body.effect && addTracks.body.effect.kind === 'add-link' && addTracks.body.effect.type === 'tracks',
+    `add-link must echo its effect; got ${JSON.stringify(addTracks.body.effect)}`);
+  let hubAfter = (await issuesNow()).find((i) => i.id === linkHub);
+  assert(dependenciesByType(hubAfter, 'tracks').includes(trackTarget), 'add-link tracks did not persist');
+  assert(blockersOf(hubAfter).length === 0, 'a tracks link must not make the issue blocked');
+
+  const rmTracks = await editJson({ id: linkHub, op: 'remove-link', other: trackTarget, type: 'tracks' });
+  assert(rmTracks.status === 200 && rmTracks.body.ok, `remove-link failed: ${JSON.stringify(rmTracks.body)}`);
+  hubAfter = (await issuesNow()).find((i) => i.id === linkHub);
+  assert(!dependenciesByType(hubAfter, 'tracks').includes(trackTarget), 'remove-link did not remove the tracks row');
+
+  // Back-compat: add-blocker/remove-blocker still work, still mean `blocks`.
+  const legacyAdd = await editJson({ id: linkHub, op: 'add-blocker', blocker: trackTarget });
+  assert(legacyAdd.status === 200 && legacyAdd.body.ok, `add-blocker back-compat broke: ${JSON.stringify(legacyAdd.body)}`);
+  hubAfter = (await issuesNow()).find((i) => i.id === linkHub);
+  assert(blockersOf(hubAfter).includes(trackTarget), 'add-blocker must still create a blocks edge');
+  const legacyRm = await editJson({ id: linkHub, op: 'remove-blocker', blocker: trackTarget });
+  assert(legacyRm.status === 200 && legacyRm.body.ok, `remove-blocker back-compat broke: ${JSON.stringify(legacyRm.body)}`);
+  hubAfter = (await issuesNow()).find((i) => i.id === linkHub);
+  assert(!blockersOf(hubAfter).includes(trackTarget), 'remove-blocker must still remove the blocks edge');
+
+  // Injection/validation surface: nothing user-typed reaches --type.
+  assert((await editJson({ id: linkHub, op: 'add-link', other: trackTarget, type: 'duplicates' })).status === 400,
+    'add-link must reject `duplicates` (bd duplicate owns that edge)');
+  assert((await editJson({ id: linkHub, op: 'add-link', other: trackTarget, type: '--dry-run' })).status === 400,
+    'add-link must reject a flag-shaped type');
+  assert((await editJson({ id: linkHub, op: 'add-link', other: '; rm -rf /', type: 'related' })).status === 400,
+    'add-link must reject a non-ID target');
+  assert((await editJson({ id: linkHub, op: 'add-link', other: linkHub, type: 'related' })).status === 400,
+    'add-link must reject a self-link');
+
+  console.log('smoke ok (add-link/remove-link + back-compat + validation)');
+
+  // --- supersede / mark-duplicate round-trip --------------------------------
+  const oldSpec = trimLastLine(run('bd', ['create', '--silent', '--type', 'task', '-p', '2', '--title', 'Old spec'], { cwd: repoDir }));
+  const newSpec = trimLastLine(run('bd', ['create', '--silent', '--type', 'task', '-p', '2', '--title', 'New spec'], { cwd: repoDir }));
+  const sup = await editJson({ id: oldSpec, op: 'supersede', with: newSpec });
+  assert(sup.status === 200 && sup.body.ok, `supersede failed: ${JSON.stringify(sup.body)}`);
+  assert(sup.body.effect && sup.body.effect.kind === 'supersede' && sup.body.effect.autoClosed === true,
+    `supersede must report its auto-close side effect; got ${JSON.stringify(sup.body.effect)}`);
+  assert(String(sup.body.effect.message || '').includes(newSpec), 'supersede effect.message must name the replacement');
+  assert(sup.body.issue && sup.body.issue.status === 'closed', 'supersede must leave the superseded issue closed');
+
+  const dupIssue = trimLastLine(run('bd', ['create', '--silent', '--type', 'bug', '-p', '2', '--title', 'Dupe report'], { cwd: repoDir }));
+  const canonical = trimLastLine(run('bd', ['create', '--silent', '--type', 'bug', '-p', '2', '--title', 'Canonical report'], { cwd: repoDir }));
+  const dup = await editJson({ id: dupIssue, op: 'mark-duplicate', of: canonical });
+  assert(dup.status === 200 && dup.body.ok, `mark-duplicate failed: ${JSON.stringify(dup.body)}`);
+  assert(dup.body.effect && dup.body.effect.kind === 'mark-duplicate' && dup.body.effect.autoClosed === true,
+    `mark-duplicate must report its auto-close side effect; got ${JSON.stringify(dup.body.effect)}`);
+  assert(dup.body.issue && dup.body.issue.status === 'closed', 'mark-duplicate must leave the duplicate closed');
+
+  const retiredIssues = await issuesNow();
+  const oldIssue = retiredIssues.find((i) => i.id === oldSpec);
+  const dupeIssueRec = retiredIssues.find((i) => i.id === dupIssue);
+  // Ground truth (bd v1.1.0): the edge hangs off the RETIRED issue and points
+  // at the survivor — `supersedes`/`duplicates` rows read "…by/of".
+  assert(supersededBy(oldIssue) === newSpec, `supersededBy(old) must be the replacement; got ${supersededBy(oldIssue)}`);
+  assert(duplicateOf(dupeIssueRec) === canonical, `duplicateOf(dupe) must be the canonical; got ${duplicateOf(dupeIssueRec)}`);
+  assert(supersedes(newSpec, retiredIssues).includes(oldSpec), 'supersedes(new) must contain the retired issue');
+  assert(duplicatedBy(canonical, retiredIssues).includes(dupIssue), 'duplicatedBy(canonical) must contain the duplicate');
+  // Retired state must OUTRANK blocked/ready (banner precedence) and must
+  // never be mistaken for a blocking edge.
+  assert(retiredState(oldIssue)?.kind === 'superseded', 'retiredState must classify a supersedes row');
+  assert(retiredState(dupeIssueRec)?.kind === 'duplicate', 'retiredState must classify a duplicates row');
+  assert(retiredState(retiredIssues.find((i) => i.id === newSpec)) === null, 'the replacement itself is not retired');
+  assert(blockersOf(oldIssue).length === 0, 'a supersedes row must not read as a blocker');
+  assert(blockersOf(dupeIssueRec).length === 0, 'a duplicates row must not read as a blocker');
+  // The banner owns the outbound edge, so it must not ALSO be a chip section.
+  assert(!linkSections(oldIssue, retiredIssues).some((s) => s.dir === 'out' && s.type === 'supersedes'),
+    'the supersede banner must not double-render as a section');
+  assert(linkSections(retiredIssues.find((i) => i.id === newSpec), retiredIssues).some((s) => s.dir === 'in' && s.type === 'supersedes'),
+    'the replacement must expose an inbound "Supersedes" section');
+
+  assert((await editJson({ id: oldSpec, op: 'supersede', with: 'not a valid id!' })).status === 400, 'supersede must reject a bad replacement id');
+  assert((await editJson({ id: oldSpec, op: 'supersede', with: oldSpec })).status === 400, 'supersede must reject superseding itself');
+  assert((await editJson({ id: dupIssue, op: 'mark-duplicate', of: dupIssue })).status === 400, 'mark-duplicate must reject itself');
+
+  console.log(`smoke ok (supersede/duplicate): ${oldSpec}→${newSpec}, ${dupIssue}→${canonical}`);
 
   // --- tmux sessions API (hub-level, not project-scoped) ---------------------
   let tmuxPresent = true;

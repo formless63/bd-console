@@ -510,8 +510,18 @@
 .c2-banner { padding: 8px 12px; border-radius: 8px; font-size: 12px; }
 .c2-banner.blocked { background: color-mix(in srgb, var(--red) 12%, transparent); color: var(--red); border: 1px solid color-mix(in srgb, var(--red) 35%, var(--border)); }
 .c2-banner.ready { background: color-mix(in srgb, var(--green) 12%, transparent); color: var(--green); border: 1px solid color-mix(in srgb, var(--green) 35%, var(--border)); }
+/* Retired state (superseded by / duplicate of) — outranks blocked/ready, so
+   it gets its own hue rather than reusing red/green. Holds a clickable
+   relationship chip, hence flex rather than the plain text banners above. */
+.c2-banner.retired { display: flex; flex-direction: column; gap: 6px; background: color-mix(in srgb, var(--purple) 12%, transparent); color: var(--purple); border: 1px solid color-mix(in srgb, var(--purple) 35%, var(--border)); }
+.c2-banner.retired .c2-rel { background: transparent; }
 .c2-field { display: flex; flex-direction: column; gap: 6px; }
 .c2-rels { display: flex; flex-direction: column; gap: 5px; }
+/* Bidirectional "Related" reads as a chip row rather than a stack — these are
+   see-also links, not an ordered dependency list. */
+.c2-rels-chips { flex-direction: row; flex-wrap: wrap; gap: 5px; }
+.c2-rels-chips .c2-rel { flex: 0 1 auto; max-width: 100%; }
+.c2-rels-chips .c2-rel-t { flex: 0 1 auto; max-width: 22ch; }
 .c2-rel { display: flex; align-items: center; gap: 8px; text-align: left; padding: 6px 9px; background: var(--surface); border: 1px solid var(--c2-line); border-radius: 8px; cursor: pointer; color: var(--text); }
 .c2-rel:hover { border-color: var(--c2-line-2); }
 .c2-rel-id { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); }
@@ -523,6 +533,14 @@
 .c2-edit-row.wrap { flex-wrap: wrap; }
 .c2-edit-k { font-family: var(--font-display); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-faint); min-width: 66px; }
 .c2-edit-input { flex: 1; min-width: 90px; padding: 5px 8px; background: var(--surface); border: 1px solid var(--c2-line); border-radius: 6px; color: var(--text); font-family: inherit; font-size: 12px; }
+/* Link-type picker: sized to its widest option (discovered-from) so it never
+   eats the id input's room on a narrow slide-over. */
+select.c2-linktype { flex: 0 0 auto; max-width: 140px; }
+/* Supersede / duplicate close the issue — styled as destructive so the
+   consequence reads before the click, not after. */
+.c2-mini.danger { color: var(--red); border-color: color-mix(in srgb, var(--red) 40%, var(--c2-line)); }
+.c2-mini.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--red) 14%, transparent); border-color: var(--red); }
+.c2-edit-note { font-size: 11px; color: var(--text-faint); line-height: 1.5; }
 
 .c2-comments { display: flex; flex-direction: column; gap: 8px; }
 .c2-comment { padding: 8px 10px; background: var(--surface); border: 1px solid var(--c2-line); border-radius: 8px; }
@@ -650,6 +668,10 @@
   .c2-detail-inner { padding: calc(12px + env(safe-area-inset-top)) 16px calc(40px + env(safe-area-inset-bottom)); }
   .c2-detail-close { width: 44px; height: 44px; }
   .c2-detail-title { font-size: 19px; }
+  /* Link row: the type picker + id input + button won't fit on one 390px
+     line, so give each a full row instead of squeezing to sub-tappable. */
+  select.c2-linktype { max-width: none; flex: 1 1 100%; }
+  .c2-edit-row.wrap > .c2-edit-input { flex: 1 1 100%; }
 
   /* ---- omnibar: full-width row, top-anchored suggestions, tappable rows -- */
   .c2-omni-drop { max-height: 60vh; }

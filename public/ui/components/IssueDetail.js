@@ -5,6 +5,8 @@ import { useState } from 'preact/hooks';
 import {
   store, byId, PRI_LABEL, parentOf, blockersOf, openBlockersOf, childrenOf, blocksList,
   effStatus, isReady, selectIssue, editIssue, addComment,
+  LINK_TYPES, relatedOf, linkSectionsOf, retiredState,
+  supersedeIssue, markDuplicate,
 } from '../store.js';
 import { PriBadge, StatusBadge, statusText, timeAgo } from './common.js';
 
@@ -31,13 +33,27 @@ function EditTools({ issue }) {
   const [parent, setParent] = useState(parentOf(issue) || '');
   const [blocker, setBlocker] = useState('');
   const [defer, setDefer] = useState(issue.deferred_until || '');
+  const [linkType, setLinkType] = useState('related');
+  const [linkId, setLinkId] = useState('');
+  const [supersedeId, setSupersedeId] = useState('');
+  const [dupeId, setDupeId] = useState('');
 
   const run = async (payload, msg) => {
     setErr('');
     try { await editIssue({ id, ...payload }, msg); }
     catch (e) { setErr(e.message); }
   };
+  // Direct store actions (not editIssue) — they own the "…and closed it"
+  // toast derived from the server's `effect`.
+  const runAct = async (fn) => {
+    setErr('');
+    try { await fn(); }
+    catch (e) { setErr(e.message); }
+  };
   const blockers = blockersOf(issue);
+  const outLinks = (issue.dependencies || [])
+    .filter((d) => d.type !== 'blocks' && d.type !== 'parent-child')
+    .map((d) => ({ other: d.depends_on_id, type: d.type }));
 
   return html`
     <div class="edit-tools">
@@ -87,6 +103,35 @@ function EditTools({ issue }) {
         <div class="edit-row">
           <input class="edit-input" placeholder="issue-id" value=${blocker} onInput=${(e) => setBlocker(e.target.value)} />
           <button class="btn" onClick=${() => { if (blocker.trim()) run({ op: 'add-blocker', blocker: blocker.trim() }, 'Added blocker to ' + id).then(() => setBlocker('')); }}>Add</button>
+        </div>
+      </div>
+
+      <div class="edit-block">
+        <label class="edit-label">Link</label>
+        ${outLinks.length > 0 && html`<div class="edit-chiprow">
+          ${outLinks.map((l) => html`<button key=${l.type + ':' + l.other} class="chip removable" title=${'Remove ' + l.type + ' link'} onClick=${() => run({ op: 'remove-link', other: l.other, type: l.type }, 'Removed ' + l.type + ' link from ' + id)}>${l.type} · ${l.other} <span class="chip-x">×</span></button>`)}
+        </div>`}
+        <div class="edit-row">
+          <select class="edit-input link-type" value=${linkType} onChange=${(e) => setLinkType(e.target.value)} aria-label="Link type">
+            ${LINK_TYPES.map((t) => html`<option key=${t} value=${t}>${t}</option>`)}
+          </select>
+          <input class="edit-input" placeholder="issue-id" value=${linkId} onInput=${(e) => setLinkId(e.target.value)} />
+          <button class="btn" disabled=${!linkId.trim()} onClick=${() => { if (linkId.trim()) run({ op: 'add-link', other: linkId.trim(), type: linkType }, 'Linked ' + id + ' → ' + linkId.trim() + ' (' + linkType + ')').then(() => setLinkId('')); }}>Link</button>
+        </div>
+      </div>
+
+      <div class="edit-block">
+        <label class="edit-label">Retire this issue</label>
+        <p class="edit-hint">Supersede and duplicate are state transitions, not links — bd closes ${id} immediately.</p>
+        <div class="edit-row">
+          <input class="edit-input" placeholder="replacement id" value=${supersedeId} onInput=${(e) => setSupersedeId(e.target.value)} />
+          <button class="btn btn-danger" disabled=${!supersedeId.trim()} title=${'bd supersede ' + id + ' --with … — closes ' + id}
+            onClick=${() => runAct(() => supersedeIssue(id, supersedeId.trim()).then(() => setSupersedeId('')))}>Supersede → closes ${id}</button>
+        </div>
+        <div class="edit-row">
+          <input class="edit-input" placeholder="canonical id" value=${dupeId} onInput=${(e) => setDupeId(e.target.value)} />
+          <button class="btn btn-danger" disabled=${!dupeId.trim()} title=${'bd duplicate ' + id + ' --of … — closes ' + id}
+            onClick=${() => runAct(() => markDuplicate(id, dupeId.trim()).then(() => setDupeId('')))}>Duplicate → closes ${id}</button>
         </div>
       </div>
 
@@ -157,6 +202,9 @@ export function IssueDetail() {
   const openBlockers = openBlockersOf(issue);
   const children = childrenOf(id);
   const blocks = blocksList(id);
+  const related = relatedOf(issue);
+  const sections = linkSectionsOf(issue);
+  const retired = retiredState(issue);
 
   return html`
     <section class="detail-pane" key=${id}>
@@ -167,11 +215,18 @@ export function IssueDetail() {
           ${(issue.labels || []).length > 0 && html`<div class="detail-meta">${(issue.labels || []).map((l) => html`<span key=${l} class="lbl">${l}</span>`)}</div>`}
         </div>
 
-        ${issue.status !== 'closed' && openBlockers.length > 0
-          ? html`<div class="banner banner-blocked">⛔ Blocked by ${openBlockers.length} open ${openBlockers.length === 1 ? 'issue' : 'issues'}</div>`
-          : isReady(issue) && issue.issue_type !== 'epic'
-            ? html`<div class="banner banner-ready">✓ Ready to work — no open blockers</div>`
-            : null}
+        ${/* Banner precedence (docs/beads-coverage.md Phase 1): a retired
+              state — superseded by / duplicate of — OUTRANKS blocked/ready. */ ''}
+        ${retired
+          ? html`<div class=${'banner banner-retired banner-' + retired.kind}>
+              <span>${retired.kind === 'duplicate' ? '⧉' : '↷'} ${retired.label}</span>
+              <button class="banner-link" onClick=${() => selectIssue(retired.other)}>${retired.other}</button>
+            </div>`
+          : issue.status !== 'closed' && openBlockers.length > 0
+            ? html`<div class="banner banner-blocked">⛔ Blocked by ${openBlockers.length} open ${openBlockers.length === 1 ? 'issue' : 'issues'}</div>`
+            : isReady(issue) && issue.issue_type !== 'epic'
+              ? html`<div class="banner banner-ready">✓ Ready to work — no open blockers</div>`
+              : null}
 
         ${issue.description && Section('Description', html`<div class="field-text">${issue.description}</div>`)}
         ${issue.status === 'closed' && issue.close_reason && Section('Close reason', html`<div class="field-text close-reason">${issue.close_reason}</div>`)}
@@ -183,6 +238,11 @@ export function IssueDetail() {
         ${blockers.length > 0 && Section('Blocked by (' + blockers.length + ')', html`<div class="rel">${blockers.map((b) => RelRow(b))}</div>`)}
         ${blocks.length > 0 && Section('Blocks (' + blocks.length + ')', html`<div class="rel">${blocks.map((b) => RelRow(b.id))}</div>`)}
         ${children.length > 0 && Section('Children (' + children.length + ')', html`<div class="rel">${children.map((c) => RelRow(c.id))}</div>`)}
+        ${/* Bidirectional: rendered once whichever side created the row. */ ''}
+        ${related.length > 0 && Section('Related (' + related.length + ')', html`<div class="rel">${related.map((r) => RelRow(r))}</div>`)}
+        ${/* One section per link type that actually has members, both
+              directions — so the panel doesn't bloat with empty headings. */ ''}
+        ${sections.map((s) => html`<div key=${s.key}>${Section(s.label + ' (' + s.ids.length + ')', html`<div class="rel">${s.ids.map((x) => RelRow(x))}</div>`)}</div>`)}
 
         ${Section('Edit', html`<${EditTools} issue=${issue} />`)}
         ${Section('Comments', html`<${Comments} id=${id} />`)}

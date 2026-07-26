@@ -7,6 +7,8 @@ import { useEffect, useState } from 'preact/hooks';
 import {
   store, byId, parentOf, blockersOf, openBlockersOf, childrenOf, blocksList,
   effStatus, isReady, selectIssue, addComment, loadTmux,
+  LINK_TYPES, relatedOf, linkSectionsOf, retiredState,
+  addLink, removeLink, supersedeIssue, markDuplicate,
 } from '../store.js';
 import { renderMarkdown } from '../markdown.js';
 import {
@@ -15,7 +17,28 @@ import {
   delegateNow, delegateSchedule,
 } from './actions.js';
 import { TypeGlyph, Pip, PRI_LABEL, StatusGlyph, glyphStatus } from './ui.js';
-import { c2 } from './state.js';
+import { c2, flashCli } from './state.js';
+
+// Link/supersede/duplicate writes live in store.js (shared with the classic
+// view) rather than actions.js; wrap them here so Console 2.0 still flashes
+// the bd equivalent — and only ever AFTER the write resolved, matching
+// actions.js's contract.
+const actAddLink = async (id, other, type) => {
+  await addLink(id, other, type);
+  flashCli(`bd dep add ${id} ${other} --type ${type}`, 'link');
+};
+const actRemoveLink = async (id, other) => {
+  await removeLink(id, other);
+  flashCli(`bd dep remove ${id} ${other}`, 'link');
+};
+const actSupersede = async (id, replacement) => {
+  await supersedeIssue(id, replacement);
+  flashCli(`bd supersede ${id} --with ${replacement}`, 'supersede');
+};
+const actDuplicate = async (id, canonical) => {
+  await markDuplicate(id, canonical);
+  flashCli(`bd duplicate ${id} --of ${canonical}`, 'duplicate');
+};
 
 function timeAgo(s) {
   if (!s) return '';
@@ -44,7 +67,17 @@ function Edit({ issue }) {
   const [parent, setParent] = useState(parentOf(issue) || '');
   const [blk, setBlk] = useState('');
   const [defer, setDefer] = useState(issue.deferred_until || '');
+  const [linkType, setLinkType] = useState('related');
+  const [linkId, setLinkId] = useState('');
+  const [supersedeId, setSupersedeId] = useState('');
+  const [dupeId, setDupeId] = useState('');
   const run = (fn) => () => { fn().catch(() => {}); };
+  // Every non-blocking outbound row, so any link created here can also be
+  // removed here (bd stores at most one row per issue pair, so the target id
+  // alone identifies the edge to `bd dep remove`).
+  const outLinks = (issue.dependencies || [])
+    .filter((d) => d.type !== 'blocks' && d.type !== 'parent-child')
+    .map((d) => ({ other: d.depends_on_id, type: d.type }));
 
   return html`
     <div class="c2-edit">
@@ -81,6 +114,36 @@ function Edit({ issue }) {
         <input class="c2-edit-input" placeholder="issue-id" value=${blk} onInput=${(e) => setBlk(e.target.value)}
           onKeyDown=${(e) => { if (e.key === 'Enter' && blk.trim()) run(() => actAddBlocker(id, blk.trim()).then(() => setBlk('')))(); }} />
       </div>
+
+      <div class="c2-edit-row wrap">
+        <span class="c2-edit-k">Link</span>
+        <select class="c2-edit-input c2-linktype" value=${linkType} onChange=${(e) => setLinkType(e.target.value)} aria-label="Link type">
+          ${LINK_TYPES.map((t) => html`<option key=${t} value=${t}>${t}</option>`)}
+        </select>
+        <input class="c2-edit-input" placeholder="issue-id" value=${linkId} onInput=${(e) => setLinkId(e.target.value)}
+          onKeyDown=${(e) => { if (e.key === 'Enter' && linkId.trim()) run(() => actAddLink(id, linkId.trim(), linkType).then(() => setLinkId('')))(); }} />
+        <button class="c2-mini" disabled=${!linkId.trim()} onClick=${run(() => actAddLink(id, linkId.trim(), linkType).then(() => setLinkId('')))}>link</button>
+      </div>
+
+      ${outLinks.length > 0 && html`
+        <div class="c2-edit-row wrap">
+          <span class="c2-edit-k">Links</span>
+          ${outLinks.map((l) => html`<button key=${l.type + ':' + l.other} class="c2-chip removable" title=${'Remove ' + l.type + ' link'} onClick=${run(() => actRemoveLink(id, l.other))}>${l.type} · ${l.other} ✕</button>`)}
+        </div>`}
+
+      <div class="c2-edit-row wrap">
+        <span class="c2-edit-k">Retire</span>
+        <input class="c2-edit-input" placeholder="replacement id" value=${supersedeId} onInput=${(e) => setSupersedeId(e.target.value)} />
+        <button class="c2-mini danger" disabled=${!supersedeId.trim()} title=${'bd supersede ' + id + ' --with … — closes ' + id}
+          onClick=${run(() => actSupersede(id, supersedeId.trim()).then(() => setSupersedeId('')))}>supersede → closes ${id}</button>
+      </div>
+      <div class="c2-edit-row wrap">
+        <span class="c2-edit-k"></span>
+        <input class="c2-edit-input" placeholder="canonical id" value=${dupeId} onInput=${(e) => setDupeId(e.target.value)} />
+        <button class="c2-mini danger" disabled=${!dupeId.trim()} title=${'bd duplicate ' + id + ' --of … — closes ' + id}
+          onClick=${run(() => actDuplicate(id, dupeId.trim()).then(() => setDupeId('')))}>duplicate → closes ${id}</button>
+      </div>
+      <div class="c2-edit-note">Supersede and duplicate are state transitions, not links: bd closes ${id} immediately.</div>
 
       <div class="c2-edit-row">
         <span class="c2-edit-k">Defer</span>
@@ -193,9 +256,24 @@ export function Detail() {
           <h2 class="c2-detail-title">${issue.title}</h2>
           ${(issue.labels || []).length > 0 && html`<div class="c2-detail-labels">${(issue.labels || []).map((l) => html`<span key=${l} class=${'c2-chip' + (l === 'triage' ? ' triage' : '')}>${l}</span>`)}</div>`}
 
-          ${issue.status !== 'closed' && openBlockersOf(issue).length > 0
-            ? html`<div class="c2-banner blocked">⛔ Blocked by ${openBlockersOf(issue).length} open ${openBlockersOf(issue).length === 1 ? 'issue' : 'issues'}</div>`
-            : isReady(issue) && issue.issue_type !== 'epic' ? html`<div class="c2-banner ready">✓ Ready — no open blockers</div>` : null}
+          ${(() => {
+            // Banner precedence (docs/beads-coverage.md Phase 1): a retired
+            // state — superseded by / duplicate of — OUTRANKS blocked/ready.
+            // An issue bd already closed as a duplicate has no meaningful
+            // "ready to work" story, so never show both.
+            const retired = retiredState(issue);
+            if (retired) {
+              return html`<div class=${'c2-banner retired ' + retired.kind}>
+                <span>${retired.kind === 'duplicate' ? '⧉' : '↷'} ${retired.label}</span>
+                ${RelChip(retired.other)}
+              </div>`;
+            }
+            const ob = openBlockersOf(issue);
+            if (issue.status !== 'closed' && ob.length > 0) {
+              return html`<div class="c2-banner blocked">⛔ Blocked by ${ob.length} open ${ob.length === 1 ? 'issue' : 'issues'}</div>`;
+            }
+            return isReady(issue) && issue.issue_type !== 'epic' ? html`<div class="c2-banner ready">✓ Ready — no open blockers</div>` : null;
+          })()}
 
           ${issue.description && Field('Description', html`<div class="markdown c2-md" dangerouslySetInnerHTML=${{ __html: renderMarkdown(issue.description) }}></div>`)}
           ${issue.status === 'closed' && issue.close_reason && Field('Close reason', html`<div class="c2-md">${issue.close_reason}</div>`)}
@@ -207,6 +285,13 @@ export function Detail() {
           ${(() => { const b = blockersOf(issue); return b.length ? Field('Blocked by', html`<div class="c2-rels">${b.map(RelChip)}</div>`) : null; })()}
           ${(() => { const b = blocksList(id); return b.length ? Field('Blocks', html`<div class="c2-rels">${b.map((x) => RelChip(x.id))}</div>`) : null; })()}
           ${(() => { const c = childrenOf(id); return c.length ? Field('Children', html`<div class="c2-rels">${c.map((x) => RelChip(x.id))}</div>`) : null; })()}
+
+          ${/* Bidirectional: rendered once whichever side created the row. */ ''}
+          ${(() => { const r = relatedOf(issue); return r.length ? Field('Related', html`<div class="c2-rels c2-rels-chips">${r.map(RelChip)}</div>`) : null; })()}
+          ${/* discovered-from / tracks / caused-by / validates / … — a section
+                per type that actually has members, in both directions, so the
+                panel never grows ten empty headings. */ ''}
+          ${linkSectionsOf(issue).map((s) => html`<div key=${s.key}>${Field(s.label, html`<div class="c2-rels">${s.ids.map(RelChip)}</div>`)}</div>`)}
 
           ${Field('Edit', html`<${Edit} issue=${issue} />`)}
           ${Field('Delegate', html`<${Delegate} issue=${issue} />`)}

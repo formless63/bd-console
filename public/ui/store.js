@@ -3,6 +3,13 @@
 
 import { signal, computed } from '@preact/signals';
 import { apiGet, apiGetRaw, apiPost, apiPostRaw, AuthError } from './api.js';
+import {
+  blockersOf, BLOCKING_DEP_TYPES, LINK_TYPES, LINK_LABEL, linkLabel,
+  RELATED_DEP_TYPES, SUPERSEDE_DEP_TYPE, DUPLICATE_DEP_TYPE,
+  dependenciesByType, inboundByType, linkTypesPresent, relatedTo,
+  discoveredFrom, tracksOf, supersededBy, duplicateOf, supersedes,
+  duplicatedBy, retiredState, linkSections, blockedByIssue, parentOfIssue,
+} from './relationships.js';
 
 // Server text for the 501 the scheduler routes return when node:sqlite isn't
 // available (Node < 22) — used to tell "feature unavailable" apart from a
@@ -126,10 +133,21 @@ export function parentOf(issue) {
   const p = (issue.dependencies || []).find((d) => d.type === 'parent-child');
   return p ? p.depends_on_id : null;
 }
-// Direction invariant + blocking-type set live in relationships.js (pure, so
-// smoke.mjs can assert them in Node). Re-exported here so every existing
+// Direction invariant, blocking-type set and every link-type derivation live
+// in relationships.js (pure and import-free, so smoke.mjs can assert them in
+// Node). Imported above for local use AND re-exported here so every existing
 // import site keeps working.
-export { blockersOf, BLOCKING_DEP_TYPES } from './relationships.js';
+//
+// NOTE: these must be imported, not just `export … from`-ed — a bare
+// re-export creates no local binding, so openBlockersOf/blocksList below
+// would throw ReferenceError on the first call.
+export {
+  blockersOf, BLOCKING_DEP_TYPES, LINK_TYPES, LINK_LABEL, linkLabel,
+  RELATED_DEP_TYPES, SUPERSEDE_DEP_TYPE, DUPLICATE_DEP_TYPE,
+  dependenciesByType, inboundByType, linkTypesPresent, relatedTo,
+  discoveredFrom, tracksOf, supersededBy, duplicateOf, supersedes,
+  duplicatedBy, retiredState, linkSections, blockedByIssue, parentOfIssue,
+};
 export function openBlockersOf(issue) {
   const m = byId.value;
   return blockersOf(issue).filter((id) => { const b = m.get(id); return b && b.status !== 'closed'; });
@@ -147,6 +165,14 @@ export function childrenOf(id) {
 export function blocksList(id) {
   return store.issues.value.filter((i) => blockersOf(i).includes(id));
 }
+
+// Signal-bound conveniences over the pure helpers above — components get the
+// "…against the currently loaded issue list" variant without repeating
+// store.issues.value at every call site.
+export function relatedOf(issue) { return relatedTo(issue, store.issues.value); }
+export function linkSectionsOf(issue) { return linkSections(issue, store.issues.value); }
+export function supersedesOf(id) { return supersedes(id, store.issues.value); }
+export function duplicatedByOf(id) { return duplicatedBy(id, store.issues.value); }
 
 export const PRI_LABEL = ['P0', 'P1', 'P2', 'P3', 'P4'];
 const STATUS_ORDER = { in_progress: 0, blocked: 1, open: 2, closed: 3 };
@@ -348,15 +374,15 @@ export async function loadProjectStats(id) {
   const issues = data.issues || [];
   const t = { open: 0, in_progress: 0, blocked: 0, closed: 0, total: issues.length, closed7d: 0, openBugs: 0 };
   const sevenDaysAgo = Date.now() - 7 * 86400000;
+  // Hub cards used to re-derive "blocked" inline, in the inverted direction
+  // and with a `depends` type that bd never writes. Delegate to the shared
+  // blockersOf() so the card tally, effStatus() and Console 2.0's lanes can't
+  // drift — and so a non-blocking link type (related, tracks, …) can never
+  // inflate this count.
+  const openIds = new Set(issues.filter((x) => x.status !== 'closed').map((x) => x.id));
   for (const i of issues) {
     let s = i.status;
-    if (s === 'open') {
-      const blocked = issues.some((b) => b.status !== 'closed' && (
-        (b.dependencies || []).some((d) => d.type === 'blocks' && d.depends_on_id === i.id) ||
-        (i.dependencies || []).some((d) => d.type === 'depends' && d.depends_on_id === b.id)
-      ));
-      if (blocked) s = 'blocked';
-    }
+    if (s === 'open' && blockersOf(i).some((b) => openIds.has(b))) s = 'blocked';
     if (t[s] != null) t[s]++;
     if (s === 'closed') {
       const ts = i.closed_at ? new Date(i.closed_at).getTime() : (i.updated_at ? new Date(i.updated_at).getTime() : 0);
@@ -714,8 +740,38 @@ export async function createIssue(body) {
 
 export async function editIssue(payload, successMessage) {
   const id = payload.id;
-  await withAuth(() => apiPost('/api/edit', payload));
+  const data = await withAuth(() => apiPost('/api/edit', payload));
   await loadIssues();
   if (id) await selectIssue(id);
   if (successMessage) toast(successMessage);
+  // Returned so link/supersede callers can read the server's `effect` (see
+  // lib/bd.mjs's runIssueEdit) — existing callers ignore it.
+  return data;
+}
+
+// ---------------------------------------------------------------------------
+// Link types (docs/beads-coverage.md Phase 1)
+// ---------------------------------------------------------------------------
+// Generic dependency edge of any of the 10 `bd dep add --type` values. The
+// type is re-validated server-side against the same hardcoded enum, so a
+// tampered client can't smuggle text into --type.
+export async function addLink(id, other, type) {
+  return editIssue({ id, op: 'add-link', other, type }, `Linked ${id} → ${other} (${type})`);
+}
+export async function removeLink(id, other, type) {
+  return editIssue({ id, op: 'remove-link', other, type }, `Unlinked ${id} → ${other}`);
+}
+
+// State transitions, NOT plain links: bd closes `id` as a side effect. The
+// toast quotes the server's own `effect.message` so the close is never
+// silent.
+export async function supersedeIssue(id, replacement) {
+  const data = await editIssue({ id, op: 'supersede', with: replacement });
+  toast(data?.effect?.message || `${id} superseded by ${replacement}`);
+  return data;
+}
+export async function markDuplicate(id, canonical) {
+  const data = await editIssue({ id, op: 'mark-duplicate', of: canonical });
+  toast(data?.effect?.message || `${id} marked duplicate of ${canonical}`);
+  return data;
 }
