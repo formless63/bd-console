@@ -69,6 +69,10 @@ function Header() {
         </div>
         <${Omnibar} />
         <div class="c2-header-right">
+          <button class="c2-new" title="New issue — full form (bug, feature, epic…)  ·  i"
+            onClick=${() => (store.createOpen.value = true)}>
+            <span aria-hidden="true">+</span><span class="c2-btn-label"> New</span>
+          </button>
           <div class="c2-themesw-header"><${ThemeSwitch} /></div>
           <span class=${'c2-sync sync-' + syncState} title=${'Issue export: ' + syncState}>${syncState}</span>
           <a class="c2-classic" href=${'#/p/' + encodeURIComponent(pid || '')} title="Open the classic project view">

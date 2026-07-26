@@ -117,8 +117,11 @@ function onKeyDown(e) {
     return;
   }
   if (isTyping() || e.metaKey || e.ctrlKey || e.altKey) return;
-  const inProject = store.route.value.view === 'project';
-  if (e.key === 'i' && inProject) { e.preventDefault(); store.createOpen.value = true; }
+  const view = store.route.value.view;
+  const inProject = view === 'project';
+  // `i` opens the full New-issue dialog in both project views (Console 2.0
+  // mounts the same dialog); j/k/search stay classic-only.
+  if (e.key === 'i' && (inProject || view === 'console2')) { e.preventDefault(); store.createOpen.value = true; }
   else if (e.key === 'j' && inProject) { e.preventDefault(); selectAdjacent(1); scrollSelectedIntoView(); }
   else if (e.key === 'k' && inProject) { e.preventDefault(); selectAdjacent(-1); scrollSelectedIntoView(); }
   else if (e.key === '/') { e.preventDefault(); document.querySelector('.issue-search')?.focus(); }

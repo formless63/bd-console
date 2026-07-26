@@ -117,6 +117,12 @@
 .c2-sync.sync-synced { color: var(--green); border-color: color-mix(in srgb, var(--green) 45%, var(--border)); }
 .c2-sync.sync-stale { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 45%, var(--border)); }
 .c2-sync.sync-error { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, var(--border)); }
+/* Primary create affordance — the omnibar handles quick triage capture, this
+   opens the full New-issue form (type/labels/acceptance/epic target). */
+.c2-new { display: inline-flex; align-items: center; gap: 2px; font-family: var(--font-display); font-size: 12px;
+  font-weight: 600; padding: 6px 12px; border-radius: var(--radius-sm); cursor: pointer;
+  color: var(--accent-ink); background: var(--c2-neon); border: 1px solid var(--c2-neon); }
+.c2-new:hover { filter: brightness(1.08); }
 .c2-classic { font-size: 12px; color: var(--text-dim); text-decoration: none; padding: 5px 9px; border: 1px solid var(--c2-line); border-radius: var(--radius-sm); }
 .c2-classic:hover { color: var(--text); border-color: var(--c2-line-2); }
 .c2-pulse-toggle { display: none; }

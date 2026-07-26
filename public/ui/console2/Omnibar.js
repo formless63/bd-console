@@ -76,6 +76,7 @@ function buildItems(raw) {
 
 export function Omnibar() {
   const inputRef = useRef(null);
+  const rootRef = useRef(null);
   const [sel, setSel] = useState(0);
   const raw = c2.omniValue.value;
   const { mode, items, verb, rest } = buildItems(raw);
@@ -97,6 +98,31 @@ export function Omnibar() {
   }, []);
 
   const focusOmni = () => { inputRef.current?.focus(); inputRef.current?.select(); c2.omniOpen.value = true; };
+  const closeOmni = () => { c2.omniOpen.value = false; inputRef.current?.blur(); };
+
+  // Dismissal: clicking anywhere outside the omnibar closes it, and Escape is
+  // handled here at the window level (not only on the input's onKeyDown) so it
+  // still works after a suggestion row takes focus. Without these the palette
+  // was a trap — the user had to pick an option to get out of it.
+  useEffect(() => {
+    const onDocDown = (e) => {
+      if (!c2.omniOpen.value) return;
+      if (rootRef.current && !rootRef.current.contains(e.target)) closeOmni();
+    };
+    const onEsc = (e) => {
+      if (e.key !== 'Escape' || !c2.omniOpen.value) return;
+      e.stopPropagation();
+      closeOmni();
+    };
+    document.addEventListener('mousedown', onDocDown);
+    document.addEventListener('touchstart', onDocDown, { passive: true });
+    window.addEventListener('keydown', onEsc, true); // capture: beat other Escape handlers
+    return () => {
+      document.removeEventListener('mousedown', onDocDown);
+      document.removeEventListener('touchstart', onDocDown);
+      window.removeEventListener('keydown', onEsc, true);
+    };
+  }, []);
 
   useEffect(() => { setSel(mode === 'capture' ? 0 : 0); }, [raw, mode]);
 
@@ -143,7 +169,7 @@ export function Omnibar() {
   };
 
   const onKeyDown = (e) => {
-    if (e.key === 'Escape') { c2.omniOpen.value = false; inputRef.current?.blur(); return; }
+    if (e.key === 'Escape') { closeOmni(); return; }
     if (e.key === 'ArrowDown') { e.preventDefault(); setSel((s) => Math.min(s + 1, items.length - 1)); return; }
     if (e.key === 'ArrowUp') { e.preventDefault(); setSel((s) => Math.max(s - 1, 0)); return; }
     if (e.key === 'Enter') {
@@ -155,7 +181,7 @@ export function Omnibar() {
   const modeTag = mode === 'cmd' ? 'COMMAND' : mode === 'capture' ? 'CAPTURE' : 'READY';
 
   return html`
-    <div class=${'c2-omni' + (open ? ' open' : '')}>
+    <div class=${'c2-omni' + (open ? ' open' : '')} ref=${rootRef}>
       <div class="c2-omni-field">
         <span class="c2-omni-glyph" aria-hidden="true">⌘</span>
         <input

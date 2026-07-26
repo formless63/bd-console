@@ -25,7 +25,12 @@ export function App() {
   // Console 2.0 is a full-viewport flagship view — it renders without the
   // classic TopBar chrome, but keeps global Toasts.
   if (route.view === 'console2') {
-    return html`<${Console2} /><${Toasts} />`;
+    // CreateIssueDialog rides along: Console 2.0's "+ New" button and the `i`
+    // shortcut drive the same store.createOpen signal the classic view uses,
+    // so the full-fidelity create flow (type, labels, acceptance, epic
+    // target) is reachable here too — the omnibar only does quick triage
+    // capture.
+    return html`<${Console2} /><${CreateIssueDialog} /><${Toasts} />`;
   }
   return html`
     <${TopBar} />
