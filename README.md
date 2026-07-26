@@ -32,6 +32,16 @@ Preact app with vendored dependencies — still no bundler, no build step.
 - **Keyboard shortcuts**: vim/Gmail-like navigation for fast, hands-on-keyboard
   triage (see [Keyboard shortcuts](#keyboard-shortcuts)).
 
+## What's in the UI
+
+This README covers install/CLI/config. For what the dashboard itself does —
+every page and route, the hub's sections, Console 2.0's header/canvas/Detail
+panel, the omnibar's full command list, end-to-end workflows (link two
+issues, delegate to tmux, pour a molecule, check usage, update `bd`, and
+more), and a "recently added" rundown of link types/graph-links/molecules/
+usage analytics/bd-version surfacing/default epics — see
+**[`docs/feature-map.md`](docs/feature-map.md)**.
+
 ## Install
 
 You need:
