@@ -1,6 +1,6 @@
 // IssueList.js — the middle pane: sortable, grouped list of issue rows.
 import { html } from 'htm/preact';
-import { store, listRows, setSort, toggleIssueGroup, selectIssue } from '../store.js';
+import { store, listRows, setSort, toggleIssueGroup, selectIssue, isContainer, isMolecule } from '../store.js';
 import { PriBadge, StatusBadge, fmtDate } from './common.js';
 
 function SortHead() {
@@ -17,15 +17,18 @@ function SortHead() {
 
 function Row({ issue }) {
   const sel = store.selectedId.value === issue.id;
-  const isEpic = issue.issue_type === 'epic';
+  // Container = epic OR poured-molecule root (relationships.js's isContainer);
+  // both head a group in listRows, so both get the group mark here.
+  const container = isContainer(issue);
+  const mol = isMolecule(issue);
   return html`
     <button
       class=${'issue-row' + (sel ? ' sel' : '') + (issue.status === 'closed' ? ' closed' : '')}
       onClick=${() => selectIssue(issue.id)}
     >
       <span class="it-main">
-        <span class="it-title">${isEpic ? html`<span class="epic-glyph">◆</span> ` : ''}${issue.title}</span>
-        <span class="it-id">${issue.id}${isEpic ? html` <span class="epic-mark">epic</span>` : ''}</span>
+        <span class="it-title">${container ? html`<span class="epic-glyph">${mol ? '⚗' : '◆'}</span> ` : ''}${issue.title}</span>
+        <span class="it-id">${issue.id}${container ? html` <span class="epic-mark">${mol ? 'molecule' : 'epic'}</span>` : ''}</span>
       </span>
       <span>${PriBadge(issue.priority)}</span>
       <span>${StatusBadge(issue)}</span>
@@ -35,11 +38,17 @@ function Row({ issue }) {
 
 function GroupHead({ row }) {
   const collapsed = store.collapsedIssueGroups.value.has(row.key);
+  // A group is headed by a CONTAINER — an epic or a poured molecule root.
+  // The container itself renders here, not as a Row, so this header is where
+  // "which kind of container is this" has to be said in the classic view.
+  const mol = isMolecule(row.epic);
   return html`
-    <div class=${'group-head' + (collapsed ? ' collapsed' : '')}>
+    <div class=${'group-head' + (collapsed ? ' collapsed' : '') + (mol ? ' group-molecule' : '')}>
       <button class="group-toggle" onClick=${() => toggleIssueGroup(row.key)} aria-expanded=${!collapsed}>
         <span class="group-chev">${collapsed ? '▸' : '▾'}</span>
+        ${row.epic && html`<span class="epic-glyph" title=${mol ? 'molecule' : 'epic'}>${mol ? '⚗' : '◆'}</span>`}
         <span class="group-title">${row.title}</span>
+        ${mol && html`<span class="epic-mark">molecule</span>`}
         <span class="group-meta">${row.count}${row.epic ? html` · ${row.epic.id}` : ''}</span>
       </button>
       ${row.epic && html`<button class="btn btn-ghost btn-xs" onClick=${() => selectIssue(row.epic.id)}>View</button>`}

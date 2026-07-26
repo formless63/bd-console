@@ -351,6 +351,9 @@
 
 .c2-glyph { font-size: 13px; line-height: 1.2; }
 .c2-glyph-epic { color: var(--purple); }
+/* Molecules group like epics but are machine-spawned — the synergy accent
+   distinguishes "poured from a formula" from a hand-built epic at a glance. */
+.c2-glyph-molecule { color: var(--c2-synergy, var(--purple)); }
 .c2-glyph-feature { color: var(--accent); }
 .c2-glyph-bug { color: var(--red); }
 .c2-glyph-chore { color: var(--text-faint); }
@@ -756,4 +759,143 @@ select.c2-linktype { flex: 0 0 auto; max-width: 140px; }
   .c2-brand-name { max-width: 34vw; }
   .c2-lanes { grid-auto-columns: minmax(82vw, 1fr); }
   .c2-pulse-strip { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ==========================================================================
+   Molecules & formulas (docs/molecules-design.md)
+   Two surfaces: the pour dialog (browse -> variable form + live preview ->
+   dry-run confirm) and Detail's molecule/step sections. Both reuse the
+   existing c2-* primitives (c2-mini, c2-chip, c2-rel, c2-progress-*) rather
+   than introducing a parallel visual language; only the layout is new.
+   Theme-agnostic: every color is a semantic token, so all 5 presets x
+   light/dark carry through unchanged.
+   ========================================================================== */
+
+/* ---- epic rows: mark a molecule row apart from a hand-built epic --------- */
+.c2-epicrow.ct-molecule { border-color: color-mix(in srgb, var(--c2-synergy) 34%, var(--c2-line)); }
+.c2-epicrow.ct-molecule > .c2-epicrow-head { border-bottom-color: color-mix(in srgb, var(--c2-synergy) 30%, var(--c2-line)); }
+
+/* ---- pour dialog -------------------------------------------------------- */
+.mol-dialog .dialog-body { gap: 12px; max-height: 86vh; }
+.mol-head { display: flex; align-items: center; gap: 8px; }
+.mol-x { margin-left: auto; }
+.mol-desc { font-size: 12px; color: var(--text-dim); }
+.mol-hint { font-size: 11px; color: var(--text-dim); line-height: 1.5; }
+.mol-hint code { font-family: var(--font-mono); font-size: 10px; }
+.mol-hint-bad { color: var(--red); }
+.mol-err {
+  font-size: 12px; color: var(--red); line-height: 1.5;
+  border: 1px solid color-mix(in srgb, var(--red) 40%, var(--border));
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+  border-radius: 8px; padding: 8px 10px;
+}
+.mol-warn {
+  font-size: 12px; color: var(--amber, var(--text)); line-height: 1.5;
+  border: 1px solid color-mix(in srgb, var(--amber, var(--red)) 40%, var(--border));
+  background: color-mix(in srgb, var(--amber, var(--red)) 10%, transparent);
+  border-radius: 8px; padding: 8px 10px;
+}
+.mol-spin { color: var(--text-faint); }
+
+/* browse */
+.mol-browse { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.mol-filter { width: 100%; }
+.mol-flist { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; max-height: 46vh; }
+.mol-frow {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  padding: 9px 11px; background: var(--surface); color: var(--text);
+  border: 1px solid var(--c2-line, var(--border)); border-radius: 9px; cursor: pointer;
+}
+.mol-frow:hover { border-color: var(--c2-synergy, var(--purple)); }
+.mol-frow-glyph { color: var(--c2-synergy, var(--purple)); font-size: 15px; }
+.mol-frow-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.mol-frow-name { font-family: var(--font-display); font-weight: 600; font-size: 13px; }
+.mol-frow-desc { font-size: 11px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mol-frow-meta { font-family: var(--font-mono); font-size: 10px; color: var(--text-faint); white-space: nowrap; }
+
+/* variable form */
+.mol-form { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; min-height: 0; }
+.mol-var { display: grid; grid-template-columns: 110px 1fr; gap: 4px 10px; align-items: center; }
+.mol-var-k { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
+.mol-req { color: var(--red); margin-left: 2px; }
+.mol-var-input { width: 100%; }
+.mol-var-input.bad { border-color: var(--red); }
+.mol-var-hint { grid-column: 2; font-size: 10px; color: var(--text-faint); line-height: 1.4; }
+.mol-var-bad { color: var(--red); }
+
+/* live preview */
+.mol-preview {
+  display: flex; flex-direction: column; gap: 6px; padding: 10px;
+  border: 1px solid var(--c2-line, var(--border)); border-radius: 9px;
+  background: color-mix(in srgb, var(--surface) 50%, transparent);
+}
+.mol-mode { font-family: var(--font-mono); font-size: 9px; margin-left: 6px; padding: 1px 5px; border-radius: 999px;
+  border: 1px solid var(--c2-line, var(--border)); color: var(--text-faint); letter-spacing: 0; }
+.mol-mode.m-runtime { color: var(--c2-synergy, var(--purple)); border-color: color-mix(in srgb, var(--c2-synergy) 45%, var(--border)); }
+.mol-steps { display: flex; flex-direction: column; gap: 3px; }
+.mol-step { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
+.mol-step-id { font-family: var(--font-mono); font-size: 10px; color: var(--text-faint); min-width: 74px; }
+.mol-step-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mol-step-needs { font-family: var(--font-mono); font-size: 10px; color: var(--text-faint); white-space: nowrap; }
+.mol-count { font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+/* dry-run confirm */
+.mol-confirm { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; min-height: 0; }
+.mol-dry { display: flex; flex-direction: column; gap: 8px; }
+.mol-dry-head { font-size: 13px; }
+.mol-dry-text, .mol-dry-cmd {
+  font-family: var(--font-mono); font-size: 11px; line-height: 1.55; margin: 0;
+  padding: 10px; border-radius: 8px; white-space: pre-wrap; word-break: break-word;
+  background: var(--surface-2); border: 1px solid var(--c2-line, var(--border)); color: var(--text-dim);
+  max-height: 34vh; overflow: auto;
+}
+.mol-dry-cmd { color: var(--text-faint); }
+.mol-raw-toggle { align-self: flex-start; }
+.mol-partial { margin-top: 6px; font-size: 11px; line-height: 1.5; color: var(--text); }
+.mol-partial ul { margin: 4px 0 4px 16px; padding: 0; }
+.mol-partial code { font-family: var(--font-mono); }
+.mol-actions { gap: 8px; }
+
+/* ---- Detail: molecule badge, steps, burn -------------------------------- */
+.c2-molbadge {
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  font-family: var(--font-display); font-size: 11px; font-weight: 600;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--c2-synergy, var(--purple));
+  border: 1px solid color-mix(in srgb, var(--c2-synergy) 40%, var(--border));
+  background: color-mix(in srgb, var(--c2-synergy) 10%, transparent);
+  border-radius: 8px; padding: 6px 10px; margin-bottom: 4px;
+}
+.c2-molbadge .muted { color: var(--text-dim); font-weight: 400; letter-spacing: 0; text-transform: none; }
+.c2-molbadge-link {
+  font: inherit; color: inherit; background: none; border: 0; padding: 0;
+  text-decoration: underline; cursor: pointer; text-transform: none; letter-spacing: 0;
+  max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.c2-mol { display: flex; flex-direction: column; gap: 8px; }
+.c2-mol-progress { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.c2-mol-steps { gap: 5px; }
+.c2-mol-step { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.c2-mol-step .c2-rel { flex: 1; min-width: 0; }
+.c2-mol-group { white-space: nowrap; }
+.c2-mol-ready { color: var(--green); border-color: color-mix(in srgb, var(--green) 40%, var(--border)); white-space: nowrap; }
+.c2-mol-note { font-size: 10px; line-height: 1.5; }
+.c2-mol-burn { display: flex; flex-direction: column; gap: 8px; }
+.c2-mol-burnconfirm { display: flex; flex-direction: column; gap: 8px; }
+.c2-mol-burnfacts { margin: 0; padding-left: 17px; font-size: 11px; line-height: 1.6; color: var(--text-dim); }
+.c2-mol-burnfacts code { font-family: var(--font-mono); font-size: 10px; }
+
+@media (max-width: 768px) {
+  /* Single-column labels above fields; every control keeps a >=44px target,
+     and the two <pre> blocks scroll inside themselves rather than widening
+     the dialog (verified at 390px). */
+  .mol-var { grid-template-columns: 1fr; gap: 3px; }
+  .mol-var-hint { grid-column: 1; }
+  .mol-frow-meta { display: none; }
+  .mol-flist { max-height: 40vh; }
+  .mol-step { flex-wrap: wrap; gap: 3px 8px; }
+  .mol-step-title { flex-basis: 100%; white-space: normal; }
+  .mol-dry-text, .mol-dry-cmd { font-size: 10px; max-height: 30vh; }
+  .mol-actions { flex-wrap: wrap; }
+  .mol-dialog .dialog-body { max-height: 90vh; }
 }

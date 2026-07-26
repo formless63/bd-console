@@ -5,8 +5,12 @@ import { html } from 'htm/preact';
 import { effStatus, isReady } from '../store.js';
 import { ageMs, AGE_AMBER_H, AGE_RED_H } from './derive.js';
 
+// `molecule` is the root bead type `bd mol pour` creates (see
+// docs/molecules-design.md §3.2) — it groups like an epic but gets its own
+// mark so a spawned workflow is distinguishable at a glance from a
+// hand-built epic. ⚗ (alembic) matches bd's own solid/liquid/vapor metaphor.
 export const TYPE_GLYPH = {
-  epic: '◆', feature: '✦', task: '●', bug: '▲', chore: '⬡',
+  epic: '◆', feature: '✦', task: '●', bug: '▲', chore: '⬡', molecule: '⚗',
 };
 export const PRI_LABEL = ['P0', 'P1', 'P2', 'P3', 'P4'];
 

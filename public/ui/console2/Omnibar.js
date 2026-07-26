@@ -8,6 +8,7 @@ import { c2 } from './state.js';
 import {
   captureTriage, actClaim, actStart, actClose, actDefer, actPriority,
 } from './actions.js';
+import { openMolDialog } from './molecules.js';
 import { TypeGlyph, Pip, StatusGlyph } from './ui.js';
 
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*(\.\d+)*$/;
@@ -32,6 +33,12 @@ function buildCommands() {
     { name: 'defer', arg: '<id> <when>', arity: 2, hint: 'defer until', kind: 'action', run: (a) => actDefer(a[0], a.slice(1).join(' ')) },
     { name: 'prio', arg: '<id> <0-4>', arity: 2, hint: 'set priority', kind: 'action', run: (a) => actPriority(a[0], a[1]) },
     { name: 'open', arg: '<id>', arity: 1, hint: 'open detail', kind: 'action', run: (a) => selectIssue(a[0]) },
+    // Arity 0 so `> mol` alone opens the browser; an optional argument
+    // preselects that formula. Unlike every other action command this one
+    // opens a DIALOG rather than running a write immediately — pouring
+    // creates many beads at once and always routes through a preview first
+    // (docs/molecules-design.md §6).
+    { name: 'mol', arg: '[formula]', hint: 'pour a molecule from a formula', kind: 'action', run: (a) => openMolDialog(a[0] || '') },
   ];
 }
 const COMMANDS = buildCommands();
@@ -157,7 +164,11 @@ export function Omnibar() {
         setTimeout(() => inputRef.current?.focus(), 0);
         return;
       }
-      if (cmd.kind === 'action' && !ID_RE.test(args[0] || '')) {
+      // Only commands that actually TAKE a positional issue id get the id
+      // check. An arity-0 action (`mol`, which opens a dialog and whose
+      // optional argument is a formula NAME, not a bead id) must not be
+      // rejected for having no id.
+      if (cmd.kind === 'action' && (cmd.arity || 0) > 0 && !ID_RE.test(args[0] || '')) {
         store.toasts.value = [...store.toasts.value, { id: Date.now(), message: 'Not a valid issue id: ' + (args[0] || ''), kind: 'err' }];
         return;
       }

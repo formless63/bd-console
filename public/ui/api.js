@@ -27,8 +27,16 @@ export class AuthError extends Error {}
 async function parse(r) {
   const data = await r.json().catch(() => ({}));
   if (!r.ok) {
-    if (r.status === 401) throw new AuthError(data.error || 'token required');
-    throw new Error(data.error || `HTTP ${r.status}`);
+    const err = r.status === 401
+      ? new AuthError(data.error || 'token required')
+      : new Error(data.error || `HTTP ${r.status}`);
+    // The FULL error body, not just its message. Some routes attach
+    // structured detail a caller needs to render honestly — notably
+    // /api/molecules/pour's `partial` report, which says what (if anything) a
+    // failed multi-bead pour actually left behind.
+    err.status = r.status;
+    err.payload = data;
+    throw err;
   }
   return data;
 }

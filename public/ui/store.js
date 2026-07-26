@@ -9,6 +9,8 @@ import {
   dependenciesByType, inboundByType, linkTypesPresent, relatedTo,
   discoveredFrom, tracksOf, supersededBy, duplicateOf, supersedes,
   duplicatedBy, retiredState, linkSections, blockedByIssue, parentOfIssue,
+  MOLECULE_TYPE, CONTAINER_TYPES, isContainerType, isContainer, isMolecule,
+  childrenOfIssue, containerGroups, moleculeRootOf, moleculeRollup,
 } from './relationships.js';
 
 // Server text for the 501 the scheduler routes return when node:sqlite isn't
@@ -153,6 +155,8 @@ export {
   dependenciesByType, inboundByType, linkTypesPresent, relatedTo,
   discoveredFrom, tracksOf, supersededBy, duplicateOf, supersedes,
   duplicatedBy, retiredState, linkSections, blockedByIssue, parentOfIssue,
+  MOLECULE_TYPE, CONTAINER_TYPES, isContainerType, isContainer, isMolecule,
+  childrenOfIssue, containerGroups, moleculeRootOf, moleculeRollup,
 };
 export function openBlockersOf(issue) {
   const m = byId.value;
@@ -171,6 +175,10 @@ export function childrenOf(id) {
 export function blocksList(id) {
   return store.issues.value.filter((i) => blockersOf(i).includes(id));
 }
+
+// Signal-bound molecule helpers — the pure versions live in relationships.js.
+export function moleculeRootFor(issue) { return moleculeRootOf(issue, store.issues.value); }
+export function moleculeRollupFor(root) { return moleculeRollup(root, store.issues.value); }
 
 // Signal-bound conveniences over the pure helpers above — components get the
 // "…against the currently loaded issue list" variant without repeating
@@ -224,15 +232,21 @@ export const listRows = computed(() => {
     if (p) { if (!childMap.has(p)) childMap.set(p, []); childMap.get(p).push(i); }
   }
   const rendered = new Set();
-  const epics = sortIssues(shown.filter((i) => i.issue_type === 'epic'));
-  for (const e of epics) {
+  // Containers = epics AND molecule roots (relationships.js's isContainer).
+  // A poured molecule's steps carry the same parent-child row an epic's
+  // children do, so the moment the container test stops being literally
+  // `=== 'epic'` this grouping works for molecules unchanged. The group key
+  // stays `epic:<id>`-prefixed so already-persisted collapsed-group state in
+  // localStorage keeps matching.
+  const containers = sortIssues(shown.filter(isContainer));
+  for (const e of containers) {
     const kids = sortIssues(childMap.get(e.id) || []);
     const key = 'epic:' + e.id;
     rows.push({ kind: 'group', key, title: e.title, epic: e, count: kids.length });
     rendered.add(e.id);
     if (!collapsed.has(key)) for (const k of kids) { rows.push({ kind: 'issue', issue: k, indent: true }); rendered.add(k.id); }
   }
-  const orphans = sortIssues(shown.filter((i) => !rendered.has(i.id) && !parentOf(i) && i.issue_type !== 'epic'));
+  const orphans = sortIssues(shown.filter((i) => !rendered.has(i.id) && !parentOf(i) && !isContainer(i)));
   if (orphans.length) {
     const key = 'standalone';
     rows.push({ kind: 'group', key, title: 'Standalone', count: orphans.length });

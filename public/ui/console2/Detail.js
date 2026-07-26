@@ -9,7 +9,12 @@ import {
   effStatus, isReady, selectIssue, addComment, loadTmux,
   LINK_TYPES, relatedOf, linkSectionsOf, retiredState,
   addLink, removeLink, supersedeIssue, markDuplicate,
+  isContainer, isMolecule, moleculeRootFor, moleculeRollupFor,
 } from '../store.js';
+import { burnIssueCount } from '../formulas.js';
+import {
+  molDetail, loadMoleculeDetail, requestBurnPreview, cancelBurn, confirmBurn,
+} from './molecules.js';
 import { renderMarkdown } from '../markdown.js';
 import {
   actClaim, actStart, actClose, actReopen, actPriority, actDefer,
@@ -182,6 +187,106 @@ function Comments({ id }) {
     </div>`;
 }
 
+// ---------------------------------------------------------------------------
+// Molecule section (docs/molecules-design.md §5.4)
+//
+// Shown whenever the selected issue IS a molecule root or is a step INSIDE
+// one. Everything structural comes from the already-loaded issues list via
+// relationships.js — a molecule's steps are ordinary beads carrying the exact
+// same `parent-child` row an epic's children carry, so this reuses RelChip and
+// the existing relationship machinery rather than inventing a parallel one.
+// The live `GET /api/molecules/:id` call only ADDS what the client genuinely
+// can't derive: bd's authoritative parallel-group / current-step computation.
+// If it fails, the section still renders from local data.
+// ---------------------------------------------------------------------------
+function MoleculeSteps({ root }) {
+  const roll = moleculeRollupFor(root);
+  const live = molDetail.data.value;
+  const liveOk = live && live.molecule?.root?.id === root.id;
+  // Progress numbers come from the LOCAL rollup, not bd's `mol progress`,
+  // even when the live call succeeded: the local one is derived from
+  // store.issues, so closing a step anywhere in the app updates it
+  // immediately, whereas the fetched copy is a snapshot that would sit stale
+  // until the next refetch. The two agree by construction (same closed-child
+  // count) — this just picks the one that can't lag.
+  const done = roll.closed;
+  const total = roll.total;
+  const pct = roll.percent;
+  // The live call is used ONLY for what the client genuinely cannot derive:
+  // bd's parallel-group assignment and its DAG-aware ready flags.
+  const groups = liveOk && live.parallel ? live.parallel.parallel_groups : null;
+  const groupOf = (id) => {
+    if (!groups) return null;
+    for (const [name, ids] of Object.entries(groups)) if (ids.includes(id)) return name;
+    return null;
+  };
+  const readyIds = new Set(
+    liveOk && live.parallel
+      ? (live.parallel.steps || []).filter((s) => s.parallel_info?.is_ready).map((s) => s.issue?.id)
+      : [],
+  );
+
+  return html`
+    <div class="c2-mol">
+      <div class="c2-mol-progress" data-mol-progress>
+        <span class="c2-progress-track">
+          ${Array.from({ length: Math.max(total, 1) }).map((_, n) => html`<span key=${n} class=${'c2-progress-cell' + (n < done ? ' on' : '')}></span>`)}
+        </span>
+        <span class="c2-progress-num">${done}/${total} steps (${pct}%)</span>
+      </div>
+      ${roll.steps.length === 0
+        ? html`<div class="c2-lane-empty">This molecule has no steps.</div>`
+        : html`<div class="c2-rels c2-mol-steps" data-mol-steps-list>
+            ${roll.steps.map((s) => html`
+              <div class="c2-mol-step" key=${s.id}>
+                ${RelChip(s.id)}
+                ${groupOf(s.id) && html`<span class="c2-chip c2-mol-group" title="Parallel group (bd ready --mol)">${groupOf(s.id)}</span>`}
+                ${readyIds.has(s.id) && s.status !== 'closed' && html`<span class="c2-chip c2-mol-ready">ready</span>`}
+              </div>`)}
+          </div>`}
+      ${molDetail.loading.value && html`<div class="c2-mol-note muted">loading live molecule state…</div>`}
+      ${molDetail.error.value && html`<div class="c2-mol-note muted">Live molecule state unavailable (${molDetail.error.value}) — showing locally derived steps.</div>`}
+    </div>`;
+}
+
+// Burn — the undo for a bad pour. Same dry-run → confirm → write shape as the
+// pour dialog, and the copy is explicit about burn's real blast radius, which
+// is WIDER than "the beads pour created" (verified in a fixture; see
+// lib/bd.mjs's burnMolecule).
+function BurnBox({ root }) {
+  const pending = molDetail.burnPreview.value;
+  const count = pending ? burnIssueCount(pending.preview) : null;
+  return html`
+    <div class="c2-mol-burn">
+      ${!pending && html`
+        <button class="c2-mini danger" data-mol-burn-btn disabled=${molDetail.burnLoading.value}
+          onClick=${() => requestBurnPreview(root.id)}>
+          ${molDetail.burnLoading.value ? 'checking…' : 'Burn this molecule…'}
+        </button>`}
+      ${molDetail.burnError.value && html`<div class="mol-err">${molDetail.burnError.value}</div>`}
+      ${pending && html`
+        <div class="c2-mol-burnconfirm">
+          <div class="mol-warn">
+            ⚠ Deletes ${count != null ? html`<b>${count}</b>` : 'every'} issue${count === 1 ? '' : 's'} in this molecule, permanently.
+          </div>
+          <ul class="c2-mol-burnfacts">
+            <li>Everything parented under the root goes — <b>including beads you added by hand</b>, not just the steps the pour created.</li>
+            <li>Dependency links from issues <i>outside</i> the molecule are removed; those issues survive but silently lose the edge.</li>
+            <li>Nothing is archived. <code>bd mol squash</code> makes digests; <code>burn</code> does not.</li>
+            <li>This molecule is persistent, so the deletions sync to remotes.</li>
+          </ul>
+          <pre class="mol-dry-text" data-mol-burn-dryrun>${pending.preview}</pre>
+          <div class="c2-edit-row">
+            <button class="c2-mini" disabled=${molDetail.burning.value} onClick=${cancelBurn}>Cancel</button>
+            <button class="c2-mini danger" data-mol-burn-confirm disabled=${molDetail.burning.value}
+              onClick=${() => confirmBurn(root.id)}>
+              ${molDetail.burning.value ? 'burning…' : `Burn ${count != null ? count + ' issues' : 'this molecule'}`}
+            </button>
+          </div>
+        </div>`}
+    </div>`;
+}
+
 function Delegate({ issue }) {
   const id = issue.id;
   const [text, setText] = useState('');
@@ -241,6 +346,24 @@ export function Detail() {
   const id = store.selectedId.value;
   const issue = id ? byId.value.get(id) : null;
   const open = !!issue;
+  // The molecule this selection belongs to: itself when it IS a root, its
+  // parent when it's a step of one, null otherwise.
+  const molRoot = issue ? moleculeRootFor(issue) : null;
+  const isStep = !!molRoot && molRoot.id !== issue?.id;
+
+  // Live molecule state is fetched for the ROOT (bd's `mol show` on a step id
+  // just echoes the step back as its own root — confirmed — so resolving
+  // step→root client-side first is required, not an optimization).
+  //
+  // Re-keyed on generatedAt as well as the root id: every write in the app
+  // refreshes the issues export, and bd's parallel/ready computation for this
+  // molecule may well have changed with it. Without this, claiming a step
+  // would leave the ready chips describing the pre-claim state.
+  const issuesGen = store.generatedAt.value;
+  useEffect(() => {
+    if (molRoot) loadMoleculeDetail(molRoot.id, { force: true });
+    else { molDetail.id.value = null; molDetail.data.value = null; }
+  }, [molRoot?.id, issuesGen]);
 
   return html`
     <div class=${'c2-detail' + (open ? ' open' : '')} role="dialog" aria-hidden=${!open}>
@@ -255,6 +378,20 @@ export function Detail() {
           </div>
           <h2 class="c2-detail-title">${issue.title}</h2>
           ${(issue.labels || []).length > 0 && html`<div class="c2-detail-labels">${(issue.labels || []).map((l) => html`<span key=${l} class=${'c2-chip' + (l === 'triage' ? ' triage' : '')}>${l}</span>`)}</div>`}
+
+          ${/* Molecule identity, above everything else: what this thing IS
+                comes before what state it's in. */ ''}
+          ${isMolecule(issue) && html`
+            <div class="c2-molbadge" data-mol-badge="root">
+              <span aria-hidden="true">⚗</span> molecule
+              <span class="muted">· poured workflow · ${moleculeRollupFor(issue).total} steps</span>
+            </div>`}
+          ${isStep && html`
+            <div class="c2-molbadge step" data-mol-badge="step">
+              <span aria-hidden="true">⚗</span> step of
+              <button class="c2-molbadge-link" onClick=${() => selectIssue(molRoot.id)} title=${molRoot.title}>${molRoot.title}</button>
+              <span class="c2-rel-id">${molRoot.id}</span>
+            </div>`}
 
           ${(() => {
             // Banner precedence (docs/beads-coverage.md Phase 1): a retired
@@ -272,7 +409,7 @@ export function Detail() {
             if (issue.status !== 'closed' && ob.length > 0) {
               return html`<div class="c2-banner blocked">⛔ Blocked by ${ob.length} open ${ob.length === 1 ? 'issue' : 'issues'}</div>`;
             }
-            return isReady(issue) && issue.issue_type !== 'epic' ? html`<div class="c2-banner ready">✓ Ready — no open blockers</div>` : null;
+            return isReady(issue) && !isContainer(issue) ? html`<div class="c2-banner ready">✓ Ready — no open blockers</div>` : null;
           })()}
 
           ${issue.description && Field('Description', html`<div class="markdown c2-md" dangerouslySetInnerHTML=${{ __html: renderMarkdown(issue.description) }}></div>`)}
@@ -281,10 +418,20 @@ export function Detail() {
           ${issue.notes && Field('Notes', html`<div class="markdown c2-md" dangerouslySetInnerHTML=${{ __html: renderMarkdown(issue.notes) }}></div>`)}
           ${issue.acceptance_criteria && Field('Acceptance', html`<div class="markdown c2-md" dangerouslySetInnerHTML=${{ __html: renderMarkdown(issue.acceptance_criteria) }}></div>`)}
 
+          ${/* A molecule root's children ARE its steps — rendered here as the
+                richer, progress-and-parallel-group-aware Steps section, and
+                suppressed from the generic Children row below so the same
+                beads don't appear twice. */ ''}
+          ${isMolecule(issue) && Field('Steps', html`<${MoleculeSteps} root=${issue} />`)}
+
           ${(() => { const p = parentOf(issue); return p ? Field('Parent', RelChip(p)) : null; })()}
           ${(() => { const b = blockersOf(issue); return b.length ? Field('Blocked by', html`<div class="c2-rels">${b.map(RelChip)}</div>`) : null; })()}
           ${(() => { const b = blocksList(id); return b.length ? Field('Blocks', html`<div class="c2-rels">${b.map((x) => RelChip(x.id))}</div>`) : null; })()}
-          ${(() => { const c = childrenOf(id); return c.length ? Field('Children', html`<div class="c2-rels">${c.map((x) => RelChip(x.id))}</div>`) : null; })()}
+          ${(() => {
+            if (isMolecule(issue)) return null; // already rendered as Steps
+            const c = childrenOf(id);
+            return c.length ? Field('Children', html`<div class="c2-rels">${c.map((x) => RelChip(x.id))}</div>`) : null;
+          })()}
 
           ${/* Bidirectional: rendered once whichever side created the row. */ ''}
           ${(() => { const r = relatedOf(issue); return r.length ? Field('Related', html`<div class="c2-rels c2-rels-chips">${r.map(RelChip)}</div>`) : null; })()}
@@ -292,6 +439,8 @@ export function Detail() {
                 per type that actually has members, in both directions, so the
                 panel never grows ten empty headings. */ ''}
           ${linkSectionsOf(issue).map((s) => html`<div key=${s.key}>${Field(s.label, html`<div class="c2-rels">${s.ids.map(RelChip)}</div>`)}</div>`)}
+
+          ${isMolecule(issue) && Field('Undo', html`<${BurnBox} root=${issue} />`)}
 
           ${Field('Edit', html`<${Edit} issue=${issue} />`)}
           ${Field('Delegate', html`<${Delegate} issue=${issue} />`)}

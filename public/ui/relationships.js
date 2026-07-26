@@ -108,6 +108,105 @@ export function parentOfIssue(issue) {
   return p ? p.depends_on_id : null;
 }
 
+// --- container types (epic | molecule) --------------------------------------
+//
+// A "container" is an issue whose job is to HOLD other issues rather than to
+// be worked itself. bd has exactly two: `epic` (hand-made) and `molecule`
+// (created by `bd mol pour`, which spawns a root bead plus one bead per
+// formula step, wired root←parent-child←step — see docs/molecules-design.md
+// §3.2, re-confirmed against bd v1.1.0).
+//
+// The distinction matters because the two are structurally IDENTICAL from the
+// UI's point of view — a molecule's steps are ordinary beads carrying the
+// exact same `parent-child` row an epic's children carry — but their
+// `issue_type` strings differ. Every grouping/containment site used to test
+// `issue_type === 'epic'` literally, so a poured molecule rendered as a bare
+// ungrouped row with its steps un-nested in BOTH views. The predicate lives
+// here, once, so a future third container type is a one-line change and can
+// never be half-applied again.
+export const MOLECULE_TYPE = 'molecule';
+export const CONTAINER_TYPES = Object.freeze(['epic', MOLECULE_TYPE]);
+const CONTAINER_TYPE_SET = new Set(CONTAINER_TYPES);
+
+export function isContainerType(type) { return CONTAINER_TYPE_SET.has(type); }
+export function isContainer(issue) { return !!issue && isContainerType(issue.issue_type); }
+export function isMolecule(issue) { return !!issue && issue.issue_type === MOLECULE_TYPE; }
+
+// Children of `id` over an explicit issues array (the store-free twin of
+// store.js's signal-bound childrenOf).
+export function childrenOfIssue(id, issues) {
+  return (issues || []).filter((i) => parentOfIssue(i) === id);
+}
+
+// The single grouping pass both views render: one group per container, in
+// input order, plus the leftover top-level issues. Pure — an issues array in,
+// a plain object out — so scripts/smoke.mjs can assert "a molecule root groups
+// its children" with no browser, no signals and no bd involved.
+//
+// `closed`/`total` count ALL children, not a filtered subset, so a caller
+// narrowing `children` for a focus/filter can still render honest progress.
+// -> { groups: [{ container, children, closed, total }], orphans: [...] }
+export function containerGroups(issues) {
+  const list = issues || [];
+  const groups = [];
+  const grouped = new Set();
+  for (const container of list) {
+    if (!isContainer(container)) continue;
+    const children = childrenOfIssue(container.id, list);
+    for (const c of children) grouped.add(c.id);
+    groups.push({
+      container,
+      children,
+      closed: children.filter((c) => c.status === 'closed').length,
+      total: children.length,
+    });
+  }
+  const orphans = list.filter((i) => !isContainer(i) && !grouped.has(i.id) && !parentOfIssue(i));
+  return { groups, orphans };
+}
+
+// The molecule an issue belongs to: itself when it IS a molecule root, its
+// parent when it's a step of one, else null. Steps are only ever one level
+// deep under the root (pour never nests), so a single parent hop is exact.
+export function moleculeRootOf(issue, issues) {
+  if (!issue) return null;
+  if (isMolecule(issue)) return issue;
+  const pid = parentOfIssue(issue);
+  if (!pid) return null;
+  const parent = (issues || []).find((i) => i.id === pid);
+  return isMolecule(parent) ? parent : null;
+}
+
+// Status rollup over a molecule root's steps, computed entirely client-side
+// from the already-loaded issues list. `bd mol progress --json` reports the
+// same completed/total/percent server-side; this is the offline equivalent so
+// Detail can render a molecule the instant it opens (and still render it when
+// the live route is unavailable). `blocked` uses the same open-blocker rule
+// effStatus() does, so the numbers can't drift from the lanes.
+// -> { root, steps, total, closed, inProgress, blocked, open, percent }
+export function moleculeRollup(root, issues) {
+  const list = issues || [];
+  const steps = childrenOfIssue(root ? root.id : null, list);
+  const openIds = new Set(list.filter((i) => i.status !== 'closed').map((i) => i.id));
+  let closed = 0, inProgress = 0, blocked = 0, open = 0;
+  for (const s of steps) {
+    if (s.status === 'closed') { closed++; continue; }
+    if (s.status === 'in_progress') { inProgress++; continue; }
+    if (blockersOf(s).some((b) => openIds.has(b))) blocked++;
+    else open++;
+  }
+  return {
+    root: root || null,
+    steps,
+    total: steps.length,
+    closed,
+    inProgress,
+    blocked,
+    open,
+    percent: steps.length ? Math.round((closed / steps.length) * 100) : 0,
+  };
+}
+
 // --- generic link-type derivations -----------------------------------------
 
 // Ids named by `issue`'s OWN rows of `type` — i.e. the outbound direction.

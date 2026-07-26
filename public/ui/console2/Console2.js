@@ -28,6 +28,7 @@ import { Flow } from './Flow.js';
 import { MapView } from './MapView.js';
 import { Docs2 } from './Docs2.js';
 import { Detail } from './Detail.js';
+import { MoleculeDialog } from './MoleculeDialog.js';
 import { ThemeSwitch } from './ThemeSwitch.js';
 
 const MODES = [['flow', 'Flow'], ['map', 'Map'], ['docs', 'Docs']];
@@ -137,6 +138,7 @@ export function Console2() {
         <${Canvas} />
       </div>
       <${Detail} />
+      <${MoleculeDialog} />
       ${detailOpen && html`<div class="c2-scrim" onClick=${() => selectIssue(null)}></div>`}
       ${store.issuesError.value && html`<div class="c2-boot-err">Failed to load issues: ${store.issuesError.value} · <a href=${'#/p/' + encodeURIComponent(pid || '')}>classic view</a></div>`}
     </div>`;

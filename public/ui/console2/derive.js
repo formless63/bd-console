@@ -6,7 +6,7 @@
 import { computed } from '@preact/signals';
 import {
   store, byId, effStatus, isReady, openBlockersOf, blockersOf,
-  parentOf, childrenOf, blocksList,
+  parentOf, childrenOf, blocksList, isContainer,
 } from '../store.js';
 import { c2 } from './state.js';
 import { buildGraph, OVERLAY_DEP_TYPES, OVERLAY_TOGGLE_TYPES } from './graphModel.js';
@@ -21,9 +21,9 @@ const ts = (s) => (s ? new Date(s).getTime() : 0);
 export function ageMs(issue) { return Date.now() - ts(issue.updated_at || issue.created_at); }
 export function hasLabel(issue, l) { return (issue.labels || []).includes(l); }
 
-// A workable "ready" item: open, no open blockers, and not an epic (epics are
-// containers, not pickup work).
-export function isPickup(issue) { return isReady(issue) && issue.issue_type !== 'epic'; }
+// A workable "ready" item: open, no open blockers, and not a CONTAINER —
+// epics and molecule roots both exist to hold steps, not to be picked up.
+export function isPickup(issue) { return isReady(issue) && !isContainer(issue); }
 export function isStale(issue) {
   return issue.status !== 'closed' && ageMs(issue) > STALE_DAYS * DAY;
 }
@@ -43,14 +43,13 @@ export const lanes = computed(() => {
     if (s === 'blocked') { blocked.push(i); continue; }
     // open + unblocked
     if (hasLabel(i, 'triage')) triage.push(i);
-    else if (i.issue_type !== 'epic') ready.push(i);
-    else ready.push(i); // epics live in Ready too but sort last
+    else ready.push(i); // containers (epic/molecule) live in Ready too, sorted last
   }
   const byPri = (a, b) => a.priority - b.priority || a.id.localeCompare(b.id);
-  const epicLast = (a, b) => (a.issue_type === 'epic') - (b.issue_type === 'epic') || byPri(a, b);
+  const containerLast = (a, b) => isContainer(a) - isContainer(b) || byPri(a, b);
   return {
     triage: triage.sort(byPri),
-    ready: ready.sort(epicLast),
+    ready: ready.sort(containerLast),
     in_progress: progress.sort(byPri),
     blocked: blocked.sort(byPri),
     done: done.sort((a, b) => ts(b.closed_at) - ts(a.closed_at)),
@@ -146,4 +145,4 @@ export const LANE_LABEL = {
   triage: 'Triage', ready: 'Ready', in_progress: 'In progress', blocked: 'Blocked', done: 'Done', stale: 'Stale · 21d+',
 };
 
-export { byId, effStatus, isReady, openBlockersOf, blockersOf, parentOf, childrenOf, blocksList };
+export { byId, effStatus, isReady, openBlockersOf, blockersOf, parentOf, childrenOf, blocksList, isContainer };

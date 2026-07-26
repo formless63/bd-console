@@ -2,7 +2,7 @@
 // progress · Blocked · Done this week) of intent cards, plus an epic-grouping
 // toggle that regroups everything into epic rows with layer-by-layer progress.
 import { html } from 'htm/preact';
-import { store, selectIssue, effStatus, childrenOf, parentOf } from '../store.js';
+import { store, selectIssue, effStatus, containerGroups } from '../store.js';
 import { c2, setEpicGroup } from './state.js';
 import { lanes, isStale, focusedIds, LANE_LABEL } from './derive.js';
 import { actClaim, actStart, actClose, actDefer } from './actions.js';
@@ -88,26 +88,28 @@ function Lane({ laneKey, title, cls, items, focus, focusSet }) {
 // the epic-grouped view's half of the focus-bug fix (previously this
 // function never read c2.laneFocus / focusedIds at all).
 function EpicRows({ focusSet }) {
-  const issues = store.issues.value;
-  const epics = issues.filter((i) => i.issue_type === 'epic');
-  const rows = epics
-    .map((e) => {
-      const allKids = childrenOf(e.id);
-      const kids = focusSet ? allKids.filter((k) => focusSet.has(k.id)) : allKids;
-      const closed = allKids.filter((k) => k.status === 'closed').length;
-      return { epic: e, kids, closed, total: allKids.length };
-    })
+  // Grouping itself is relationships.js's containerGroups() — pure, shared
+  // with the classic view's semantics and asserted in smoke. Containers are
+  // epics AND poured-molecule roots, so a molecule gets its own row with its
+  // steps nested instead of scattering across the orphan section.
+  const { groups, orphans: allOrphans } = containerGroups(store.issues.value);
+  const rows = groups
+    .map(({ container, children, closed, total }) => ({
+      epic: container,
+      kids: focusSet ? children.filter((k) => focusSet.has(k.id)) : children,
+      closed,
+      total,
+    }))
     .filter((r) => !focusSet || r.kids.length > 0);
-  const allOrphans = issues.filter((i) => i.issue_type !== 'epic' && !parentOf(i));
   const orphans = focusSet ? allOrphans.filter((o) => focusSet.has(o.id)) : allOrphans;
   return html`
     <div class="c2-epicrows">
       ${focusSet && rows.length === 0 && orphans.length === 0 && html`<div class="c2-lane-empty">No issues match this focus.</div>`}
       ${rows.map(({ epic, kids, closed, total }) => html`
-        <section class="c2-epicrow" key=${epic.id}>
+        <section class=${'c2-epicrow ct-' + epic.issue_type} key=${epic.id}>
           <header class="c2-epicrow-head" onClick=${() => selectIssue(epic.id)}>
             ${StatusGlyph(epic)}
-            ${TypeGlyph('epic')}
+            ${TypeGlyph(epic.issue_type)}
             <span class="c2-epicrow-title">${epic.title}</span>
             <span class="c2-epicrow-id">${epic.id}</span>
             <span class="c2-progress" title=${`${closed}/${total} closed`}>

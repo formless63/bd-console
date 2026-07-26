@@ -11,11 +11,19 @@ import {
   blockersOf, blockedByIssue, dependenciesByType, relatedTo, linkSections,
   supersededBy, duplicateOf, supersedes, duplicatedBy, retiredState,
   LINK_TYPES as UI_LINK_TYPES,
+  CONTAINER_TYPES, isContainer, isMolecule, containerGroups,
+  moleculeRootOf, moleculeRollup,
 } from '../public/ui/relationships.js';
 // Pure MapView edge-model derivation (docs/beads-coverage.md Phase 2) — see
 // public/ui/console2/graphModel.js's header for why it's signal-free and
 // therefore importable here exactly like relationships.js above.
 import { buildGraph } from '../public/ui/console2/graphModel.js';
+// Pure formula derivations (docs/molecules-design.md) — same import-free
+// contract as relationships.js above.
+import {
+  formulaVars, pourBeadCount, missingVars, previewMode, previewVars,
+  varViolations, previewIssueCount, burnIssueCount,
+} from '../public/ui/formulas.js';
 import { LINK_TYPES as SERVER_LINK_TYPES } from '../lib/bd.mjs';
 import { parseScopedLimits } from '../lib/usage.mjs';
 import { parseBdVersionStdout, compareVersions, isBehind } from '../lib/bdversion.mjs';
@@ -1590,6 +1598,258 @@ try {
     assert(!graph.overlayEdges.some((e) => e.from === 'g-h' || e.to === 'g-h'), 'a closed issue must not appear on any overlay edge');
 
     console.log(`smoke ok (graph edge model: layoutEdges excludes non-blocking types, related deduped): ${layoutPairs.join(',')}`);
+  }
+
+  // --- Phase 3 / bd-console-6ag.4: molecules group like epics --------------
+  // Pure, fixture-driven — containerGroups() is signal/store/bd-free. This
+  // pins the bug the container-type refactor fixed: a poured molecule's root
+  // bead has issue_type 'molecule', NOT 'epic' (confirmed against bd v1.1.0,
+  // docs/molecules-design.md §3.2), and every grouping site used to test
+  // `issue_type === 'epic'` literally — so the molecule rendered as a bare
+  // ungrouped row with its four steps loose in the Standalone section.
+  // The fixture below is a verbatim transcription of a real `bd mol pour`
+  // export (root + 4 steps, parent-child root←step plus the blocks chain
+  // derived from the formula's `needs`).
+  {
+    const molIssues = [
+      { id: 'mf-mol-und', title: 'mol-feature', issue_type: 'molecule', status: 'open', priority: 2, dependencies: null },
+      { id: 'mf-mol-v6u', title: 'Design auth', issue_type: 'task', status: 'closed', priority: 2, dependencies: [
+        { issue_id: 'mf-mol-v6u', depends_on_id: 'mf-mol-und', type: 'parent-child' }] },
+      { id: 'mf-mol-4yy', title: 'Implement auth', issue_type: 'task', status: 'in_progress', priority: 2, dependencies: [
+        { issue_id: 'mf-mol-4yy', depends_on_id: 'mf-mol-und', type: 'parent-child' },
+        { issue_id: 'mf-mol-4yy', depends_on_id: 'mf-mol-v6u', type: 'blocks' }] },
+      { id: 'mf-mol-bku', title: 'Test auth', issue_type: 'task', status: 'open', priority: 2, dependencies: [
+        { issue_id: 'mf-mol-bku', depends_on_id: 'mf-mol-und', type: 'parent-child' },
+        { issue_id: 'mf-mol-bku', depends_on_id: 'mf-mol-4yy', type: 'blocks' }] },
+      { id: 'mf-mol-9zm', title: 'Review auth', issue_type: 'task', status: 'open', priority: 2, dependencies: [
+        { issue_id: 'mf-mol-9zm', depends_on_id: 'mf-mol-und', type: 'parent-child' },
+        { issue_id: 'mf-mol-9zm', depends_on_id: 'mf-mol-bku', type: 'blocks' }] },
+      // A hand-made epic with one child — molecules must not displace epics.
+      { id: 'mf-epic1', title: 'An epic', issue_type: 'epic', status: 'open', priority: 1, dependencies: null },
+      { id: 'mf-kid1', title: 'Epic child', issue_type: 'task', status: 'open', priority: 2, dependencies: [
+        { issue_id: 'mf-kid1', depends_on_id: 'mf-epic1', type: 'parent-child' }] },
+      // A genuinely standalone bead — the only thing that may land in orphans.
+      { id: 'mf-loose', title: 'Loose task', issue_type: 'task', status: 'open', priority: 3, dependencies: null },
+    ];
+
+    assert(CONTAINER_TYPES.includes('epic') && CONTAINER_TYPES.includes('molecule'),
+      `CONTAINER_TYPES must cover epic AND molecule; got ${JSON.stringify(CONTAINER_TYPES)}`);
+    assert(isContainer(molIssues[0]) && isMolecule(molIssues[0]), 'a molecule root must be a container');
+    assert(isContainer(molIssues[5]) && !isMolecule(molIssues[5]), 'an epic must be a container but not a molecule');
+    assert(!isContainer(molIssues[1]), 'a molecule STEP must not be treated as a container');
+
+    const { groups, orphans } = containerGroups(molIssues);
+    const molGroup = groups.find((g) => g.container.id === 'mf-mol-und');
+    assert(molGroup, 'THE BUG: a molecule root produced no group — its steps would render un-nested');
+    const stepIds = molGroup.children.map((c) => c.id).sort();
+    assert(JSON.stringify(stepIds) === JSON.stringify(['mf-mol-4yy', 'mf-mol-9zm', 'mf-mol-bku', 'mf-mol-v6u']),
+      `molecule group must contain all 4 poured steps; got ${JSON.stringify(stepIds)}`);
+    assert(molGroup.total === 4 && molGroup.closed === 1,
+      `molecule progress must count all children (expected 4 total / 1 closed); got ${molGroup.total}/${molGroup.closed}`);
+    const epicGroup = groups.find((g) => g.container.id === 'mf-epic1');
+    assert(epicGroup && epicGroup.children.length === 1, 'epic grouping must still work alongside molecules');
+    // THE regression this pins: no molecule step (nor either container) may
+    // fall through into the ungrouped "Standalone" bucket.
+    assert(JSON.stringify(orphans.map((o) => o.id)) === JSON.stringify(['mf-loose']),
+      `only the genuinely standalone bead may be an orphan; got ${JSON.stringify(orphans.map((o) => o.id))}`);
+
+    // Step -> molecule root resolution (Detail's "part of molecule X" link).
+    assert(moleculeRootOf(molIssues[1], molIssues)?.id === 'mf-mol-und', 'a step must resolve to its molecule root');
+    assert(moleculeRootOf(molIssues[0], molIssues)?.id === 'mf-mol-und', 'a molecule root must resolve to itself');
+    assert(moleculeRootOf(molIssues[6], molIssues) === null, 'an epic child must NOT resolve to a molecule root');
+    assert(moleculeRootOf(molIssues[7], molIssues) === null, 'a standalone bead has no molecule root');
+
+    const roll = moleculeRollup(molIssues[0], molIssues);
+    assert(roll.total === 4 && roll.closed === 1 && roll.inProgress === 1 && roll.percent === 25,
+      `molecule rollup mismatch: ${JSON.stringify({ t: roll.total, c: roll.closed, p: roll.inProgress, pct: roll.percent })}`);
+    // "Test auth" is blocked by the in-progress "Implement auth"; "Review
+    // auth" is blocked by "Test auth" — neither may count as plain open.
+    assert(roll.blocked === 2 && roll.open === 0,
+      `molecule rollup blocked/open mismatch: ${roll.blocked}/${roll.open}`);
+
+    console.log('smoke ok (molecule containment: molecule root groups its 4 steps, rollup 1/4 closed 25%)');
+  }
+
+  // --- Phase 3: formula derivations (pure) --------------------------------
+  // The two rules here are bd's, verified live, and neither is what the docs
+  // imply: (1) ANY --var switches `bd cook` into runtime mode, which then
+  // demands EVERY declared variable resolve — vars with a `default` resolve
+  // themselves, vars without one must be supplied; (2) bd does NOT enforce a
+  // var's `enum`/`pattern` (confirmed: an out-of-enum value substitutes
+  // verbatim, exit 0), so those checks are ours to make.
+  {
+    const f = {
+      formula: 'mol-audit',
+      steps: [{ id: 'recon', title: 'Recon {{scope}}' }, { id: 'report', title: 'Report {{scope}}', needs: ['recon'] }],
+      vars: {
+        scope: { description: 'Audit scope', required: true, enum: ['api', 'ui', 'infra'] },
+        ticket: { description: 'Ticket', required: true, pattern: '^[A-Z]+-[0-9]+$' },
+        owner: { description: 'Owner', default: 'unassigned' },
+      },
+    };
+    const specs = formulaVars(f);
+    assert(specs.length === 3, `expected 3 declared vars, got ${specs.length}`);
+    assert(specs.find((s) => s.key === 'owner').hasDefault, 'owner declares a default');
+    assert(specs.find((s) => s.key === 'scope').enum.length === 3, 'enum must survive');
+
+    assert(pourBeadCount(f) === 3, 'pour creates one root + one bead per step');
+
+    // A var with a default is never "missing" — it self-resolves in runtime mode.
+    assert(JSON.stringify(missingVars(f, {})) === JSON.stringify(['scope', 'ticket']),
+      `missingVars mismatch: ${JSON.stringify(missingVars(f, {}))}`);
+    assert(missingVars(f, { scope: 'api', ticket: 'SEC-1' }).length === 0, 'defaults must not block a pour');
+
+    // Mode selection: empty OR partially-filled -> compile (placeholders);
+    // fully resolvable -> runtime. Sending a partial --var set is an ERROR
+    // exit from bd, not a partial render, so the mode has to be chosen here.
+    assert(previewMode(f, {}) === 'compile', 'an empty form previews in compile mode');
+    assert(previewMode(f, { scope: 'api' }) === 'compile', 'a partially-filled form must NOT ask bd for runtime mode');
+    assert(previewMode(f, { scope: 'api', ticket: 'SEC-1' }) === 'runtime', 'a fully-resolvable form previews in runtime mode');
+    assert(Object.keys(previewVars(f, { scope: 'api' })).length === 0, 'compile mode must send no --var at all');
+    assert(previewVars(f, { scope: 'api', ticket: 'SEC-1' }).scope === 'api', 'runtime mode sends the filled vars');
+
+    // enum/pattern — ours to enforce, because bd does not.
+    assert(varViolations(f, { scope: 'api', ticket: 'SEC-1' }).length === 0, 'valid values must not flag');
+    assert(varViolations(f, { scope: 'bogus' })[0]?.key === 'scope', 'an out-of-enum value must flag');
+    assert(varViolations(f, { ticket: 'lowercase' })[0]?.key === 'ticket', 'a pattern-violating value must flag');
+    assert(varViolations({ vars: { x: { pattern: '([' } } }, { x: 'anything' }).length === 0,
+      'an unparseable pattern in the formula must not break the form');
+
+    // The ONE number read out of each dry-run's opaque text. Verbatim
+    // transcripts from bd v1.1.0; a shape change returns null (advisory), it
+    // never throws or invents a count.
+    assert(previewIssueCount('\nDry run: would pour 5 issues from proto mol-feature\n\n  - x (from y)\n') === 5,
+      'pour dry-run count must be read from bd\'s own wording');
+    assert(previewIssueCount('some other output entirely') === null, 'an unrecognized dry-run must yield null, not a guess');
+    assert(burnIssueCount('Dry run: would burn mol X\n\nIssues to delete (4 total):\n  - [open] a (b) [ROOT]\n') === 4,
+      'burn dry-run count must be read from bd\'s own wording');
+    assert(burnIssueCount('') === null, 'an empty burn dry-run must yield null');
+
+    console.log('smoke ok (formula derivations: runtime-vs-compile mode, defaults self-resolve, enum/pattern enforced client-side)');
+  }
+
+  // --- Phase 3: formula/molecule ROUTES, end to end -----------------------
+  // Against the real `bd init`'d fixture repo above: author a formula, browse
+  // it, preview variables, dry-run, pour (a real multi-bead write), verify the
+  // beads landed with the right shapes, then burn them back out. This is the
+  // one place the text-not-JSON dry-run quirk and the pour->burn round trip
+  // are exercised against the actual installed bd rather than a fixture.
+  {
+    const formulaDir = join(repoDir, '.beads', 'formulas');
+    mkdirSync(formulaDir, { recursive: true });
+    writeFileSync(join(formulaDir, 'smoke-flow.formula.json'), JSON.stringify({
+      formula: 'smoke-flow',
+      description: 'Smoke workflow: design then ship',
+      version: 1,
+      type: 'workflow',
+      vars: {
+        thing: { description: 'What is being built', required: true },
+        owner: { description: 'Owner', default: 'nobody' },
+      },
+      steps: [
+        { id: 'design', title: 'Design {{thing}}', type: 'task' },
+        { id: 'ship', title: 'Ship {{thing}} for {{owner}}', type: 'task', needs: ['design'] },
+      ],
+    }, null, 2));
+
+    const list = await fetch(p('/formulas')).then((r) => r.json());
+    assert(Array.isArray(list.formulas), '/api/formulas must always return an array (bd emits bare null when empty)');
+    const listed = list.formulas.find((f) => f.name === 'smoke-flow');
+    assert(listed && listed.steps === 2 && listed.vars === 2, `formula list entry mismatch: ${JSON.stringify(listed)}`);
+
+    const shown = await fetch(p('/formulas/smoke-flow')).then((r) => r.json());
+    assert(shown.formula?.formula === 'smoke-flow', 'formula show mismatch');
+    assert(missingVars(shown.formula, {}).length === 1, 'only the default-less var should block (owner has a default)');
+
+    const missingFormula = await fetch(p('/formulas/definitely-not-a-formula'));
+    assert(missingFormula.status === 404, `unknown formula should 404, got ${missingFormula.status}`);
+    const leak = await missingFormula.json();
+    assert(!/\//.test(leak.error || ''), `formula-not-found must not leak search paths: ${leak.error}`);
+    const badName = await fetch(p('/formulas/' + encodeURIComponent('../etc/passwd')));
+    assert(badName.status === 400, `a path-ish formula name should 400, got ${badName.status}`);
+
+    // Compile mode: no --var, placeholders intact.
+    const compile = await fetch(p('/formulas/smoke-flow/preview')).then((r) => r.json());
+    assert(compile.mode === 'compile' && compile.preview.steps[0].title === 'Design {{thing}}',
+      `compile preview mismatch: ${JSON.stringify(compile.preview?.steps?.[0])}`);
+    // Runtime mode: substituted, and the default filled itself in.
+    const runtime = await fetch(p('/formulas/smoke-flow/preview?var.thing=widgets')).then((r) => r.json());
+    assert(runtime.mode === 'runtime' && runtime.preview.steps[0].title === 'Design widgets',
+      `runtime preview mismatch: ${JSON.stringify(runtime.preview?.steps?.[0])}`);
+    assert(runtime.preview.steps[1].title === 'Ship widgets for nobody', 'a var default must self-resolve in runtime mode');
+    // bd's missing-variable complaint is PLAIN TEXT on stderr, not JSON —
+    // surfaced as a 400 with bd's own wording rather than parsed.
+    const gap = await fetch(p('/formulas/smoke-flow/preview?var.owner=alice'));
+    assert(gap.status === 400, `an unresolvable runtime preview should 400, got ${gap.status}`);
+    assert(/thing/.test((await gap.json()).error || ''), 'the 400 should name the unfilled variable');
+
+    // Dry run: OPAQUE TEXT. bd silently ignores --json here (v1.1.0), so the
+    // route must not promise structure — it returns the block verbatim.
+    const dry = await fetch(p('/molecules/pour-preview?proto=smoke-flow&var.thing=widgets')).then((r) => r.json());
+    assert(dry.ok && typeof dry.preview === 'string', 'pour dry-run must return preview TEXT');
+    assert(previewIssueCount(dry.preview) === 3, `dry-run should say 3 issues; got ${JSON.stringify(dry.preview)}`);
+    assert(/Design widgets/.test(dry.preview), 'dry-run text should itemize the substituted steps');
+    const dryMissing = await fetch(p('/molecules/pour-preview?proto=nope-not-here'));
+    assert(dryMissing.status === 404, `dry-run of an unknown proto should 404, got ${dryMissing.status}`);
+    assert(!/\/.+\//.test((await dryMissing.json()).error || ''), 'an unknown-proto error must not leak absolute paths');
+
+    // THE write.
+    const beforePour = (await fetch(p('/issues')).then((r) => r.json())).issues.length;
+    const poured = await fetch(p('/molecules/pour'), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ proto: 'smoke-flow', vars: { thing: 'widgets' } }),
+    }).then((r) => r.json());
+    assert(poured.ok && poured.created === 3, `pour should create 3 beads: ${JSON.stringify(poured)}`);
+    assert(poured.new_epic_id, 'pour must report the new molecule root id');
+    assert(poured.missing.length === 0, `every mapped bead must be observable in the export; missing ${JSON.stringify(poured.missing)}`);
+
+    const afterPour = (await fetch(p('/issues')).then((r) => r.json())).issues;
+    assert(afterPour.length === beforePour + 3, `issue count should grow by 3; ${beforePour} -> ${afterPour.length}`);
+    const root = afterPour.find((i) => i.id === poured.new_epic_id);
+    // The whole reason bd-console-6ag.4 existed: this type is NOT 'epic'.
+    assert(root && root.issue_type === 'molecule', `molecule root issue_type must be "molecule"; got ${root?.issue_type}`);
+    // ...and the container-grouping pass must nest its steps under it.
+    const grouped = containerGroups(afterPour).groups.find((g) => g.container.id === root.id);
+    assert(grouped && grouped.children.length === 2, `poured molecule must group its 2 steps; got ${grouped?.children.length}`);
+    assert(grouped.children.every((c) => moleculeRootOf(c, afterPour)?.id === root.id), 'each step must resolve back to its root');
+    // The `needs` edge became a real `blocks` dependency.
+    const ship = grouped.children.find((c) => /^Ship widgets/.test(c.title));
+    const design = grouped.children.find((c) => /^Design widgets/.test(c.title));
+    assert(ship && design && blockersOf(ship).includes(design.id), 'a formula `needs` must become a blocks dependency');
+
+    const molRes = await fetch(p('/molecules/' + root.id + '?parallel=1')).then((r) => r.json());
+    assert(molRes.molecule?.root?.id === root.id, 'GET /api/molecules/:id must return the molecule');
+    assert(molRes.progress?.total === 2, `mol progress should report 2 steps; got ${molRes.progress?.total}`);
+    assert(molRes.parallel && molRes.parallel.parallel_groups, 'parallel=1 must merge in bd ready --mol data');
+    const molMissing = await fetch(p('/molecules/xx-nothere'));
+    assert(molMissing.status === 404, `unknown molecule should 404, got ${molMissing.status}`);
+
+    // Burn as undo — dry run first, then the real cascade delete.
+    const burnDry = await fetch(p('/molecules/burn-preview?id=' + root.id)).then((r) => r.json());
+    assert(burnDry.ok && burnIssueCount(burnDry.preview) === 3, `burn dry-run should list 3 issues; got ${JSON.stringify(burnDry.preview)}`);
+    const burned = await fetch(p('/molecules/burn'), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: root.id }),
+    }).then((r) => r.json());
+    assert(burned.ok && burned.deleted_count === 3, `burn should delete 3 beads: ${JSON.stringify(burned)}`);
+    assert(burned.deleted.includes(root.id), 'burn response must list the deleted ids (field is `deleted`, not `deleted_ids`)');
+    const afterBurn = (await fetch(p('/issues')).then((r) => r.json())).issues;
+    assert(afterBurn.length === beforePour, `burn should return the repo to its pre-pour size; ${beforePour} -> ${afterBurn.length}`);
+    assert(!afterBurn.some((i) => i.issue_type === 'molecule'), 'no molecule should survive the burn');
+
+    // Validation: garbage never reaches execFile.
+    const badProto = await fetch(p('/molecules/pour'), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ proto: 'a b; rm -rf /', vars: {} }),
+    });
+    assert(badProto.status === 400, `a shell-ish proto should 400, got ${badProto.status}`);
+    const badVarKey = await fetch(p('/molecules/pour'), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ proto: 'smoke-flow', vars: { 'a b': 'x' } }),
+    });
+    assert(badVarKey.status === 400, `a non-identifier var key should 400, got ${badVarKey.status}`);
+
+    console.log(`smoke ok (formulas/molecules routes: browse -> preview -> dry-run -> pour(3) -> burn(3)): ${poured.new_epic_id}`);
   }
 
   console.log(`smoke ok: ${seedId}, ${quickRes.id}`);

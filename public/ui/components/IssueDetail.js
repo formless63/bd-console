@@ -6,7 +6,7 @@ import {
   store, byId, PRI_LABEL, parentOf, blockersOf, openBlockersOf, childrenOf, blocksList,
   effStatus, isReady, selectIssue, editIssue, addComment,
   LINK_TYPES, relatedOf, linkSectionsOf, retiredState,
-  supersedeIssue, markDuplicate,
+  supersedeIssue, markDuplicate, isContainer,
 } from '../store.js';
 import { PriBadge, StatusBadge, statusText, timeAgo } from './common.js';
 
@@ -224,7 +224,7 @@ export function IssueDetail() {
             </div>`
           : issue.status !== 'closed' && openBlockers.length > 0
             ? html`<div class="banner banner-blocked">⛔ Blocked by ${openBlockers.length} open ${openBlockers.length === 1 ? 'issue' : 'issues'}</div>`
-            : isReady(issue) && issue.issue_type !== 'epic'
+            : isReady(issue) && !isContainer(issue)
               ? html`<div class="banner banner-ready">✓ Ready to work — no open blockers</div>`
               : null}
 
