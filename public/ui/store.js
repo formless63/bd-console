@@ -109,6 +109,12 @@ export const store = {
   usageHistoryLoading: signal(false),
   usageHistoryDays: signal(30),
 
+  // installed vs. latest `bd` (beads CLI) version (hub-level; GET
+  // /api/bd-version — see lib/bdversion.mjs). Degrades to unavailable on an
+  // older server (404) exactly like the other hub-level "…Available" signals.
+  bdVersion: signal(null),
+  bdVersionAvailable: signal(true),
+
   // hub sections (ops strip, tmux strip, …) collapsed on mobile — collapsed
   // state is a set of section ids, persisted per-browser. Only meaningful at
   // the <=768px breakpoint (see .hub-section-body.collapsed in styles.css);
@@ -607,6 +613,22 @@ export async function loadUsageHistory(days = store.usageHistoryDays.value) {
     console.warn('Usage history unavailable: ' + e.message);
   } finally {
     store.usageHistoryLoading.value = false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// bd (beads CLI) version check (hub-level) — GET /api/bd-version.
+// `force` re-checks GitHub past the server's own cache TTL (manual refresh);
+// degrades to unavailable on 401/404/network exactly like loadUsage().
+// ---------------------------------------------------------------------------
+export async function loadBdVersion({ force = false } = {}) {
+  try {
+    const data = await apiGetRaw('/api/bd-version' + (force ? '?refresh=1' : ''));
+    store.bdVersion.value = data;
+    store.bdVersionAvailable.value = true;
+  } catch (e) {
+    store.bdVersionAvailable.value = false;
+    console.warn('bd version check unavailable: ' + e.message);
   }
 }
 

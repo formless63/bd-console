@@ -3,8 +3,8 @@
 // metrics and (optional) git insights.
 import { html } from 'htm/preact';
 import { useEffect, useState } from 'preact/hooks';
-import { store, navigate, loadProjectStats, loadTmux, loadSchedule, loadProjectsGit, loadUsage, loadUsageHistory, toggleHubSection } from '../store.js';
-import { timeAgo } from './common.js';
+import { store, navigate, loadProjectStats, loadTmux, loadSchedule, loadProjectsGit, loadUsage, loadUsageHistory, loadBdVersion, toggleHubSection, toast } from '../store.js';
+import { timeAgo, copyToClipboard } from './common.js';
 import { SessionRowCompact, HubTmuxHead } from './TmuxView.js';
 import { ProviderAttribution } from './UsageCharts.js';
 
@@ -202,6 +202,45 @@ function TmuxSection() {
             </div>`}
       </div>
     </section>`;
+}
+
+// ---------------------------------------------------------------------------
+// bd (beads CLI) version row — GET /api/bd-version (see lib/bdversion.mjs).
+// One-shot fetch (the server caches the GitHub lookup for hours, so polling
+// here would just re-hit the same cached value); a manual refresh isn't
+// offered from the hub — Settings has the fuller card + explicit "recheck".
+// Placed right above the Usage section: same "hub-wide glanceable status"
+// family as the ops strip and usage gauges above it.
+// ---------------------------------------------------------------------------
+async function copyUpdateCommand(cmd) {
+  const ok = await copyToClipboard(cmd);
+  toast(ok ? `Copied "${cmd}"` : cmd, ok ? 'ok' : 'warn', ok ? 3200 : 8000);
+}
+
+function BdVersionRow() {
+  useEffect(() => { loadBdVersion(); }, []);
+  if (!store.bdVersionAvailable.value) return null;
+  const v = store.bdVersion.value;
+  if (!v || !v.installed) return null;
+
+  const behind = v.behind === true && v.latest;
+
+  return html`
+    <div class="bd-version-row">
+      <span class="bd-version-chip" title=${'Installed via `bd version`' + (v.checkedAt ? ' · checked ' + timeAgo(v.checkedAt) : '')}>
+        <span class="bd-version-dot"></span>bd ${v.installed}
+      </span>
+      ${behind && html`
+        <button type="button" class="bd-update-chip"
+          title=${v.updateHint ? `Copy: ${v.updateHint}` : 'A newer bd release is available — see Settings for update options'}
+          onClick=${() => v.updateHint ? copyUpdateCommand(v.updateHint) : navigate('#/settings')}>
+          <span class="bd-update-badge">update available</span> → ${v.latest}
+        </button>`}
+      ${v.multipleBinaries && html`
+        <span class="bd-multi-chip" title=${'Multiple bd binaries on PATH:\n' + v.binaries.join('\n') + '\n\nSee Settings for details.'}>
+          ⚠ multiple bd on PATH
+        </span>`}
+    </div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -444,6 +483,8 @@ export function HubView() {
         <p class="muted">Select a project to manage its beads.</p>
         ${OpsStrip()}
       </div>
+
+      <${BdVersionRow} />
 
       ${UsageSection()}
 
