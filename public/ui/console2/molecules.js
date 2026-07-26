@@ -11,6 +11,7 @@ import { apiGet, apiPost, AuthError } from '../api.js';
 import { toast, loadIssues, selectIssue, requireToken } from '../store.js';
 import { previewMode, previewVars } from '../formulas.js';
 import { flashCli } from './state.js';
+import { learn } from '../learn.js';
 
 // A spawn creating this many beads at once earns an extra "are you sure" line
 // in the confirm step. Client-side heuristic only — bd imposes no limit.
@@ -210,6 +211,11 @@ export async function doPour() {
       ...(assignee ? { assignee } : {}),
     });
     flashCli(data.command || `bd mol pour ${formula.formula}`, 'pour');
+    // They've poured. The "you have never used these recipes" nudge is done,
+    // and the dialog's "what is a molecule?" explainer can rest collapsed —
+    // whatever it had to teach has now been demonstrated for real.
+    learn.recordAction('pour');
+    learn.setFlag('mol-intro-done', true);
     await loadIssues();
     // Land on the thing that was just created, not a list to re-find it in.
     if (data.new_epic_id) await selectIssue(data.new_epic_id);

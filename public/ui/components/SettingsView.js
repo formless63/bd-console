@@ -13,6 +13,8 @@ import {
 import { getToken, setToken } from '../api.js';
 import { THEME_PRESETS, SCHEMES, setPreset, setScheme } from '../theme.js';
 import { EpicCombobox, timeAgo, copyToClipboard, CopyIcon } from './common.js';
+import { useLearn } from './ConceptTip.js';
+import { HINTS } from '../learn.js';
 
 const FLAVOR_LABEL = { brew: 'Homebrew', npm: 'npm', script: 'install script', unknown: 'unknown' };
 // Shown when installFlavor can't be determined (or there's no updateHint) —
@@ -200,6 +202,43 @@ function AppearancePanel() {
             >${s.name}</button>`)}
         </div>
       </div>
+    </section>`;
+}
+
+// The master switch for the learning layer (public/ui/learn.js). Off is a
+// real off: no nudges, ever, on any surface. What it deliberately does NOT
+// turn off is the concept tooltips and the #/learn page — those are reference,
+// not tutorial, and there is no version of "I know this tool well" that means
+// "I never want to look a word up again".
+function LearningPanel() {
+  const learn = useLearn();
+  const enabled = learn.isEnabled();
+  const retired = HINTS.filter((h) => learn.status(h.id) !== 'new').length;
+
+  return html`
+    <section class="settings-card" data-learning-card>
+      <h2 class="settings-card-title">Learning hints</h2>
+      <p class="muted small">
+        Occasional one-line suggestions above your work — at most one at a time, at most once each, and gone for
+        good once dismissed or once you have obviously got the hang of the thing they were about.
+      </p>
+      <div class="learn-settings-row">
+        <label class="learn-switch">
+          <input type="checkbox" data-learn-master checked=${enabled}
+            onChange=${(e) => { learn.setEnabled(e.target.checked); toast(e.target.checked ? 'Learning hints on' : 'Learning hints off'); }} />
+          <span>Show learning hints</span>
+        </label>
+        <button class="btn btn-ghost" data-learn-reset
+          onClick=${() => { learn.reset(); toast('Hints reset — all of them can appear again'); }}>Reset hints</button>
+        <a class="btn btn-ghost" href="#/learn">Concepts reference →</a>
+      </div>
+      <p class="muted small learn-settings-note">
+        ${retired === 0
+          ? 'No hints have been shown or dismissed yet.'
+          : `${retired} of ${HINTS.length} hints have been seen, dismissed or outgrown.`}
+        ${' '}Turning this off never hides the <span class="learn-inline-dot" aria-hidden="true">?</span> markers
+        next to unfamiliar words, or the Concepts page — those are reference and stay available.
+      </p>
     </section>`;
 }
 
@@ -401,6 +440,7 @@ export function SettingsView() {
             ? html`<section class="settings-card"><p class="muted small">Loading…</p></section>`
             : html`<section class="settings-card"><p class="muted small">Server settings endpoint isn't available on this server yet (<code>GET /api/settings</code> 404s). Showing browser-only controls below.</p></section>`}
         <${AppearancePanel} />
+        <${LearningPanel} />
         <${BdVersionPanel} />
         <${BrowserTokenPanel} />
         <${ServerTokenPanel} />

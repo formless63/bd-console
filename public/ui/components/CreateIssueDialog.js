@@ -7,6 +7,8 @@ import { html } from 'htm/preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { store, createIssue, loadEpics, loadSettings, createEpicInline } from '../store.js';
 import { EpicCombobox } from './common.js';
+import { ConceptDot } from './ConceptTip.js';
+import { learn } from '../learn.js';
 
 // Each intent maps to a `bd create` type plus labels applied automatically
 // on top of anything the user adds by hand.
@@ -97,6 +99,7 @@ export function CreateIssueDialog() {
     setNewEpicBusy(true); setNewEpicErr('');
     try {
       const id = await createEpicInline({ title: t, priority: Number(priority) || 2 });
+      learn.recordAction('epic');
       setEpicId(id, true);
       setNewEpicOpen(false);
       setNewEpicTitle('');
@@ -134,6 +137,10 @@ export function CreateIssueDialog() {
           assignee: assignee.trim() || undefined,
         }),
       });
+      // Grouping learned: retire the "this list is getting long" nudge the
+      // moment an epic exists or a bead is filed into one. See learn.js.
+      if (isEpic) learn.recordAction('epic');
+      else if (epicId) learn.recordAction('parent');
       reset();
       close();
     } catch (e) { setErr(e.message); }
@@ -150,7 +157,7 @@ export function CreateIssueDialog() {
       <div class="dialog-body" onKeyDown=${(e) => { if (e.key === 'Escape') close(); }}>
         <div class="dialog-head">New issue</div>
 
-        <div class="intent-chips">
+        <div class="intent-chips" data-intent-chips>
           ${INTENTS.map((i) => html`
             <button key=${i.id} type="button" class=${'intent-chip' + (i.id === intentId ? ' on' : '')} onClick=${() => setIntentId(i.id)}>
               ${i.label}
@@ -174,7 +181,7 @@ export function CreateIssueDialog() {
           ${!isEpic && html`
             <label class="dialog-field epic-field">
               <span>
-                epic
+                epic<${ConceptDot} k="epic" />
                 <button type="button" class="btn-inline-new" onClick=${() => setNewEpicOpen((o) => !o)}>
                   ${newEpicOpen ? 'cancel' : '+ new epic'}
                 </button>

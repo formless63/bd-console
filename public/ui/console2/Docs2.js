@@ -8,6 +8,7 @@ import { store, openDoc, loadDocs } from '../store.js';
 import { c2 } from './state.js';
 import { renderMarkdown } from '../markdown.js';
 import { saveDoc, capturePromoted } from './actions.js';
+import { LearnEmpty } from '../components/ConceptTip.js';
 
 function Tree() {
   const q = (store.docFilter.value || '').toLowerCase();
@@ -22,7 +23,7 @@ function Tree() {
         <button class="c2-doctree-close" aria-label="Close doc list" title="Close" onClick=${() => (c2.docTreeOpen.value = false)}>✕</button>
       </div>
       <div class="c2-doctree-list">
-        ${docs.length === 0 ? html`<div class="c2-lane-empty">no docs</div>`
+        ${docs.length === 0 ? html`<div class="c2-lane-empty">${q ? 'no match' : 'no docs'}</div>`
           : docs.map((d) => html`
             <button key=${d.path} class=${'c2-doc-item' + (sel === d.path ? ' active' : '')} title=${d.path}
               onClick=${() => pick(d.path)}>
@@ -128,6 +129,8 @@ export function Docs2() {
   const path = store.selectedDocPath.value;
   const content = store.docContent.value;
   const editing = c2.docEditing.value;
+  const hasDocs = store.docs.value.length > 0;
+  const loadingDocs = store.docsLoading.value;
 
   // reset editor state when switching docs
   useEffect(() => {
@@ -145,11 +148,20 @@ export function Docs2() {
     <div class="c2-docs">
       ${Tree()}
       <section class="c2-doc-main">
-        ${!path ? html`
-            <div class="c2-map-empty">
-              Select a document — then select any text to promote it to an issue.
-              <div><button class="c2-mini c2-doctree-toggle" onClick=${() => (c2.docTreeOpen.value = true)}>Browse docs…</button></div>
+        ${!path ? (hasDocs
+          ? html`
+            <div class="c2-map-emptywrap">
+              <${LearnEmpty} icon="❐" title="Docs"
+                what="Every markdown file in this project, readable and editable right here."
+                why="Select any sentence in a document and a “Promote to issue” button appears — the new issue keeps the quote and remembers which file it came from, so a note in a document can become real work without being retyped."
+                actionLabel="Browse docs…" onAction=${() => (c2.docTreeOpen.value = true)} />
             </div>`
+          : html`
+            <div class="c2-map-emptywrap">
+              <${LearnEmpty} icon="❐" title="No documents here"
+                what=${'This project has no markdown files for bd-console to show' + (loadingDocs ? ' yet…' : '.')}
+                why="Add a README.md or a docs/ folder to the project and they will appear here — with the ability to turn any paragraph you select straight into an issue." />
+            </div>`)
           : html`
             <div class="c2-doc-bar">
               <button class="c2-mini c2-doctree-toggle" title="Browse docs" onClick=${() => (c2.docTreeOpen.value = true)}>☰ docs</button>

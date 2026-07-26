@@ -1,0 +1,244 @@
+/* learn.css — the progressive-discoverability layer.
+ *
+ * Everything here rides on the app's existing design tokens (--surface,
+ * --text-dim, --accent, --border, …) which every theme preset redefines in
+ * styles.css, so all of it is automatically correct in synergy/ocean/dracula/
+ * nord/gruvbox and in both light and dark without a single hard-coded colour.
+ *
+ * Deliberately quiet: the whole point of this layer is that an experienced
+ * user stops seeing it. Nothing here glows, pulses, or competes with content.
+ */
+
+/* ---------------------------------------------------------------------------
+ * Concept tooltip — the affordance and its panel.
+ * ------------------------------------------------------------------------- */
+.learn-tip { position: relative; display: inline-flex; align-items: center; white-space: nowrap; }
+.learn-term { display: inline-flex; align-items: baseline; gap: 1px; }
+
+.learn-dot {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; margin-left: 3px; padding: 0;
+  flex: none; vertical-align: baseline;
+  font: 600 9px/1 var(--font-ui, system-ui), system-ui, sans-serif;
+  color: var(--text-faint);
+  background: transparent;
+  border: 1px solid var(--border-2);
+  border-radius: 50%;
+  cursor: help;
+  opacity: 0.72;
+  transition: opacity 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.learn-dot:hover, .learn-dot[aria-expanded="true"] { opacity: 1; color: var(--accent); border-color: var(--accent); }
+.learn-dot:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; opacity: 1; }
+
+.learn-inline-dot {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; font-size: 9px; font-weight: 600;
+  color: var(--text-faint); border: 1px solid var(--border-2); border-radius: 50%;
+}
+
+.learn-pop {
+  position: fixed; z-index: 90;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 11px 13px;
+  background: var(--elevated);
+  border: 1px solid var(--border-2);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgb(var(--shadow-rgb) / 0.28);
+  white-space: normal;
+  animation: learnpop 0.12s ease both;
+}
+@keyframes learnpop { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .learn-pop { animation: none; } }
+
+.learn-pop-term {
+  font-family: var(--font-display, var(--font-heading, inherit));
+  font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--accent);
+}
+.learn-pop-short { font-size: 13px; line-height: 1.45; color: var(--text); }
+.learn-pop-when { font-size: 12px; line-height: 1.45; color: var(--text-dim); }
+.learn-pop-when b { color: var(--text-dim); font-weight: 600; }
+.learn-pop-more { font-size: 12px; color: var(--accent); text-decoration: none; align-self: flex-start; }
+.learn-pop-more:hover { text-decoration: underline; }
+.learn-pop-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+/* ---------------------------------------------------------------------------
+ * Rich empty states. Quiet by default — this is what an unused section looks
+ * like for as long as it stays unused, so it must never read as an alert.
+ * ------------------------------------------------------------------------- */
+.learn-empty {
+  display: flex; gap: 11px; align-items: flex-start;
+  padding: 14px 15px;
+  text-align: left;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--surface-2) 55%, transparent);
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+}
+.learn-empty.compact { padding: 10px 11px; gap: 9px; border-radius: 8px; }
+.learn-empty-icon { font-size: 16px; line-height: 1.3; color: var(--text-faint); flex: none; }
+.learn-empty-body { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.learn-empty-title {
+  display: flex; align-items: center; gap: 2px;
+  font-family: var(--font-display, var(--font-heading, inherit));
+  font-size: 11px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--text-dim);
+}
+.learn-empty-what { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text); }
+.learn-empty.compact .learn-empty-what { font-size: 12px; }
+.learn-empty-why { margin: 0; font-size: 12px; line-height: 1.5; color: var(--text-dim); }
+.learn-empty-cta {
+  align-self: flex-start; margin-top: 3px;
+  padding: 4px 10px; font-size: 12px;
+  color: var(--text); background: transparent;
+  border: 1px solid var(--border-2); border-radius: 6px; cursor: pointer;
+}
+.learn-empty-cta:hover { color: var(--accent); border-color: var(--accent); }
+.learn-empty-cta:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------------------------------------------------------------------------
+ * Nudge — one at a time, dismissible, gone forever after.
+ * ------------------------------------------------------------------------- */
+.learn-nudge-rail { padding: 8px 16px 0; }
+.learn-nudge {
+  display: flex; gap: 11px; align-items: flex-start;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
+  border-radius: 10px;
+}
+.learn-nudge-mark { color: var(--accent); font-size: 11px; line-height: 1.6; flex: none; }
+.learn-nudge-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.learn-nudge-title { display: flex; align-items: center; gap: 2px; font-size: 13px; font-weight: 600; color: var(--text); }
+/* open-props' normalize caps every <p> at ~60ch. That's the right measure for
+   the empty-state blocks (which sit in narrow columns anyway) but it makes the
+   full-width nudge strip look like a ragged column, so widen it here only. */
+.learn-nudge-text { margin: 0; max-inline-size: 88ch; font-size: 12.5px; line-height: 1.5; color: var(--text-dim); }
+.learn-nudge-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+.learn-nudge-cta {
+  padding: 4px 11px; font-size: 12px; white-space: nowrap;
+  color: var(--accent-ink); background: var(--accent);
+  border: 1px solid var(--accent); border-radius: 6px; cursor: pointer;
+}
+.learn-nudge-cta:hover { filter: brightness(1.08); }
+.learn-nudge-x {
+  width: 26px; height: 26px; flex: none;
+  color: var(--text-faint); background: transparent;
+  border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 11px;
+}
+.learn-nudge-x:hover { color: var(--text); border-color: var(--border-2); }
+.learn-nudge-cta:focus-visible, .learn-nudge-x:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+@media (max-width: 640px) {
+  .learn-nudge { flex-wrap: wrap; }
+  .learn-nudge-actions { width: 100%; justify-content: flex-end; }
+}
+
+/* ---------------------------------------------------------------------------
+ * Molecule explainer (inside the pour dialog) — collapsible, remembered.
+ * ------------------------------------------------------------------------- */
+.learn-explainer { border: 1px solid var(--border); border-radius: 10px; background: color-mix(in srgb, var(--surface-2) 50%, transparent); }
+.learn-explainer-toggle {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  padding: 8px 11px; text-align: left;
+  font-size: 12.5px; color: var(--text-dim);
+  background: transparent; border: 0; cursor: pointer;
+}
+.learn-explainer-toggle:hover { color: var(--text); }
+.learn-explainer-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 10px; }
+.learn-explainer-caret { font-size: 10px; color: var(--text-faint); }
+.learn-explainer-body { padding: 0 12px 12px 29px; display: flex; flex-direction: column; gap: 7px; }
+.learn-explainer-body p { margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--text-dim); }
+.learn-explainer-eg {
+  font-size: 12px; line-height: 1.5; color: var(--text-dim);
+  padding: 8px 10px; border-left: 2px solid var(--border-2);
+  background: color-mix(in srgb, var(--surface-2) 60%, transparent); border-radius: 0 6px 6px 0;
+}
+.learn-explainer-eg b { color: var(--text); font-weight: 600; }
+.learn-explainer-more { font-size: 12px; color: var(--accent); text-decoration: none; align-self: flex-start; }
+.learn-explainer-more:hover { text-decoration: underline; }
+
+/* ---------------------------------------------------------------------------
+ * #/learn — the reference page.
+ * ------------------------------------------------------------------------- */
+.learn-view { max-width: 62rem; }
+.learn-sub { font-size: 13px; color: var(--text-dim); }
+
+.learn-toc { display: flex; flex-wrap: wrap; gap: 7px; margin: 0 0 22px; }
+.learn-toc-link {
+  padding: 4px 11px; font-size: 12px; text-decoration: none;
+  color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 999px;
+}
+.learn-toc-link:hover { color: var(--accent); border-color: var(--accent); }
+.learn-toc-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.learn-section { margin: 0 0 34px; }
+.learn-h2 {
+  margin: 0 0 6px;
+  font-family: var(--font-heading, inherit);
+  font-size: 17px; font-weight: 600; color: var(--text);
+  padding-bottom: 7px; border-bottom: 1px solid var(--border);
+}
+.learn-group-blurb { margin: 8px 0 16px; font-size: 13px; line-height: 1.6; color: var(--text-dim); max-width: 60ch; }
+.learn-lede { margin: 12px 0; font-size: 16px; line-height: 1.55; color: var(--text); max-width: 60ch; }
+.learn-section p { margin: 10px 0; font-size: 13.5px; line-height: 1.65; color: var(--text-dim); max-width: 70ch; }
+.learn-section p b { color: var(--text); font-weight: 600; }
+.learn-section code { font-family: var(--font-mono, monospace); font-size: 0.92em; padding: 1px 5px; background: var(--surface-2); border-radius: 4px; }
+.learn-section kbd {
+  font-family: var(--font-mono, monospace); font-size: 0.85em; padding: 1px 5px;
+  background: var(--surface-2); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px;
+}
+.learn-section a { color: var(--accent); }
+
+.learn-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr)); gap: 12px; }
+.learn-card {
+  padding: 13px 15px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  scroll-margin-top: 84px;
+  transition: border-color 0.3s ease, background-color 0.3s ease;
+}
+.learn-card.flash { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--surface)); }
+.learn-card-term {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px;
+  margin: 0 0 7px;
+  font-family: var(--font-mono, monospace); font-size: 14px; font-weight: 600; color: var(--text);
+}
+.learn-card-dir {
+  font-family: var(--font-ui, system-ui), system-ui, sans-serif; font-size: 10.5px; font-weight: 500;
+  color: var(--text-faint); white-space: nowrap;
+}
+.learn-card-short { margin: 0 0 8px !important; font-size: 13.5px !important; line-height: 1.5 !important; color: var(--text) !important; }
+.learn-card-body { margin: 0 0 8px !important; font-size: 12.5px !important; line-height: 1.6 !important; color: var(--text-dim) !important; }
+.learn-card-when { margin: 0 0 6px !important; font-size: 12.5px !important; line-height: 1.55 !important; color: var(--text-dim) !important; }
+.learn-card-when b { color: var(--text); }
+.learn-card-eg {
+  margin: 0 !important; font-size: 12px !important; line-height: 1.5 !important; color: var(--text-dim) !important;
+  padding: 7px 9px; border-left: 2px solid var(--border-2); background: color-mix(in srgb, var(--surface-2) 55%, transparent);
+  border-radius: 0 6px 6px 0;
+}
+.learn-eg-k { font-weight: 600; color: var(--text-faint); margin-right: 4px; }
+
+.learn-where { display: flex; flex-direction: column; gap: 2px; margin-top: 12px; }
+.learn-where-row {
+  display: grid; grid-template-columns: 11rem minmax(0, 1fr); gap: 14px;
+  padding: 9px 2px; border-bottom: 1px solid var(--border);
+}
+.learn-where-row:last-child { border-bottom: 0; }
+.learn-where-k { font-size: 13px; font-weight: 600; color: var(--text); }
+.learn-where-v { font-size: 13px; line-height: 1.6; color: var(--text-dim); }
+
+.learn-count { margin-top: 26px; }
+
+@media (max-width: 560px) {
+  .learn-where-row { grid-template-columns: minmax(0, 1fr); gap: 3px; }
+  .learn-cards { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ---------------------------------------------------------------------------
+ * Settings card for the master switch.
+ * ------------------------------------------------------------------------- */
+.learn-settings-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.learn-switch { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); cursor: pointer; }
+.learn-switch input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+.learn-settings-note { margin-top: 10px; }

@@ -17,6 +17,7 @@ import { store, selectIssue } from '../store.js';
 import { graphLayout, OVERLAY_TOGGLE_TYPES } from './derive.js';
 import { c2, loadMapOverlayPref, setMapOverlayPref } from './state.js';
 import { TYPE_GLYPH, glyphStatus, STATUS_GLYPH_CHAR, STATUS_GLYPH_LABEL } from './ui.js';
+import { LearnEmpty, ConceptDot } from '../components/ConceptTip.js';
 
 const NODE_W = 168, NODE_H = 54;
 const ZOOM_MIN = 0.3, ZOOM_MAX = 2.4;
@@ -197,8 +198,26 @@ export function MapView() {
     };
   }, [view.x, view.y, view.k]);
 
+  // Two genuinely different empty states, and conflating them was the old
+  // bug in miniature: "there is nothing to draw" and "there is plenty to draw
+  // but you have never told the tool how any of it fits together" need
+  // completely different sentences. The second one is the single most common
+  // reason a new user finds this view useless.
   if (nodes.length === 0) {
-    return html`<div class="c2-map"><div class="c2-map-empty">No open issues to map.</div></div>`;
+    return html`
+      <div class="c2-map"><div class="c2-map-emptywrap">
+        <${LearnEmpty} icon="◇" title="Dependency map"
+          what="This draws a picture of what is waiting on what, across all the open work."
+          why="There is no open work to draw right now. Capture something and it will appear here." />
+      </div></div>`;
+  }
+  if (layoutEdges.length === 0) {
+    return html`
+      <div class="c2-map"><div class="c2-map-emptywrap">
+        <${LearnEmpty} icon="◇" title="Nothing depends on anything yet" k="blocks"
+          what=${`All ${nodes.length} open ${nodes.length === 1 ? 'issue is' : 'issues are'} standing on their own, so there is no shape to draw.`}
+          why="Open an issue and use its “Blocked by” row to say what has to happen first. Do that a few times and this becomes a map of the order things must happen in — and the Ready lane starts telling you what you can actually pick up." />
+      </div></div>`;
   }
 
   const layoutEdge = (e, i) => {
@@ -251,7 +270,7 @@ export function MapView() {
   return html`
     <div class="c2-map">
       <div class="c2-map-toolbar">
-        <span class="c2-hud-label">Dependency map</span>
+        <span class="c2-hud-label">Dependency map<${ConceptDot} k="blocks" /></span>
         <span class="c2-map-legend"><i class="lg crit"></i> critical chain · scroll to zoom · drag to pan</span>
         <button class="c2-mini" onClick=${reset}>reset view</button>
       </div>

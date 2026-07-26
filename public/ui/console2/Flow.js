@@ -7,6 +7,7 @@ import { c2, setEpicGroup } from './state.js';
 import { lanes, isStale, focusedIds, LANE_LABEL } from './derive.js';
 import { actClaim, actStart, actClose, actDefer } from './actions.js';
 import { TypeGlyph, Pip, AgeChip, StatusGlyph, glyphStatus } from './ui.js';
+import { LearnEmpty, ConceptDot } from '../components/ConceptTip.js';
 
 const LANES = [
   ['triage', 'Triage', 'triage'],
@@ -15,6 +16,41 @@ const LANES = [
   ['blocked', 'Blocked', 'blocked'],
   ['done', 'Done · 7d', 'done'],
 ];
+
+// An empty lane is the best teaching moment in the app: the user is looking
+// straight at a labelled box with nothing in it and wondering what it is for.
+// One line on what belongs here, one on why it matters, and — where there is
+// an unambiguous next move — one button. `emptyGood` marks the lanes whose
+// emptiness is a success (nothing blocked, nothing stale) rather than a gap,
+// so the copy congratulates instead of instructing.
+const LANE_EMPTY = {
+  triage: {
+    concept: 'triage',
+    what: 'Half-formed thoughts land here.',
+    why: 'Type anything into the box at the top and press Enter — it arrives here instead of being lost, and you can sort it out later.',
+  },
+  ready: {
+    concept: 'ready',
+    what: 'Work you could pick up right now shows up here.',
+    why: 'A piece of work is ready when nothing it depends on is still open. Nothing is here yet — either everything is done, or everything is waiting on something else.',
+  },
+  in_progress: {
+    concept: 'in_progress',
+    what: 'Whatever is being worked on right now sits here.',
+    why: 'Press claim on a card to put your name on it and move it here — it tells everyone else where you are, and starts the clock so nothing quietly ages.',
+  },
+  blocked: {
+    concept: 'blocked',
+    what: 'Nothing is waiting on anything else. Good.',
+    why: 'When you record that one piece of work blocks another, the blocked one lands here and leaves again by itself the moment its blocker closes.',
+    emptyGood: true,
+  },
+  done: {
+    concept: 'closed',
+    what: 'Everything closed in the last seven days appears here.',
+    why: 'It is the only honest answer to "what did we actually get done this week", and it empties itself as things age out.',
+  },
+};
 
 function Card({ issue }) {
   const id = issue.id;
@@ -74,7 +110,14 @@ function Lane({ laneKey, title, cls, items, focus, focusSet }) {
       </header>
       <div class="c2-lane-body">
         ${filtered.length === 0
-          ? html`<div class="c2-lane-empty">${focus ? 'no matches' : '—'}</div>`
+          ? (focus
+            // A focus narrowing a lane to nothing is a filter result, not an
+            // empty section — explaining what the lane is for here would be
+            // answering a question the user didn't ask.
+            ? html`<div class="c2-lane-empty">no matches</div>`
+            : html`<${LearnEmpty} compact k=${LANE_EMPTY[laneKey]?.concept}
+                what=${LANE_EMPTY[laneKey]?.what || 'Nothing here yet.'}
+                why=${LANE_EMPTY[laneKey]?.why} />`)
           : filtered.map((i) => html`<${Card} key=${i.id} issue=${i} />`)}
       </div>
     </section>`;
@@ -105,6 +148,18 @@ function EpicRows({ focusSet }) {
   return html`
     <div class="c2-epicrows">
       ${focusSet && rows.length === 0 && orphans.length === 0 && html`<div class="c2-lane-empty">No issues match this focus.</div>`}
+      ${/* Grouping is ON by default, so a project that has never made an epic
+            lands here and sees a single "Standalone" pile with nothing
+            explaining what the grouping it just asked for would have done.
+            One block, only while there is genuinely nothing to group, that
+            says what an epic is for and offers to make one. Vanishes the
+            instant the first epic exists. */ ''}
+      ${!focusSet && rows.length === 0 && orphans.length > 0 && html`
+        <${LearnEmpty} k="epic" icon="◆"
+          what="Nothing has been grouped yet, so everything is in one pile below."
+          why="An epic is an issue whose job is to hold other issues. Make one, set it as the parent of a few of these, and this view becomes one row per epic with its own progress bar."
+          actionLabel="Create an epic"
+          onAction=${() => { store.createOpen.value = true; }} />`}
       ${rows.map(({ epic, kids, closed, total }) => html`
         <section class=${'c2-epicrow ct-' + epic.issue_type} key=${epic.id}>
           <header class="c2-epicrow-head" onClick=${() => selectIssue(epic.id)}>
@@ -120,7 +175,12 @@ function EpicRows({ focusSet }) {
             </span>
           </header>
           <div class="c2-epicrow-body">
-            ${kids.length === 0 ? html`<div class="c2-lane-empty">${focusSet ? 'no matches' : 'no children'}</div>`
+            ${kids.length === 0
+              ? (focusSet
+                ? html`<div class="c2-lane-empty">no matches</div>`
+                : html`<${LearnEmpty} compact k="epic"
+                    what=${'Nothing has been put inside "' + epic.title + '" yet.'}
+                    why="Open any issue, set its Parent to this one, and it will appear here with a progress bar across the whole group." />`)
               : kids.map((k) => html`<${Card} key=${k.id} issue=${k} />`)}
           </div>
         </section>`)}
@@ -144,6 +204,7 @@ export function Flow() {
         <button class="c2-mini c2-grouptoggle" aria-pressed=${epic} onClick=${() => setEpicGroup(pid, !epic)}>
           ${epic ? 'Ungroup' : 'Group by epic'}
         </button>
+        <${ConceptDot} k="epic" />
         ${focus && html`<button class="c2-clearfocus" title="Clear focus" onClick=${() => (c2.laneFocus.value = null)}>focus: ${LANE_LABEL[focus] || focus} <span aria-hidden="true">✕</span></button>`}
       </div>
       ${epic

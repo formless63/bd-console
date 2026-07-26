@@ -5,6 +5,12 @@
 import { store, editIssue, quickCapture, createIssue, toast, navigate, selectIssue, requireToken } from '../store.js';
 import { apiPost, getToken, AuthError } from '../api.js';
 import { flashCli } from './state.js';
+// Nudge retirement (public/ui/learn.js): a hint's whole job is to teach one
+// move, so the moment the user makes that move — anywhere, by any route — the
+// hint is retired permanently rather than waiting for the next data refresh to
+// notice. recordAction() is a no-op for every key no hint listens for, so
+// sprinkling it on the write paths costs nothing.
+import { learn } from '../learn.js';
 
 const q = (s) => JSON.stringify(String(s));
 
@@ -54,6 +60,7 @@ export async function actStart(id) {
 export async function actClose(id, reason) {
   await withErrorToast(() => editIssue({ id, op: 'set-status', status: 'closed', reason: reason || '' }, 'Closed ' + id), `Failed to close ${id}`);
   flashCli(reason ? `bd close ${id} --reason ${q(reason)}` : `bd close ${id}`, 'close');
+  learn.recordAction('close');
 }
 export async function actReopen(id, reason) {
   await withErrorToast(() => editIssue({ id, op: 'set-status', status: 'open', reason: reason || '' }, 'Reopened ' + id), `Failed to reopen ${id}`);
@@ -66,6 +73,7 @@ export async function actPriority(id, p) {
 export async function actDefer(id, when) {
   await withErrorToast(() => editIssue({ id, op: 'set-defer', defer: when }, `Deferred ${id}`), `Failed to defer ${id}`);
   flashCli(`bd update ${id} --defer ${q(when)}`, 'defer');
+  learn.recordAction('defer');
 }
 export async function actAddLabel(id, label) {
   await withErrorToast(() => editIssue({ id, op: 'add-label', label }, `Labeled ${id}`), `Failed to label ${id}`);
@@ -78,10 +86,12 @@ export async function actRemoveLabel(id, label) {
 export async function actSetParent(id, parent) {
   await withErrorToast(() => editIssue({ id, op: 'set-parent', parent }, parent ? `Reparented ${id}` : `Cleared parent of ${id}`), `Failed to reparent ${id}`);
   flashCli(`bd update ${id} --parent ${parent || '""'}`, 'parent');
+  if (parent) learn.recordAction('parent');
 }
 export async function actAddBlocker(id, blocker) {
   await withErrorToast(() => editIssue({ id, op: 'add-blocker', blocker }, `Added blocker to ${id}`), `Failed to add blocker to ${id}`);
   flashCli(`bd dep add ${id} ${blocker}`, 'blocker');
+  learn.recordAction('link');
 }
 export async function actRemoveBlocker(id, blocker) {
   await withErrorToast(() => editIssue({ id, op: 'remove-blocker', blocker }, `Removed blocker from ${id}`), `Failed to remove blocker from ${id}`);

@@ -3,7 +3,7 @@
 // prefix → command palette over bd verbs; (3) fuzzy match → jump to an issue.
 import { html } from 'htm/preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { store, selectIssue } from '../store.js';
+import { store, selectIssue, navigate } from '../store.js';
 import { c2 } from './state.js';
 import {
   captureTriage, actClaim, actStart, actClose, actDefer, actPriority,
@@ -27,6 +27,11 @@ function buildCommands() {
     { name: 'map', hint: 'dependency map', kind: 'view', run: () => setMode('map') },
     { name: 'docs', hint: 'docs + promote', kind: 'view', run: () => setMode('docs') },
     { name: 'stats', hint: 'focus the pulse rail', kind: 'view', run: () => { c2.laneFocus.value = null; document.querySelector('.c2-pulse')?.scrollIntoView({ behavior: 'smooth' }); } },
+    // The palette is the one place a user browses to find out what this app
+    // can do, so the concepts reference belongs in it — someone who doesn't
+    // know the word "molecule" won't go looking for a glossary, but they will
+    // scroll this list.
+    { name: 'learn', hint: 'what these words mean — concepts reference', kind: 'view', run: () => navigate('#/learn') },
     { name: 'claim', arg: '<id>', arity: 1, hint: 'claim an issue', kind: 'action', run: (a) => actClaim(a[0]) },
     { name: 'start', arg: '<id>', arity: 1, hint: 'mark in progress', kind: 'action', run: (a) => actStart(a[0]) },
     { name: 'close', arg: '<id> [reason]', arity: 1, hint: 'close an issue', kind: 'action', run: (a) => actClose(a[0], a.slice(1).join(' ')) },

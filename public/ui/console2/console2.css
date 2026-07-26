@@ -42,7 +42,11 @@
      silently widens the whole grid past the viewport — the same bug class
      as the .c2-body lane blowout, one level up. */
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto auto minmax(0, 1fr);
+  /* header / pulse bar / nudge slot / body. The nudge slot is an always-
+     present but usually EMPTY row (see Console2.js's Nudges) — auto-placement
+     assigns rows by child order, so the row has to exist unconditionally or
+     .c2-body would take it and lose its minmax(0,1fr). */
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   height: 100%;
   background: var(--bg);
   color: var(--text);
@@ -898,4 +902,57 @@ select.c2-linktype { flex: 0 0 auto; max-width: 140px; }
   .mol-dry-text, .mol-dry-cmd { font-size: 10px; max-height: 30vh; }
   .mol-actions { flex-wrap: wrap; }
   .mol-dialog .dialog-body { max-height: 90vh; }
+}
+
+/* ---------------------------------------------------------------------------
+   Learning layer hooks inside Console 2.0 (the layer itself lives in
+   public/ui/learn.css). Only the bits that have to know about c2's own
+   geometry are here: the header entry points, the empty-state wrappers that
+   replace the old one-line "—" placeholders, and the link-type gloss.
+   --------------------------------------------------------------------------- */
+
+/* Molecules: a real, visible entry point. `> mol` in the omnibar was the only
+   way in, which made the whole feature invisible to anyone who hadn't read the
+   docs — i.e. exactly the people it's hardest for. */
+.c2-molbtn { display: inline-flex; align-items: center; gap: 3px; padding: 6px 11px; font-size: 12px; cursor: pointer;
+  background: transparent; border: 1px solid var(--c2-line); border-radius: var(--radius-sm); color: var(--text-dim); }
+.c2-molbtn:hover { color: var(--c2-synergy); border-color: color-mix(in srgb, var(--c2-synergy) 55%, var(--c2-line)); }
+.c2-molbtn-n { font-family: var(--font-display); font-size: 9px; letter-spacing: 0.04em; padding: 1px 5px; margin-left: 3px;
+  color: var(--c2-synergy); border: 1px solid color-mix(in srgb, var(--c2-synergy) 40%, var(--border)); border-radius: 999px; }
+
+.c2-learnlink { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex: none;
+  font-size: 13px; font-weight: 600; text-decoration: none; color: var(--text-dim);
+  border: 1px solid var(--c2-line); border-radius: var(--radius-sm); }
+.c2-learnlink:hover { color: var(--c2-neon); border-color: var(--c2-neon); }
+
+/* HUD labels host a concept "?" — keep the dot on the label's baseline row. */
+.c2-hud-label, .c2-edit-k { display: inline-flex; align-items: center; gap: 1px; }
+
+/* Empty-state wrappers: these replace centred one-liners, so they need the
+   same centring the old placeholders got from .c2-map-empty. */
+.c2-map-emptywrap { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 24px; overflow-y: auto; }
+.c2-map-emptywrap .learn-empty { max-width: 30rem; }
+.c2-lane-body .learn-empty { margin-top: 2px; }
+.c2-field .learn-empty { margin-top: 2px; }
+
+/* Plain-English restatement of the selected link type, under the picker. */
+.c2-linktype-gloss { font-size: 11.5px; line-height: 1.5; color: var(--text-dim); padding: 6px 9px; margin-top: -2px;
+  background: color-mix(in srgb, var(--surface-2) 55%, transparent); border-left: 2px solid var(--c2-line-2); border-radius: 0 6px 6px 0; }
+.c2-linktype-gloss b { color: var(--text); font-family: var(--font-mono); font-size: 11px; }
+.c2-linktype-dir { display: block; margin-top: 2px; color: var(--text-faint); font-size: 10.5px; }
+
+/* The nudge strip sits between the pulse rail and the canvas — never over it.
+   The slot itself is zero-height whenever there is no nudge, which is nearly
+   always. */
+.c2-nudgeslot { min-height: 0; }
+.c2 .learn-nudge-rail { padding: 8px 16px 0; }
+
+@media (max-width: 768px) {
+  /* Two more header controls have to fit next to +New / sync / classic on a
+     phone: condense both to icons, give them real touch targets, and let the
+     right-hand cluster wrap rather than push the row into a scroll. */
+  .c2-molbtn .c2-btn-label { display: none; }
+  .c2-header-right { flex-wrap: wrap; justify-content: flex-end; }
+  .c2-molbtn, .c2-learnlink { min-width: 44px; min-height: 44px; justify-content: center; }
+  .c2 .learn-nudge-rail { padding: 8px 12px 0; }
 }

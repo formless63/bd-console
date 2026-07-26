@@ -24,6 +24,14 @@ import {
   formulaVars, pourBeadCount, missingVars, previewMode, previewVars,
   varViolations, previewIssueCount, burnIssueCount,
 } from '../public/ui/formulas.js';
+// Progressive-discoverability engine (public/ui/learn.js) — same import-free
+// contract as relationships.js above, precisely so its lifecycle rules ("shows
+// once, dismissal is permanent, doing the thing retires the hint") are
+// assertable here rather than only observable by clicking around a browser.
+import {
+  createLearnStore, learnContext, CONCEPTS, CONCEPT_GROUPS, HINTS, concept,
+  conceptHref, isLearnHash, learnAnchorFromHash, LEARN_KEY,
+} from '../public/ui/learn.js';
 import { LINK_TYPES as SERVER_LINK_TYPES } from '../lib/bd.mjs';
 import { parseScopedLimits } from '../lib/usage.mjs';
 import { parseBdVersionStdout, compareVersions, isBehind } from '../lib/bdversion.mjs';
@@ -1668,6 +1676,180 @@ try {
       `molecule rollup blocked/open mismatch: ${roll.blocked}/${roll.open}`);
 
     console.log('smoke ok (molecule containment: molecule root groups its 4 steps, rollup 1/4 closed 25%)');
+  }
+
+  // --- progressive discoverability: learn.js lifecycle (pure) --------------
+  // The whole promise of this layer is "never nags": a nudge appears in ONE
+  // session, a dismissal is permanent across reloads, and doing the thing the
+  // nudge was about retires it whether or not it was ever seen. Those are
+  // storage-shaped promises, which is exactly the kind that rot silently — so
+  // they're asserted against a fake localStorage here, with no browser.
+  {
+    // A fake localStorage. `dump` is the persisted bytes, so "survives a
+    // reload" can be tested honestly: a second store instance reading the same
+    // bytes IS a reload.
+    const fakeStorage = () => {
+      const m = new Map();
+      return {
+        map: m,
+        getItem: (k) => (m.has(k) ? m.get(k) : null),
+        setItem: (k, v) => m.set(k, String(v)),
+        removeItem: (k) => m.delete(k),
+      };
+    };
+
+    // Every concept the UI links to must exist, and every hint must point at a
+    // real concept — a dead "Read more" is worse than no tooltip at all.
+    const requiredConcepts = [
+      'bead', 'epic', 'molecule', 'formula', 'ready', 'blocked', 'triage',
+      'blocks', 'related', 'discovered-from', 'tracks', 'until', 'caused-by',
+      'validates', 'relates-to', 'supersedes', 'parent-child',
+    ];
+    for (const key of requiredConcepts) {
+      const c = concept(key);
+      assert(c, `learn.js is missing a definition for "${key}"`);
+      assert(c.short && c.when && c.body, `concept "${key}" must define short/when/body`);
+    }
+    // Every one of bd's 10 link types is explained, by its own bd name.
+    for (const t of UI_LINK_TYPES) assert(concept(t), `link type "${t}" has no plain-language definition`);
+    for (const c of CONCEPTS) {
+      assert(CONCEPT_GROUPS.some((g) => g.id === c.group), `concept "${c.key}" is in unknown group "${c.group}"`);
+    }
+    for (const h of HINTS) assert(!h.concept || concept(h.concept), `hint "${h.id}" points at a missing concept`);
+    assert(isLearnHash('#/learn') && isLearnHash('#/learn/blocks'), '#/learn must be recognised as the learn route');
+    assert(!isLearnHash('#/p2/x') && !isLearnHash('#/learnedstuff'), 'only #/learn is the learn route');
+    assert(learnAnchorFromHash(conceptHref('blocks')) === 'blocks', 'concept deep links must round-trip');
+    assert(learnAnchorFromHash('#/learn/not-a-concept') === null, 'unknown anchors must not resolve');
+
+    // Context derivation: parent-child is containment, not a link the user had
+    // to reason about, so an epic-with-children project still reads as "has
+    // never used a link" and still gets taught what links are.
+    const now = Date.UTC(2026, 0, 30);
+    const fresh = new Date(now - 2 * 86400000).toISOString();
+    const ancient = new Date(now - 40 * 86400000).toISOString();
+    const issues = [
+      { id: 'a-1', issue_type: 'epic', status: 'open', updated_at: fresh, dependencies: [] },
+      { id: 'a-2', issue_type: 'task', status: 'open', updated_at: fresh, dependencies: [{ depends_on_id: 'a-1', type: 'parent-child' }] },
+      { id: 'a-3', issue_type: 'task', status: 'open', updated_at: ancient, dependencies: [] },
+      { id: 'a-4', issue_type: 'task', status: 'closed', updated_at: ancient, dependencies: [] },
+      // Padding to clear the "links-none" hint's 6-issue floor — a project
+      // with three beads in it is not one that needs a lecture about graphs.
+      { id: 'a-5', issue_type: 'task', status: 'open', updated_at: fresh, dependencies: [] },
+      { id: 'a-6', issue_type: 'bug', status: 'open', updated_at: fresh, dependencies: [] },
+      { id: 'a-7', issue_type: 'chore', status: 'open', updated_at: fresh, dependencies: [] },
+    ];
+    const ctx = learnContext(issues, { now, formulas: 2 });
+    assert(ctx.issues === 7 && ctx.open === 6, `learnContext counts: ${JSON.stringify(ctx)}`);
+    assert(ctx.links === 0, 'parent-child alone must not count as "this project uses links"');
+    assert(ctx.containers === 1 && ctx.molecules === 0, 'epic counts as a container, not a molecule');
+    assert(ctx.staleOpen === 1, 'only the open 40-day-old issue is stale (the closed one is not)');
+    assert(learnContext([{ id: 'b', dependencies: [{ depends_on_id: 'c', type: 'blocks' }] }]).links === 1,
+      'a blocks row is a link');
+
+    const ctxLinked = learnContext([...issues, { id: 'a-8', issue_type: 'task', status: 'open', updated_at: fresh, dependencies: [{ depends_on_id: 'a-3', type: 'blocks' }] }], { now, formulas: 2 });
+
+    // A hint shows ONCE. Not once per page load — once, full stop.
+    {
+      const storage = fakeStorage();
+      const s = createLearnStore(storage);
+      assert(s.shouldShow('links-none', ctx), 'a 6+ issue project with no links should be taught what links are');
+      assert(s.noteShown('links-none') === true, 'the single permitted appearance retires the hint');
+      assert(!s.shouldShow('links-none', ctx), 'a shown hint must not show again');
+      // Same persisted bytes, new instance == a page reload.
+      const reloaded = createLearnStore(storage);
+      assert(!reloaded.shouldShow('links-none', ctx), 'a shown hint must not come back after a reload');
+      // noteShown is idempotent within a session so a remount can't double-count.
+      const s2 = createLearnStore(fakeStorage());
+      s2.noteShown('links-none'); s2.noteShown('links-none'); s2.noteShown('links-none');
+      assert(s2.snapshot().hints['links-none'].shows === 1, 'a remount must not spend more than one appearance');
+    }
+
+    // Dismissal is permanent, and survives a reload.
+    {
+      const storage = fakeStorage();
+      const s = createLearnStore(storage);
+      assert(s.shouldShow('links-none', ctx), 'precondition: hint is showable');
+      s.dismiss('links-none');
+      assert(!s.shouldShow('links-none', ctx), 'a dismissed hint is gone immediately');
+      assert(storage.getItem(LEARN_KEY), 'dismissal must be written to storage, not just memory');
+      const reloaded = createLearnStore(storage);
+      assert(reloaded.status('links-none') === 'dismissed', 'dismissal must survive a reload');
+      assert(!reloaded.shouldShow('links-none', ctx), 'a dismissed hint must not return after a reload');
+      assert(reloaded.pickNudge(ctx)?.id !== 'links-none', 'a dismissed hint must not be picked');
+    }
+
+    // Retirement, both ways: by doing the thing (recordAction, fired from the
+    // write path itself) and by the data showing it was already done.
+    {
+      const s = createLearnStore(fakeStorage());
+      assert(s.shouldShow('links-none', ctx), 'precondition');
+      assert(s.recordAction('link') === true, 'creating a link retires the "no links" hint');
+      assert(s.status('links-none') === 'retired', 'retired, not merely hidden');
+      assert(!s.shouldShow('links-none', ctx), 'a retired hint never shows, even though its condition still holds');
+      assert(s.recordAction('link') === false, 'a second link changes nothing');
+
+      const s2 = createLearnStore(fakeStorage());
+      assert(!s2.shouldShow('links-none', ctxLinked), 'a project that already has links is never taught about links');
+      s2.evaluate(ctxLinked);
+      assert(s2.status('links-none') === 'retired', 'an already-outgrown hint retires silently, so it can never surface later');
+
+      // Molecules: pouring one retires the "you have recipes you never use" hint.
+      const s3 = createLearnStore(fakeStorage());
+      assert(s3.shouldShow('formulas-unused', ctx), 'formulas present + no molecules poured should nudge');
+      s3.recordAction('pour');
+      assert(!s3.shouldShow('formulas-unused', ctx), 'pouring retires the molecules nudge');
+      assert(!createLearnStore(fakeStorage()).shouldShow('formulas-unused', learnContext(issues, { now, formulas: 0 })),
+        'no formulas, no molecule nudge');
+    }
+
+    // Exactly one nudge is ever offered, and it is the highest-priority one.
+    {
+      const s = createLearnStore(fakeStorage());
+      const busy = learnContext(
+        Array.from({ length: 14 }, (_, n) => ({ id: 'z-' + n, issue_type: 'task', status: 'open', updated_at: ancient, dependencies: [] })),
+        { now, formulas: 3 },
+      );
+      assert(busy.issues === 14 && busy.links === 0 && busy.containers === 0 && busy.staleOpen === 14,
+        `context for the all-hints-true case: ${JSON.stringify(busy)}`);
+      const showable = HINTS.filter((h) => s.shouldShow(h.id, busy));
+      assert(showable.length === 4, `all four hints are individually true here, got ${showable.length}`);
+      const picked = s.pickNudge(busy);
+      assert(picked && picked.id === 'links-none', `pickNudge must return exactly the top-priority hint, got ${picked?.id}`);
+    }
+
+    // The master switch: off suppresses every nudge, and nothing else. The
+    // glossary is reference, not a tutorial, and stays available forever.
+    {
+      const storage = fakeStorage();
+      const s = createLearnStore(storage);
+      s.setEnabled(false);
+      assert(!s.isEnabled(), 'master switch off');
+      for (const h of HINTS) assert(!s.shouldShow(h.id, ctx), `hint "${h.id}" must be suppressed while hints are off`);
+      assert(s.pickNudge(ctx) === null, 'no nudge is ever picked while hints are off');
+      // Tooltips/#/learn read CONCEPTS directly and never consult the store —
+      // asserted structurally: the glossary is a module constant, not state.
+      assert(concept('molecule').short.length > 0 && CONCEPTS.length >= 25,
+        'the concept glossary must remain fully available with hints off');
+      assert(createLearnStore(storage).isEnabled() === false, 'the master switch persists across a reload');
+      // ...and back on, with a clean slate.
+      const s2 = createLearnStore(storage);
+      s2.dismiss('stale-open');
+      s2.reset();
+      assert(s2.isEnabled() && s2.status('stale-open') === 'new', 'reset re-enables hints and un-dismisses everything');
+      assert(createLearnStore(storage).status('stale-open') === 'new', 'reset persists');
+    }
+
+    // Corrupt/foreign storage must degrade to defaults, never throw: this runs
+    // on every page load in every browser, including ones with junk under the key.
+    {
+      const storage = fakeStorage();
+      storage.setItem(LEARN_KEY, '{not json');
+      assert(createLearnStore(storage).isEnabled(), 'unparseable state falls back to defaults');
+      storage.setItem(LEARN_KEY, JSON.stringify({ v: 99, enabled: false }));
+      assert(createLearnStore(storage).isEnabled(), 'a future schema version is ignored, not obeyed');
+    }
+
+    console.log(`smoke ok (learn.js: ${CONCEPTS.length} concepts, ${HINTS.length} hints, one-shot + dismissal + retirement + master switch)`);
   }
 
   // --- Phase 3: formula derivations (pure) --------------------------------

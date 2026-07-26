@@ -17,6 +17,52 @@ import {
   formulaVars, formulaSteps, pourBeadCount, missingVars,
   varViolations, previewIssueCount,
 } from '../formulas.js';
+import { LearnEmpty, ConceptDot, useLearn } from '../components/ConceptTip.js';
+import { conceptHref } from '../learn.js';
+
+// Remembered collapse state for the explainer below. Set by the user
+// collapsing it, and set automatically by a successful pour (molecules.js) —
+// someone who has poured one does not need to be told what a molecule is.
+const MOL_INTRO_FLAG = 'mol-intro-done';
+
+// "What is a molecule?", inside the dialog, at the moment it matters. This is
+// the one piece of machinery in the app with no plain-language equivalent
+// anywhere on screen: the entire feature is named after chemistry, and its two
+// verbs (pour, burn) are metaphors a non-developer has no reason to decode. It
+// is collapsible and remembered rather than dismissible-forever because the
+// dialog is rare enough that "collapsed by default once you know" is the right
+// resting state, not "gone".
+function MoleculeIntro() {
+  const learn = useLearn();
+  const collapsed = learn.flag(MOL_INTRO_FLAG);
+  return html`
+    <div class="learn-explainer" data-mol-intro>
+      <button type="button" class="learn-explainer-toggle" data-mol-intro-toggle
+        aria-expanded=${collapsed ? 'false' : 'true'}
+        onClick=${() => learn.setFlag(MOL_INTRO_FLAG, !collapsed)}>
+        <span class="learn-explainer-caret" aria-hidden="true">${collapsed ? '▸' : '▾'}</span>
+        <span>What is a molecule?</span>
+      </button>
+      ${!collapsed && html`
+        <div class="learn-explainer-body" data-mol-intro-body>
+          <p>
+            Some jobs are always the same shape. A molecule is a way to create that whole shape at once: you pick a
+            saved recipe (a <b>formula</b>), fill in the blanks, and it creates every issue the job needs — already
+            in the right order, already knowing which parts have to wait for which.
+          </p>
+          <p class="learn-explainer-eg">
+            <b>For example:</b> a "publish a release" formula might make six issues — write the notes, tag the
+            version, build it, test it, announce it, close the milestone — with each one held back until the one
+            before it is done. Pouring it for version 2.1 creates all six, named after 2.1, in one click.
+          </p>
+          <p>
+            Nothing is created until you have seen exactly what will be created: you fill in the blanks, watch a live
+            preview, then confirm against the real thing.
+          </p>
+          <a class="learn-explainer-more" href=${conceptHref('molecule')}>Molecules and formulas, in full →</a>
+        </div>`}
+    </div>`;
+}
 
 function FormulaRow({ f }) {
   return html`
@@ -38,15 +84,15 @@ function Browse() {
     : list;
   return html`
     <div class="mol-browse">
+      <${MoleculeIntro} />
       <input class="c2-edit-input mol-filter" id="mol-filter" placeholder="Filter formulas…" value=${mol.filter.value}
         onInput=${(e) => (mol.filter.value = e.target.value)} />
       ${mol.formulasLoading.value && html`<div class="c2-lane-empty">loading formulas…</div>`}
       ${mol.formulasError.value && html`<div class="mol-err">Could not list formulas: ${mol.formulasError.value}</div>`}
       ${!mol.formulasLoading.value && !mol.formulasError.value && list.length === 0 && html`
-        <div class="c2-lane-empty">
-          No formulas registered for this project.
-          <div class="mol-hint">Formulas are <code>.formula.json</code> files under <code>.beads/formulas/</code>. Write one, or capture an existing epic with <code>bd mol distill</code>.</div>
-        </div>`}
+        <${LearnEmpty} icon="⚗" title="No recipes saved yet" k="formula"
+          what="This project has no formulas, so there is nothing to pour."
+          why=${html`A formula is a plain file (<code>.beads/formulas/*.formula.json</code>) listing the steps of a job you do repeatedly and which of them wait for which — so anyone with the project gets the same recipe. If you have already built an epic by hand that you would do again, <code>bd mol distill</code> turns it into one.`} />`}
       ${shown.length > 0 && html`<div class="mol-flist">${shown.map((f) => html`<${FormulaRow} key=${f.name} f=${f} />`)}</div>`}
       ${list.length > 0 && shown.length === 0 && html`<div class="c2-lane-empty">No formula matches “${mol.filter.value}”.</div>`}
     </div>`;
@@ -212,7 +258,7 @@ export function MoleculeDialog() {
     <dialog class="dialog dialog-lg mol-dialog" ref=${ref} onCancel=${(e) => { e.preventDefault(); closeMolDialog(); }} onClose=${closeMolDialog}>
       <div class="dialog-body">
         <div class="dialog-head mol-head">
-          <span aria-hidden="true">⚗</span> ${title}
+          <span aria-hidden="true">⚗</span> ${title}<${ConceptDot} k="molecule" />
           <button class="c2-detail-close mol-x" title="Close" onClick=${closeMolDialog}>✕</button>
         </div>
 

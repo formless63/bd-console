@@ -23,6 +23,8 @@ import {
 } from './actions.js';
 import { TypeGlyph, Pip, PRI_LABEL, StatusGlyph, glyphStatus } from './ui.js';
 import { c2, flashCli } from './state.js';
+import { LearnEmpty, ConceptDot } from '../components/ConceptTip.js';
+import { learn, concept } from '../learn.js';
 
 // Link/supersede/duplicate writes live in store.js (shared with the classic
 // view) rather than actions.js; wrap them here so Console 2.0 still flashes
@@ -31,6 +33,10 @@ import { c2, flashCli } from './state.js';
 const actAddLink = async (id, other, type) => {
   await addLink(id, other, type);
   flashCli(`bd dep add ${id} ${other} --type ${type}`, 'link');
+  // The user has demonstrably learned what links are for — retire the hint
+  // that would have taught them, permanently, right now rather than at the
+  // next data refresh. See public/ui/learn.js on retirement.
+  learn.recordAction('link');
 };
 const actRemoveLink = async (id, other) => {
   await removeLink(id, other);
@@ -62,8 +68,37 @@ function RelChip(id) {
   </button>`;
 }
 
-function Field(title, body) {
-  return html`<div class="c2-field"><span class="c2-hud-label">${title}</span>${body}</div>`;
+// `k` optionally names a concept from public/ui/learn.js, which puts a small
+// "?" next to the section heading. Section headings are exactly the right
+// place for it: they are where the jargon actually lands on a beginner
+// ("Blocked by", "Discovered from", "Steps"), and a heading is quiet enough
+// that an extra 14px dot next to it costs a fluent user nothing.
+function Field(title, body, k) {
+  return html`<div class="c2-field">
+    <span class="c2-hud-label">${title}${k ? html`<${ConceptDot} k=${k} />` : ''}</span>${body}</div>`;
+}
+
+// The concept behind each generic link section, keyed by the section key
+// linkSectionsOf() produces ("out:tracks", "in:caused-by", …). Both directions
+// of a type point at the same definition — the definition explains both ends.
+function conceptForLinkSection(key) {
+  const type = String(key).split(':')[1];
+  return concept(type) ? type : null;
+}
+
+// True when ANY relationship surface would render something for this issue —
+// the exact union of the sections below, so the "no connections yet" block and
+// the real sections can never both appear.
+function hasAnyRelationship(issue) {
+  if (!issue) return true;
+  if (isMolecule(issue)) return true; // Steps is its relationship section
+  return !!parentOf(issue)
+    || blockersOf(issue).length > 0
+    || blocksList(issue.id).length > 0
+    || childrenOf(issue.id).length > 0
+    || relatedOf(issue).length > 0
+    || linkSectionsOf(issue).length > 0
+    || !!retiredState(issue);
 }
 
 function Edit({ issue }) {
@@ -121,14 +156,27 @@ function Edit({ issue }) {
       </div>
 
       <div class="c2-edit-row wrap">
-        <span class="c2-edit-k">Link</span>
+        <span class="c2-edit-k">Link<${ConceptDot} k=${linkType} /></span>
         <select class="c2-edit-input c2-linktype" value=${linkType} onChange=${(e) => setLinkType(e.target.value)} aria-label="Link type">
           ${LINK_TYPES.map((t) => html`<option key=${t} value=${t}>${t}</option>`)}
         </select>
-        <input class="c2-edit-input" placeholder="issue-id" value=${linkId} onInput=${(e) => setLinkId(e.target.value)}
+        <input class="c2-edit-input" id="c2-link-id" placeholder="issue-id" value=${linkId} onInput=${(e) => setLinkId(e.target.value)}
           onKeyDown=${(e) => { if (e.key === 'Enter' && linkId.trim()) run(() => actAddLink(id, linkId.trim(), linkType).then(() => setLinkId('')))(); }} />
         <button class="c2-mini" disabled=${!linkId.trim()} onClick=${run(() => actAddLink(id, linkId.trim(), linkType).then(() => setLinkId('')))}>link</button>
       </div>
+      ${/* The ten link-type names are the single most opaque control in the
+            app — `discovered-from` and `validates` mean nothing to someone
+            who hasn't read the beads docs, and even a fluent user has to stop
+            and think about which DIRECTION a type reads in. One muted line
+            that restates the selected value in plain English, right under the
+            picker, at the exact moment it's being chosen. Reference, not a
+            hint: it isn't dismissible and doesn't age out, because the
+            question it answers doesn't either. */ ''}
+      ${concept(linkType) && html`
+        <div class="c2-linktype-gloss">
+          <b>${concept(linkType).term}</b> — ${concept(linkType).short}
+          ${concept(linkType).direction && html`<span class="c2-linktype-dir">${concept(linkType).direction}</span>`}
+        </div>`}
 
       ${outLinks.length > 0 && html`
         <div class="c2-edit-row wrap">
@@ -422,23 +470,43 @@ export function Detail() {
                 richer, progress-and-parallel-group-aware Steps section, and
                 suppressed from the generic Children row below so the same
                 beads don't appear twice. */ ''}
-          ${isMolecule(issue) && Field('Steps', html`<${MoleculeSteps} root=${issue} />`)}
+          ${isMolecule(issue) && Field('Steps', html`<${MoleculeSteps} root=${issue} />`, 'molecule')}
 
-          ${(() => { const p = parentOf(issue); return p ? Field('Parent', RelChip(p)) : null; })()}
-          ${(() => { const b = blockersOf(issue); return b.length ? Field('Blocked by', html`<div class="c2-rels">${b.map(RelChip)}</div>`) : null; })()}
-          ${(() => { const b = blocksList(id); return b.length ? Field('Blocks', html`<div class="c2-rels">${b.map((x) => RelChip(x.id))}</div>`) : null; })()}
+          ${(() => { const p = parentOf(issue); return p ? Field('Parent', RelChip(p), 'parent-child') : null; })()}
+          ${(() => { const b = blockersOf(issue); return b.length ? Field('Blocked by', html`<div class="c2-rels">${b.map(RelChip)}</div>`, 'blocks') : null; })()}
+          ${(() => { const b = blocksList(id); return b.length ? Field('Blocks', html`<div class="c2-rels">${b.map((x) => RelChip(x.id))}</div>`, 'blocks') : null; })()}
           ${(() => {
             if (isMolecule(issue)) return null; // already rendered as Steps
             const c = childrenOf(id);
-            return c.length ? Field('Children', html`<div class="c2-rels">${c.map((x) => RelChip(x.id))}</div>`) : null;
+            return c.length ? Field('Children', html`<div class="c2-rels">${c.map((x) => RelChip(x.id))}</div>`, 'parent-child') : null;
           })()}
 
           ${/* Bidirectional: rendered once whichever side created the row. */ ''}
-          ${(() => { const r = relatedOf(issue); return r.length ? Field('Related', html`<div class="c2-rels c2-rels-chips">${r.map(RelChip)}</div>`) : null; })()}
+          ${(() => { const r = relatedOf(issue); return r.length ? Field('Related', html`<div class="c2-rels c2-rels-chips">${r.map(RelChip)}</div>`, 'related') : null; })()}
           ${/* discovered-from / tracks / caused-by / validates / … — a section
                 per type that actually has members, in both directions, so the
                 panel never grows ten empty headings. */ ''}
-          ${linkSectionsOf(issue).map((s) => html`<div key=${s.key}>${Field(s.label, html`<div class="c2-rels">${s.ids.map(RelChip)}</div>`)}</div>`)}
+          ${linkSectionsOf(issue).map((s) => html`<div key=${s.key}>${Field(s.label, html`<div class="c2-rels">${s.ids.map(RelChip)}</div>`, conceptForLinkSection(s.key))}</div>`)}
+
+          ${/* The relationship sections above only render when they have
+                members — which is right, but it means an unconnected issue
+                shows nothing at all where its connections would be, and a
+                beginner has no way to discover that connections are a thing.
+                One quiet block, only when EVERY relationship section is
+                empty, that says what would go here and jumps to the control
+                that creates one. Disappears forever the moment there is a
+                single link — it is replaced by the user's own content, which
+                is the only decay mechanism an empty state needs. */ ''}
+          ${!hasAnyRelationship(issue) && Field('Connections', html`
+            <${LearnEmpty} compact k="blocks"
+              what="Nothing is connected to this yet."
+              why="Saying that this waits on another issue is what makes the Ready lane and the Map work — and a “related” or “discovered from” link is how anyone reading this in six months finds out why it exists."
+              actionLabel="Add a connection"
+              onAction=${() => {
+                const el = document.querySelector('#c2-link-id');
+                el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                setTimeout(() => el?.focus(), 220);
+              }} />`)}
 
           ${isMolecule(issue) && Field('Undo', html`<${BurnBox} root=${issue} />`)}
 

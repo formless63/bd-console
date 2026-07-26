@@ -29,7 +29,10 @@ import { MapView } from './MapView.js';
 import { Docs2 } from './Docs2.js';
 import { Detail } from './Detail.js';
 import { MoleculeDialog } from './MoleculeDialog.js';
+import { mol, openMolDialog, loadFormulas } from './molecules.js';
 import { ThemeSwitch } from './ThemeSwitch.js';
+import { NudgeRail } from '../components/ConceptTip.js';
+import { learnContext } from '../learn.js';
 
 const MODES = [['flow', 'Flow'], ['map', 'Map'], ['docs', 'Docs']];
 
@@ -53,6 +56,7 @@ function CliFlash() {
 function Header() {
   const meta = store.meta.value;
   const pid = store.projectId.value;
+  const molCount = mol.formulas.value.length;
   const exp = meta?.export;
   const syncState = !exp ? 'unknown' : exp.error ? 'error' : (!exp.exists || exp.stale) ? 'stale' : 'synced';
   return html`
@@ -74,6 +78,19 @@ function Header() {
             onClick=${() => (store.createOpen.value = true)}>
             <span aria-hidden="true">+</span><span class="c2-btn-label"> New</span>
           </button>
+          ${/* Molecules had exactly one entry point — typing `> mol` into the
+                omnibar — which is invisible to anyone who hasn't read the
+                docs, i.e. precisely the audience this feature is hardest for.
+                A real button, always present, labelled with the formula count
+                when there is one, so the machinery is discoverable without
+                being loud. */ ''}
+          <button class="c2-molbtn" data-mol-open
+            title=${molCount ? `Pour a molecule — ${molCount} formula${molCount === 1 ? '' : 's'} available in this project` : 'Molecules — create a whole set of connected issues from a saved recipe'}
+            onClick=${() => openMolDialog('')}>
+            <span aria-hidden="true">⚗</span><span class="c2-btn-label"> Molecules</span>
+            ${molCount > 0 && html`<span class="c2-molbtn-n">${molCount}</span>`}
+          </button>
+          <a class="c2-learnlink" href="#/learn" title="Concepts — what beads words mean" aria-label="Concepts reference">?</a>
           <div class="c2-themesw-header"><${ThemeSwitch} /></div>
           <span class=${'c2-sync sync-' + syncState} title=${'Issue export: ' + syncState}>${syncState}</span>
           <a class="c2-classic" href=${'#/p/' + encodeURIComponent(pid || '')} title="Open the classic project view">
@@ -99,6 +116,37 @@ function Canvas() {
     </div>`;
 }
 
+// The one place in the app a nudge can appear: a single strip between the
+// pulse rail and the canvas. Never overlays anything, never steals focus,
+// never more than one — see public/ui/learn.js for why.
+// NOTE the always-present wrapper element: .c2 is a grid with explicit
+// `grid-template-rows: auto auto auto minmax(0,1fr)` (header / pulse / nudge /
+// body), and auto-placement assigns rows by child ORDER. If this component
+// returned null when there's no nudge — the overwhelmingly common case —
+// .c2-body would slide up into the auto nudge row and lose its 1fr height.
+// The slot is empty and zero-height when idle; only the row must be stable.
+function Nudges() {
+  const issues = store.issues.value;
+  const ready = c2.ready.value;
+  const formulas = mol.formulas.value.length;
+  // Only evaluate once the project has actually finished loading: an empty
+  // list mid-bootstrap is not evidence of anything, and evaluating against it
+  // would silently retire hints the user never had a chance to see.
+  if (!ready) return html`<div class="c2-nudgeslot"></div>`;
+  const ctx = learnContext(issues, { formulas });
+
+  const onAction = (hint) => {
+    switch (hint.action) {
+      case 'learn-links': navigate('#/learn/blocks'); break;
+      case 'new-epic': store.createOpen.value = true; break;
+      case 'open-molecules': openMolDialog(''); break;
+      case 'focus-stale': c2.canvasMode.value = 'flow'; c2.laneFocus.value = 'stale'; break;
+      default: break;
+    }
+  };
+  return html`<div class="c2-nudgeslot"><${NudgeRail} ctx=${ctx} onAction=${onAction} /></div>`;
+}
+
 export function Console2() {
   const route = store.route.value;
   const pid = route.projectId;
@@ -122,7 +170,12 @@ export function Console2() {
     (async () => {
       await loadProjectMeta();
       if (cancelled) return;
-      await Promise.all([loadIssues(), loadDocs(), loadTmux()]);
+      // loadFormulas rides along with the bootstrap (rather than waiting for
+      // the pour dialog to be opened) for two reasons: the Molecules button
+      // can show a count, and the "this project has recipes you've never
+      // used" nudge can't be evaluated without knowing there are any. It
+      // never throws — molecules.js swallows into mol.formulasError.
+      await Promise.all([loadIssues(), loadDocs(), loadTmux(), loadFormulas()]);
       if (!cancelled) c2.ready.value = true;
     })();
     return () => { cancelled = true; };
@@ -134,6 +187,7 @@ export function Console2() {
     <div class=${'c2' + (detailOpen ? ' detail-open' : '')} data-c2>
       <${Header} />
       <${PulseBar} />
+      <${Nudges} />
       <div class="c2-body">
         <${Canvas} />
       </div>
