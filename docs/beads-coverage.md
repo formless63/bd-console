@@ -19,7 +19,7 @@ bd-console is a very competent front end for the *basic issue lifecycle*
 (create/claim/close/comment/label/priority/defer) plus one blocking
 dependency type, rendered across a classic list view and a slicker
 "Console 2.0" mission-control view. That's maybe 15–20% of what the
-installed `bd` (v1.0.4) actually does. Large, coherent subsystems are
+installed `bd` (v1.1.0) actually does. Large, coherent subsystems are
 **entirely absent** from the UI: molecules/formulas/wisps (the workflow-template
 engine), gates (async wait conditions), swarms, `bd query`'s expression
 language, duplicate/supersede management, `history`/`diff` (audit trail),
@@ -55,8 +55,32 @@ wisps, gates, and swarms have zero backend routes and zero UI surface.
 
 ```
 $ bd --version
-bd version 1.0.4 (ce242a879)
+bd version 1.1.0 (8e4e59d39)
 ```
+
+> **Upgrade note (2026-07-26).** This audit was originally researched against
+> **v1.0.4**; the machine was then upgraded to **v1.1.0** (latest release,
+> 2026-07-04) and every claim below re-checked. **The roadmap is unchanged.**
+>
+> Delta v1.0.4 → v1.1.0, measured by diffing `bd --help` and the relevant
+> `--help` pages before and after:
+>
+> | Change | Detail |
+> |---|---|
+> | New command: `bd metrics` | Anonymous usage-metrics consent/toggle. **Defaults to ON**; `bd metrics off` disables. Verified it does *not* pollute `--silent`/`--json` output, so bd-console's parsing is unaffected. |
+> | New command: `bd recompute-blocked` | Rebuilds the denormalized `is_blocked` flag from the dependency graph. Notable: stale flags "silently hide ready work or surface blocked work" — the server-side analogue of the client-side blocker-direction bug fixed in `42a29fd`. A candidate to expose as a repair action in the UI. |
+> | Removed commands | None. |
+> | Dependency `--type` values | **Unchanged** (same 10). The link-type roadmap below stands as written. |
+> | Everything else | Internal robustness: schema-migration guards + drift detection, sync/pull cascade repair, compaction that archives before discarding, stricter import with `--allow-stale`, `bd init --init-if-missing`, untruncated piped output, read-only enforced to the embedded store. |
+>
+> Upgrade mechanics: all six registered project databases were backed up to
+> `~/.bd-backups/pre-1.1.0-*` first; the release tarball's SHA-256 was
+> verified against `checksums.txt`; no schema migration was triggered; all six
+> repos read and write correctly afterward; bd-console's smoke suite (23
+> checks) passes against v1.1.0 and the live daemon reports `bdVersion 1.1.0`.
+> A shadowed npm copy (`@beads/bd@1.0.2` in nvm's bin, behind
+> `~/.local/bin/bd` on PATH) was also bumped to 1.1.0 to remove version skew.
+> The previous binary is retained at `~/.local/bin/bd.1.0.4.bak` for rollback.
 
 The docs site (`beads.gascity.com`) and the installed binary mostly agree,
 but there are real divergences worth flagging so the roadmap targets what
