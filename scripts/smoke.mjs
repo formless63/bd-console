@@ -23,6 +23,8 @@ import { buildGraph } from '../public/ui/console2/graphModel.js';
 import {
   formulaVars, pourBeadCount, missingVars, previewMode, previewVars,
   varViolations, previewIssueCount, burnIssueCount,
+  stepNeeds, slugifyFormulaName, slugifyVarName, distillCandidates,
+  newFormulaTemplate, formulaSaveProblem, formulaStem, formulaFileName,
 } from '../public/ui/formulas.js';
 // Progressive-discoverability engine (public/ui/learn.js) — same import-free
 // contract as relationships.js above, precisely so its lifecycle rules ("shows
@@ -2032,6 +2034,185 @@ try {
     assert(badVarKey.status === 400, `a non-identifier var key should 400, got ${badVarKey.status}`);
 
     console.log(`smoke ok (formulas/molecules routes: browse -> preview -> dry-run -> pour(3) -> burn(3)): ${poured.new_epic_id}`);
+  }
+
+  // --- bd-console-9it: formula AUTHORING, pure derivations ------------------
+  // The naming and candidate rules that decide what the two authoring dialogs
+  // put in front of the user. Pure, so they're asserted here rather than only
+  // observable by clicking.
+  {
+    // A step's prerequisites are spelled `needs` by hand and `depends_on` by
+    // `bd mol distill` — reading only the first is why every distilled recipe
+    // used to preview as if its steps had no order at all.
+    assert(stepNeeds({ needs: ['a'] }).join() === 'a', '`needs` must be read');
+    assert(stepNeeds({ depends_on: ['b'] }).join() === 'b', 'THE BUG: distill writes `depends_on`, which must be read too');
+    assert(stepNeeds({}).length === 0 && stepNeeds(null).length === 0, 'a step with no prerequisites yields []');
+
+    assert(slugifyFormulaName('Release 2.1 hardening!') === 'release-2-1-hardening',
+      `formula name slug mismatch: ${slugifyFormulaName('Release 2.1 hardening!')}`);
+    assert(slugifyFormulaName('!!!') === '', 'an unusable title yields no name rather than one the server would reject');
+    // A version-shaped value gets called `version`, not `v2_1`.
+    assert(slugifyVarName('2.1') === 'version' && slugifyVarName('v3') === 'version', 'version-ish values name themselves `version`');
+    assert(slugifyVarName('Acme Corp') === 'acme_corp', 'var names are snake_case identifiers');
+    assert(/^[A-Za-z0-9_]+$/.test(slugifyVarName('9lives')), 'a var name must satisfy the server VAR_KEY_RE');
+
+    assert(formulaStem('release.formula.json') === 'release' && formulaStem('release.toml') === 'release',
+      'the formula stem is the identity bd loads by');
+    assert(formulaFileName('release') === 'release.formula.json' && formulaFileName('a.toml') === 'a.toml',
+      'a bare name gets the .formula.json bd itself writes');
+
+    // Only strings that RECUR are offered — a variable appearing once is noise.
+    const cands = distillCandidates(['Release 2.1', 'Write notes for 2.1', 'Tag version 2.1', 'Announce 2.1']);
+    assert(cands.length > 0 && cands[0].value === '2.1' && cands[0].name === 'version',
+      `distill candidates should lead with the recurring value: ${JSON.stringify(cands)}`);
+    assert(!cands.some((c) => /^announce$/i.test(c.value)), 'a value appearing in exactly one title is not a candidate');
+    assert(distillCandidates(['only one title']).length === 0, 'one title cannot establish a recurring value');
+
+    // The local half of the save gate: the two mistakes that make a formula
+    // unloadable, caught while typing.
+    assert(formulaSaveProblem('starter.formula.json', newFormulaTemplate('starter')) === null,
+      'the seeded example must pass the local save gate as-is');
+    assert(/must be "starter"/.test(formulaSaveProblem('starter.formula.json', newFormulaTemplate('other')) || ''),
+      'a formula whose name disagrees with its filename must be refused locally');
+    assert(/JSON/.test(formulaSaveProblem('x.formula.json', '{ nope') || ''), 'unparseable JSON is reported before the round trip');
+    assert(formulaSaveProblem('x.formula.json', '   ') !== null, 'an empty draft is refused');
+
+    console.log('smoke ok (formula authoring derivations: needs/depends_on, name slugs, recurring-value candidates, save gate)');
+  }
+
+  // --- bd-console-9it: formula AUTHORING routes, end to end ----------------
+  // THE dead end this closes: `bd formula` has list/show/convert and NO create
+  // (re-verified on v1.1.0), so the pour flow's prerequisite could not be
+  // produced anywhere in the product. Both authoring paths are exercised here
+  // against the real bd, and both are proven to end in a formula that POURS.
+  {
+    const fmt = { method: 'POST', headers: { 'content-type': 'application/json' } };
+    const postJson = (path, body) => fetch(p(path), { ...fmt, body: JSON.stringify(body) });
+
+    // --- path safety, before anything is written -------------------------
+    for (const bad of ['../../etc/passwd', '../evil.formula.json', 'sub/dir.formula.json', '.hidden.json', 'evil.sh', 'noext']) {
+      const r = await fetch(p('/formula-file?name=' + encodeURIComponent(bad)));
+      assert(r.status === 400, `reading "${bad}" must 400, got ${r.status}`);
+      const w = await postJson('/formula-file', { name: bad, content: '{}' });
+      assert(w.status === 400, `writing "${bad}" must 400, got ${w.status}`);
+    }
+    // ...and the same for the name distill would use as a FILENAME. bd itself
+    // does not sanitize it — `bd mol distill <epic> ../evil` writes outside the
+    // formulas directory (reproduced on v1.1.0) — so this check is the only
+    // thing between a URL and that.
+    const evilDistill = await fetch(p('/formula-distill-preview?epic=' + encodeURIComponent(seedId) + '&name=' + encodeURIComponent('../evil')));
+    assert(evilDistill.status === 400, `a traversal formula name must 400, got ${evilDistill.status}`);
+
+    // --- editor round trip: write -> read -> list -> pour -----------------
+    const seeded = newFormulaTemplate('smoke-seed');
+    const written = await postJson('/formula-file', { name: 'smoke-seed.formula.json', content: seeded });
+    const writtenBody = await written.json();
+    assert(written.status === 200, `writing the seeded example must succeed, got ${written.status}: ${JSON.stringify(writtenBody)}`);
+    assert(writtenBody.formula === 'smoke-seed' && writtenBody.steps === 3,
+      `write response mismatch: ${JSON.stringify(writtenBody)}`);
+
+    const readBack = await fetch(p('/formula-file?name=smoke-seed.formula.json')).then((r) => r.json());
+    assert(readBack.content === seeded, 'a formula must read back byte-for-byte');
+
+    const fileList = await fetch(p('/formula-files')).then((r) => r.json());
+    assert(fileList.dir && !fileList.dir.startsWith('/'), `the formulas dir must be reported project-relative, got ${fileList.dir}`);
+    assert(fileList.files.some((f) => f.name === 'smoke-seed.formula.json' && f.formula === 'smoke-seed'),
+      `formula-files must list what was just written: ${JSON.stringify(fileList.files)}`);
+
+    // It reaches the Molecules dialog (which lists via `bd formula list`)...
+    const listedAfterWrite = await fetch(p('/formulas')).then((r) => r.json());
+    assert(listedAfterWrite.formulas.some((f) => f.name === 'smoke-seed'),
+      'a formula written through the editor must appear in the pour dialog');
+    // ...and it actually pours. This is the whole point of seeding a WORKING
+    // example rather than an empty file: a beginner's first save validates and
+    // their first pour succeeds.
+    const seedPour = await postJson('/molecules/pour', { proto: 'smoke-seed', vars: { thing: 'onboarding' } }).then((r) => r.json());
+    assert(seedPour.ok && seedPour.created === 4, `the seeded example must pour 4 beads: ${JSON.stringify(seedPour)}`);
+    await postJson('/molecules/burn', { id: seedPour.new_epic_id });
+
+    // --- validation happens BEFORE the write ------------------------------
+    // A malformed formula file is silently SKIPPED by `bd formula list` rather
+    // than reported (verified) — the recipe would just vanish — so a bad draft
+    // must never reach the disk in the first place.
+    const formulaDirPath = join(repoDir, '.beads', 'formulas');
+    const malformed = await postJson('/formula-file', { name: 'smoke-bad.formula.json', content: '{ not json' });
+    assert(malformed.status === 400, `malformed JSON must 400, got ${malformed.status}`);
+    assert(/json|parse/i.test((await malformed.json()).error || ''), "the rejection should carry bd's own parse error");
+    assert(!existsSync(join(formulaDirPath, 'smoke-bad.formula.json')), 'THE RULE: a rejected formula must not be written at all');
+
+    // A dangling `needs` is caught by bd's own validator.
+    const dangling = await postJson('/formula-file', {
+      name: 'smoke-dangle.formula.json',
+      content: JSON.stringify({ formula: 'smoke-dangle', version: 1, type: 'workflow', steps: [{ id: 'a', title: 'A', type: 'task', needs: ['ghost'] }] }),
+    });
+    assert(dangling.status === 400 && /unknown step/i.test((await dangling.json()).error || ''), 'a dangling `needs` must be refused');
+    assert(!existsSync(join(formulaDirPath, 'smoke-dangle.formula.json')), 'a structurally invalid formula must not be written');
+
+    // The trap that motivated the stem check: `bd formula list` reports the
+    // name from the file CONTENT, but show/cook/pour resolve by FILE BASENAME.
+    // A mismatch therefore lists under a name nothing can open.
+    const mismatch = await postJson('/formula-file', {
+      name: 'smoke-outer.formula.json',
+      content: JSON.stringify({ formula: 'smoke-inner', version: 1, type: 'workflow', steps: [{ id: 'a', title: 'A', type: 'task' }] }),
+    });
+    assert(mismatch.status === 400, `a name/filename mismatch must 400, got ${mismatch.status}`);
+    assert(!existsSync(join(formulaDirPath, 'smoke-outer.formula.json')), 'a name/filename mismatch must not be written');
+    // An empty step list pours a molecule with nothing in it — bd allows it,
+    // this doesn't.
+    const stepless = await postJson('/formula-file', {
+      name: 'smoke-empty.formula.json',
+      content: JSON.stringify({ formula: 'smoke-empty', version: 1, type: 'workflow', steps: [] }),
+    });
+    assert(stepless.status === 400, `a step-less formula must 400, got ${stepless.status}`);
+
+    // --- distill round trip: epic -> formula -> pour ----------------------
+    const epicId = (await postJson('/create', { title: 'Ship release 4.2', type: 'epic', priority: 1 }).then((r) => r.json())).id;
+    const kid1 = (await postJson('/create', { title: 'Write notes for 4.2', type: 'task', parent: epicId }).then((r) => r.json())).id;
+    const kid2 = (await postJson('/create', { title: 'Tag version 4.2', type: 'task', parent: epicId }).then((r) => r.json())).id;
+    await postJson('/edit', { id: kid2, op: 'add-blocker', blocker: kid1 });
+
+    // A childless bead has no shape to save; bd would happily write a 0-step
+    // formula for one (verified), which lists fine and pours nothing.
+    const childless = await postJson('/formula-distill', { epic: kid1, name: 'smoke-nothing' });
+    assert(childless.status === 400, `distilling a childless bead must 400, got ${childless.status}`);
+
+    const distillVars = 'var.version=4.2';
+    const distillDry = await fetch(p(`/formula-distill-preview?epic=${epicId}&name=smoke-release&${distillVars}`)).then((r) => r.json());
+    // OPAQUE TEXT, exactly like the pour dry run: bd silently ignores --json on
+    // every --dry-run path, re-verified for distill on v1.1.0.
+    assert(distillDry.ok && typeof distillDry.preview === 'string', 'the distill dry run must return preview TEXT');
+    assert(/\{\{version\}\}/.test(distillDry.preview), `the dry run must show the marked blanks: ${distillDry.preview}`);
+    assert(!/\/[^\s]*\/[^\s]*formulas/.test(distillDry.preview), `the dry run must not leak absolute host paths: ${distillDry.preview}`);
+
+    const distilled = await postJson('/formula-distill', { epic: epicId, name: 'smoke-release', vars: { version: '4.2' } }).then((r) => r.json());
+    assert(distilled.ok && distilled.steps === 2, `distill should capture 2 steps: ${JSON.stringify(distilled)}`);
+    assert(distilled.file === 'smoke-release.formula.json', `distill file mismatch: ${distilled.file}`);
+    assert(distilled.variables.includes('version'), 'distill must report the variables it created');
+
+    // Overwrite is opt-in — `bd mol distill` clobbers silently otherwise.
+    const clobber = await postJson('/formula-distill', { epic: epicId, name: 'smoke-release', vars: {} });
+    assert(clobber.status === 409, `re-distilling onto an existing name must 409 without overwrite, got ${clobber.status}`);
+
+    // It shows up in the Molecules dialog...
+    const listedAfterDistill = await fetch(p('/formulas')).then((r) => r.json());
+    assert(listedAfterDistill.formulas.some((f) => f.name === 'smoke-release'),
+      'a distilled formula must appear in the pour dialog');
+    // ...its steps carry `depends_on` (not `needs`), which is why stepNeeds()
+    // above has to read both...
+    const distilledDoc = (await fetch(p('/formulas/smoke-release')).then((r) => r.json())).formula;
+    const wired = distilledDoc.steps.find((s) => stepNeeds(s).length > 0);
+    assert(wired && Array.isArray(wired.depends_on), `distill must emit depends_on, got ${JSON.stringify(distilledDoc.steps)}`);
+    // ...and it pours, reproducing the original epic's shape for a new version.
+    const rePour = await postJson('/molecules/pour', { proto: 'smoke-release', vars: { version: '5.0' } }).then((r) => r.json());
+    assert(rePour.ok && rePour.created === 3, `the distilled formula must pour 3 beads: ${JSON.stringify(rePour)}`);
+    const rePoured = (await fetch(p('/issues')).then((r) => r.json())).issues;
+    const tagStep = rePoured.find((i) => i.title === 'Tag version 5.0');
+    const notesStep = rePoured.find((i) => i.title === 'Write notes for 5.0');
+    assert(tagStep && notesStep, `the distilled variable must substitute on pour: ${JSON.stringify(rePoured.map((i) => i.title))}`);
+    assert(blockersOf(tagStep).includes(notesStep.id), 'the original epic\'s blocking order must survive the round trip');
+    await postJson('/molecules/burn', { id: rePour.new_epic_id });
+
+    console.log(`smoke ok (formula authoring routes: editor write->pour(4), traversal/extension/malformed rejected pre-write, distill ${epicId}->smoke-release->pour(3))`);
   }
 
   console.log(`smoke ok: ${seedId}, ${quickRes.id}`);

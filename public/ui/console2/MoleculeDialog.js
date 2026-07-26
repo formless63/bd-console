@@ -12,11 +12,13 @@ import { useEffect, useRef } from 'preact/hooks';
 import {
   mol, closeMolDialog, chooseFormula, backToBrowse, setVar,
   runDryRun, doPour, BIG_POUR_THRESHOLD,
+  openFormulaEditor, openDistillFor,
 } from './molecules.js';
 import {
   formulaVars, formulaSteps, pourBeadCount, missingVars,
-  varViolations, previewIssueCount,
+  varViolations, previewIssueCount, stepNeeds,
 } from '../formulas.js';
+import { store, isContainer, childrenOf } from '../store.js';
 import { LearnEmpty, ConceptDot, useLearn } from '../components/ConceptTip.js';
 import { conceptHref } from '../learn.js';
 
@@ -76,6 +78,55 @@ function FormulaRow({ f }) {
     </button>`;
 }
 
+// THE EMPTY STATE (bd-console-9it).
+//
+// This block used to describe formulas and then name `bd mol distill` — a
+// terminal command — as the way to get one, which left the user exactly where
+// they started: told about a capability with no way to reach it. It now offers
+// the two paths that exist, in the order they are usually wanted: save
+// something you already built, or write one from a working example.
+//
+// The "save an epic" button is offered only when this project actually HAS an
+// epic with children to save — offering it against nothing would be the same
+// dead end in a different costume. When there isn't one, the copy says what
+// would make it available instead.
+function NoFormulas() {
+  const candidates = store.issues.value.filter(
+    (i) => isContainer(i) && i.status !== 'closed' && childrenOf(i.id).length > 0,
+  );
+  const best = candidates[0];
+  return html`
+    <div class="mol-empty" data-mol-empty>
+      <${LearnEmpty} icon="⚗" title="No recipes saved yet" k="formula"
+        what="A formula is a saved recipe: the steps of a job you do more than once, and which of them have to wait for which."
+        why=${html`It lives as a plain file in <code>.beads/formulas/</code>, so everyone with this project gets the same recipe. Pouring one creates every issue at once, already in the right order, with the blanks filled in.`} />
+      <div class="mol-empty-paths">
+        <div class="mol-empty-path">
+          <button class="c2-mini accent" data-mol-empty-distill disabled=${!best}
+            title=${best ? `Save ${best.id} — ${best.title}` : 'No epic with children in this project yet'}
+            onClick=${() => { closeMolDialog(); openDistillFor(best.id); }}>
+            Save an existing epic as a template
+          </button>
+          <p class="mol-empty-note">
+            ${best
+              ? html`Turns an epic you already built — like <b>${best.title}</b> — into a recipe, replacing the
+                  parts that change with blanks. Nothing about the epic changes.`
+              : 'Available once this project has an epic with issues under it. That shape is what gets saved.'}
+          </p>
+        </div>
+        <div class="mol-empty-path">
+          <button class="c2-mini" data-mol-empty-new onClick=${() => { closeMolDialog(); openFormulaEditor('', { fresh: true }); }}>
+            Write one from scratch
+          </button>
+          <p class="mol-empty-note">
+            Opens an editor with a working three-step example already in it — save it as-is and it pours, then
+            change it into the job you actually repeat.
+          </p>
+        </div>
+      </div>
+    </div>`;
+}
+
 function Browse() {
   const list = mol.formulas.value;
   const q = mol.filter.value.trim().toLowerCase();
@@ -89,12 +140,18 @@ function Browse() {
         onInput=${(e) => (mol.filter.value = e.target.value)} />
       ${mol.formulasLoading.value && html`<div class="c2-lane-empty">loading formulas…</div>`}
       ${mol.formulasError.value && html`<div class="mol-err">Could not list formulas: ${mol.formulasError.value}</div>`}
-      ${!mol.formulasLoading.value && !mol.formulasError.value && list.length === 0 && html`
-        <${LearnEmpty} icon="⚗" title="No recipes saved yet" k="formula"
-          what="This project has no formulas, so there is nothing to pour."
-          why=${html`A formula is a plain file (<code>.beads/formulas/*.formula.json</code>) listing the steps of a job you do repeatedly and which of them wait for which — so anyone with the project gets the same recipe. If you have already built an epic by hand that you would do again, <code>bd mol distill</code> turns it into one.`} />`}
+      ${!mol.formulasLoading.value && !mol.formulasError.value && list.length === 0 && html`<${NoFormulas} />`}
       ${shown.length > 0 && html`<div class="mol-flist">${shown.map((f) => html`<${FormulaRow} key=${f.name} f=${f} />`)}</div>`}
       ${list.length > 0 && shown.length === 0 && html`<div class="c2-lane-empty">No formula matches “${mol.filter.value}”.</div>`}
+      ${/* Authoring stays reachable even when the list ISN'T empty — the empty
+            state is not the only moment someone needs to fix a recipe or add
+            a second one. */ ''}
+      ${list.length > 0 && html`
+        <div class="mol-browse-foot">
+          <button class="c2-mini" data-mol-edit-formulas onClick=${() => { closeMolDialog(); openFormulaEditor(''); }}>
+            Write or edit a formula…
+          </button>
+        </div>`}
     </div>`;
 }
 
@@ -168,7 +225,11 @@ function Form() {
                 <div class="mol-step" key=${s.id}>
                   <span class="mol-step-id">${s.id}</span>
                   <span class="mol-step-title">${s.title}</span>
-                  ${(s.needs || []).length > 0 && html`<span class="mol-step-needs">needs: ${(s.needs || []).join(', ')}</span>`}
+                  ${/* `needs` OR `depends_on` — a distilled formula uses the
+                        latter (see stepNeeds in ../formulas.js), and reading
+                        only `needs` made every distilled recipe preview as if
+                        its steps had no order at all. */ ''}
+                  ${stepNeeds(s).length > 0 && html`<span class="mol-step-needs">needs: ${stepNeeds(s).join(', ')}</span>`}
                 </div>`)}
             </div>`}
         <div class="mol-count" data-mol-count>

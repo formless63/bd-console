@@ -8,7 +8,7 @@ import { c2 } from './state.js';
 import {
   captureTriage, actClaim, actStart, actClose, actDefer, actPriority,
 } from './actions.js';
-import { openMolDialog } from './molecules.js';
+import { openMolDialog, openFormulaEditor, openDistillFor } from './molecules.js';
 import { TypeGlyph, Pip, StatusGlyph } from './ui.js';
 
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*(\.\d+)*$/;
@@ -44,6 +44,14 @@ function buildCommands() {
     // creates many beads at once and always routes through a preview first
     // (docs/molecules-design.md §6).
     { name: 'mol', arg: '[formula]', hint: 'pour a molecule from a formula', kind: 'action', run: (a) => openMolDialog(a[0] || '') },
+    // The authoring half of the same feature (bd-console-9it). The user who
+    // hit the dead end searched this palette for "formula" and got nothing
+    // back, so both verbs are named for the word they'd actually type — and
+    // buildItems() now matches HINT text too, which is what makes "formula"
+    // also surface `mol` and `template`.
+    { name: 'formula', arg: '[name]', hint: 'write or edit a formula — the recipe a molecule is poured from', kind: 'action', run: (a) => openFormulaEditor(a[0] || '') },
+    { name: 'formula-new', hint: 'start a new formula from a working example', kind: 'action', run: () => openFormulaEditor('', { fresh: true }) },
+    { name: 'template', arg: '<epic-id>', arity: 1, hint: 'save an epic as a reusable formula (bd mol distill)', kind: 'action', run: (a) => openDistillFor(a[0]) },
   ];
 }
 const COMMANDS = buildCommands();
@@ -65,9 +73,18 @@ function buildItems(raw) {
   if (isCmd) {
     const body = raw.replace(/^[>/]\s?/, '');
     const [verb = '', ...rest] = body.trim().split(/\s+/).filter(Boolean);
-    const matches = COMMANDS
-      .filter((c) => !verb || c.name.startsWith(verb) || c.name.includes(verb))
-      .map((c) => ({ type: 'cmd', cmd: c, rest }));
+    // Name matches first, then HINT matches. Searching the hint is what makes
+    // a palette browsable by intent rather than by memorized verb: someone
+    // looking for "formula" gets `mol` (pour one) and `template` (make one)
+    // alongside the two commands literally named for it, none of which they
+    // could have guessed. Name matches still sort ahead, so typing a verb you
+    // already know is never displaced by a description that mentions it.
+    const v = verb.toLowerCase();
+    const named = COMMANDS.filter((c) => !v || c.name.startsWith(v) || c.name.includes(v));
+    const hinted = v
+      ? COMMANDS.filter((c) => !named.includes(c) && (c.hint || '').toLowerCase().includes(v))
+      : [];
+    const matches = [...named, ...hinted].map((c) => ({ type: 'cmd', cmd: c, rest }));
     return { mode: 'cmd', items: matches, verb, rest };
   }
   const q = raw.trim().toLowerCase();

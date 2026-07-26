@@ -422,15 +422,23 @@ function AttributionBand() {
   const collapsed = store.collapsedHubSections.value.has('attrib');
   const history = store.usageHistory.value;
 
-  // Chevron + explicit "Show"/"Hide" wording (not chevron alone) so the
-  // collapse affordance reads unambiguously even without noticing the arrow.
+  // The heading is styled to match its siblings exactly ("Live quota",
+  // "Terminal sessions", "Tracked Projects" — all .hub-section-head h2): this
+  // band is one section among several, and a heading that shouts louder than
+  // the others just reads as inconsistent. What carries the weight instead is
+  // the expand affordance, which is a real .hub-chip — the same chip treatment
+  // as the ops strip — rather than a quiet word that could be mistaken for a
+  // label. The chip is a <span>, not a <button>: the whole head IS the button,
+  // and a nested button would be invalid markup and a second tab stop for one
+  // action. The teaser (token total over the range) stays on the heading line
+  // so the collapsed state still says there's something underneath.
   const head = (summary, teaser) => html`
     <button type="button" class="usage-attrib-head" aria-expanded=${!collapsed} onClick=${() => toggleHubSection('attrib')}>
       <span class="usage-band-label">
         Usage attribution
         <span class="muted small">· ${summary}${teaser ? ' · ' + teaser : ''}</span>
       </span>
-      <span class="usage-attrib-toggle-word">${collapsed ? 'Show' : 'Hide'}</span>
+      <span class="hub-chip usage-attrib-chip" data-attrib-toggle>${collapsed ? 'Show more' : 'Show less'}</span>
       <${ChevronIcon} open=${!collapsed} alwaysVisible=${true} />
     </button>`;
 

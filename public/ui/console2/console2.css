@@ -889,6 +889,76 @@ select.c2-linktype { flex: 0 0 auto; max-width: 140px; }
 .c2-mol-burnconfirm { display: flex; flex-direction: column; gap: 8px; }
 .c2-mol-burnfacts { margin: 0; padding-left: 17px; font-size: 11px; line-height: 1.6; color: var(--text-dim); }
 .c2-mol-burnfacts code { font-family: var(--font-mono); font-size: 10px; }
+.c2-mol-distill { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.c2-mol-distill .c2-mol-note { margin: 0; }
+
+/* ---- formula AUTHORING (bd-console-9it) ---------------------------------
+   The distill dialog and the formula editor. Both reuse the pour dialog's
+   primitives (.mol-var, .mol-dry-text, .mol-err, .c2-mini) — same feature,
+   same visual language; only the two layouts that are genuinely new (the
+   variable-marking rows and the editor pane) get their own rules. */
+.mol-empty { display: flex; flex-direction: column; gap: 12px; }
+.mol-empty-paths { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.mol-empty-path {
+  display: flex; flex-direction: column; gap: 6px; align-items: flex-start;
+  border: 1px solid var(--c2-line); border-radius: 10px; padding: 12px;
+  background: var(--surface);
+}
+.mol-empty-note { margin: 0; font-size: 11px; line-height: 1.55; color: var(--text-dim); }
+.mol-browse-foot { display: flex; justify-content: flex-start; padding-top: 2px; }
+
+.fa-dialog .dialog-body { gap: 12px; max-height: 86vh; }
+.fa-form { display: flex; flex-direction: column; gap: 12px; }
+.fa-lead { margin: 0; font-size: 12px; line-height: 1.6; color: var(--text-dim); }
+.fa-lead code, .fa-note code { font-family: var(--font-mono); font-size: 10.5px; }
+.fa-block { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.fa-note { margin: 0; font-size: 11px; line-height: 1.55; color: var(--text-dim); }
+
+/* The epic's own titles, shown while the user decides which words are the
+   blanks — marking a variable is meaningless without seeing the text it
+   would be replaced in. */
+.fa-titles {
+  width: 100%; display: flex; flex-direction: column; gap: 2px;
+  border: 1px solid var(--c2-line); border-radius: 8px; padding: 8px 10px;
+  background: var(--bg); max-height: 22vh; overflow: auto;
+}
+.fa-title { font-size: 11.5px; line-height: 1.5; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fa-title.muted { color: var(--text-faint); }
+
+.fa-suggest { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.fa-suggest-lead { font-size: 11px; color: var(--text-faint); }
+.fa-chip { cursor: pointer; font-family: var(--font-mono); font-size: 10.5px; }
+.fa-chip:hover { border-color: var(--c2-synergy, var(--purple)); color: var(--text); }
+
+.fa-varlist { width: 100%; display: flex; flex-direction: column; gap: 6px; }
+.fa-varhead {
+  display: grid; grid-template-columns: 1fr 18px 1.4fr 30px; gap: 6px;
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint);
+}
+.fa-varrow { display: grid; grid-template-columns: 1fr 18px 1.4fr 30px; gap: 6px; align-items: center; }
+.fa-vararrow { text-align: center; color: var(--text-faint); font-size: 12px; }
+.fa-varvalue.bad, .fa-varname.bad { border-color: var(--red); }
+.fa-varx { padding: 4px 7px; }
+.fa-varbad { grid-column: 1 / -1; font-size: 10.5px; color: var(--red); }
+.fa-addvar { align-self: flex-start; }
+.fa-preview { display: flex; flex-direction: column; gap: 8px; }
+
+/* Editor */
+.fa-picker { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.fa-picker .mol-flist { width: 100%; }
+.fa-editor { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.fa-editbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fa-filename { font-family: var(--font-mono); font-size: 11.5px; min-width: 0; flex: 1 1 180px; }
+.fa-editbar-spacer { flex: 1 1 auto; }
+.fa-editbar-note { font-size: 10.5px; color: var(--text-faint); white-space: nowrap; }
+.fa-editbar-note code { font-family: var(--font-mono); }
+.fa-textarea {
+  width: 100%; min-height: 46vh; resize: vertical;
+  border: 1px solid var(--c2-line); border-radius: 8px; padding: 10px 12px;
+  background: var(--bg); color: var(--text);
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.55; tab-size: 2;
+}
+.fa-textarea:focus { outline: none; border-color: var(--c2-synergy, var(--purple)); }
 
 @media (max-width: 768px) {
   /* Single-column labels above fields; every control keeps a >=44px target,
@@ -903,6 +973,17 @@ select.c2-linktype { flex: 0 0 auto; max-width: 140px; }
   .mol-dry-text, .mol-dry-cmd { font-size: 10px; max-height: 30vh; }
   .mol-actions { flex-wrap: wrap; }
   .mol-dialog .dialog-body { max-height: 90vh; }
+
+  /* Authoring, at 390px: the two empty-state paths stack, and a variable row
+     becomes name-over-value so neither input squeezes below a usable width. */
+  .mol-empty-paths { grid-template-columns: 1fr; }
+  .fa-varhead { display: none; }
+  .fa-varrow { grid-template-columns: 1fr 34px; gap: 4px; }
+  .fa-vararrow { display: none; }
+  .fa-varvalue { grid-column: 1; }
+  .fa-varx { grid-row: 1 / span 2; grid-column: 2; align-self: center; }
+  .fa-textarea { min-height: 38vh; font-size: 11.5px; }
+  .fa-dialog .dialog-body { max-height: 90vh; }
 }
 
 /* ---------------------------------------------------------------------------

@@ -598,25 +598,41 @@ textarea.field { resize: vertical; }
    toggle (ops/quota/sessions), this one is interactive and respects
    .collapsed at EVERY viewport, not just <=768px, since its whole purpose
    is reclaiming vertical space above the project cards on desktop too. */
+/* The band is a DIRECT child of `.hub`, which is `align-items: center` — so
+   like .hub-section, .hub-qs-grid, .hub-grid and .hub-projects-head it has to
+   claim the row itself. Without this it shrank to its own content and floated
+   in the middle of the page, starting hundreds of pixels right of every other
+   section heading. Same width/rhythm as .hub-section, so "Usage attribution"
+   now begins on the same left edge as "Live quota" and "Tracked Projects". */
+.usage-attrib-band { width: 100%; max-width: 1080px; margin-bottom: 1.75rem; }
 .usage-attrib-head {
   display: flex; width: 100%; align-items: center; gap: 8px;
   background: none; border: none; padding: 0; margin: 0 0 9px; font: inherit; color: var(--text);
   cursor: pointer; text-align: left;
 }
-/* Bigger and case-normal here (vs. the small-caps "LIVE QUOTA"-style label
-   other hub sections use) — this band's collapsed-by-default, so its own
-   heading needs to read as worth a second look rather than as a quiet
-   secondary label. */
+/* Deliberately IDENTICAL to .hub-section-head h2 (the "Live quota" /
+   "Terminal sessions" / "Tracked Projects" headings) — this is one section
+   among several and its heading must not read as a different rank. An earlier
+   pass made it 14px/normal-case, which made it the only heading on the page
+   in that style. The affordance is what got louder instead: see
+   .usage-attrib-chip below. Only `flex` is added, because this heading shares
+   its row with the chip and chevron. */
 .usage-attrib-head .usage-band-label {
-  flex: 1 1 auto; font-size: 14px; font-weight: 700; text-transform: none; letter-spacing: normal; color: var(--text);
+  flex: 1 1 auto; min-width: 0;
+  font-size: 13px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint);
 }
 .usage-attrib-body.collapsed { display: none; }
 .usage-attrib-controls { justify-content: flex-end; margin-bottom: 12px; }
-/* Explicit "Show"/"Hide" alongside the chevron — the collapse affordance
-   shouldn't rely on the arrow glyph alone to read as interactive. */
-.usage-attrib-toggle-word {
-  flex-shrink: 0; font-size: 11.5px; font-weight: 650; text-transform: uppercase;
-  letter-spacing: 0.04em; color: var(--text-dim);
+/* "Show more" / "Show less" as a real chip, not a quiet word: this band is
+   collapsed by default, so the one control that reveals it has to look like a
+   control. It reuses .hub-chip verbatim (the ops-strip chip treatment) so the
+   whole hub keeps one chip language — this rule adds nothing but the hover
+   coupling, since the chip is a <span> inside the head button and would
+   otherwise stay inert-looking while the row it belongs to is hovered. */
+.usage-attrib-chip { flex-shrink: 0; }
+.usage-attrib-head:hover .usage-attrib-chip,
+.usage-attrib-head:focus-visible .usage-attrib-chip {
+  color: var(--text); border-color: var(--border-2); background: var(--surface-2);
 }
 
 /* Scoped per-model limits (dynamic — only currently-capped models appear).

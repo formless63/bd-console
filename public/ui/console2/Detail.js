@@ -14,6 +14,7 @@ import {
 import { burnIssueCount } from '../formulas.js';
 import {
   molDetail, loadMoleculeDetail, requestBurnPreview, cancelBurn, confirmBurn,
+  openDistillDialog,
 } from './molecules.js';
 import { renderMarkdown } from '../markdown.js';
 import {
@@ -335,6 +336,28 @@ function BurnBox({ root }) {
     </div>`;
 }
 
+// Save-as-template — the "you built this once, save it as a recipe" half of
+// bd-console-9it, and the reason molecules stopped being a dead end: `bd
+// formula` has no create verb, so before this button the only way to get a
+// formula was to hand-write a file outside the app. It appears on any
+// container that actually HAS children (an epic OR a poured molecule — a
+// molecule that grew extra steps is itself worth re-templating), because a
+// distill of a childless bead writes a zero-step formula that pours nothing.
+function TemplateBox({ issue }) {
+  const kids = childrenOf(issue.id).length;
+  const kind = isMolecule(issue) ? 'molecule' : 'epic';
+  return html`
+    <div class="c2-mol-distill">
+      <button class="c2-mini accent" data-mol-distill-btn onClick=${() => openDistillDialog(issue)}>
+        ⚗ Save as reusable template…
+      </button>
+      <p class="c2-mol-note muted">
+        Saves this ${kind}'s shape — ${kids} step${kids === 1 ? '' : 's'} and the order they run in — as a
+        formula. Next time, pour it instead of retyping it. Nothing here changes.
+      </p>
+    </div>`;
+}
+
 function Delegate({ issue }) {
   const id = issue.id;
   const [text, setText] = useState('');
@@ -507,6 +530,9 @@ export function Detail() {
                 el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
                 setTimeout(() => el?.focus(), 220);
               }} />`)}
+
+          ${isContainer(issue) && childrenOf(id).length > 0
+            && Field('Reuse', html`<${TemplateBox} issue=${issue} />`, 'formula')}
 
           ${isMolecule(issue) && Field('Undo', html`<${BurnBox} root=${issue} />`)}
 

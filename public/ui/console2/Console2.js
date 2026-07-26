@@ -29,6 +29,7 @@ import { MapView } from './MapView.js';
 import { Docs2 } from './Docs2.js';
 import { Detail } from './Detail.js';
 import { MoleculeDialog } from './MoleculeDialog.js';
+import { DistillDialog, FormulaEditorDialog } from './FormulaAuthor.js';
 import { mol, openMolDialog, loadFormulas } from './molecules.js';
 import { ThemeSwitch } from './ThemeSwitch.js';
 import { NudgeRail } from '../components/ConceptTip.js';
@@ -193,6 +194,12 @@ export function Console2() {
       </div>
       <${Detail} />
       <${MoleculeDialog} />
+      ${/* The two authoring surfaces the pour dialog's prerequisite needs
+            (bd-console-9it). Mounted alongside it, never nested inside it:
+            both are reachable from the Detail panel and the command palette
+            as well, not only from the empty state that motivated them. */ ''}
+      <${DistillDialog} />
+      <${FormulaEditorDialog} />
       ${detailOpen && html`<div class="c2-scrim" onClick=${() => selectIssue(null)}></div>`}
       ${store.issuesError.value && html`<div class="c2-boot-err">Failed to load issues: ${store.issuesError.value} · <a href=${'#/p/' + encodeURIComponent(pid || '')}>classic view</a></div>`}
     </div>`;
