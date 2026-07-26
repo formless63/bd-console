@@ -350,14 +350,22 @@ textarea.field { resize: vertical; }
 /* ==========================================================================
    Hub
    ========================================================================== */
-.hub { flex: 1; overflow-y: auto; padding: clamp(2rem, 6vw, 4.5rem) 1.5rem 4rem; display: flex; flex-direction: column; align-items: center; }
-.hub-header { text-align: center; margin-bottom: 2.5rem; max-width: 640px; }
+.hub { flex: 1; overflow-y: auto; padding: 1.5rem 1.5rem 4rem; display: flex; flex-direction: column; align-items: center; }
+/* Dense, utilitarian header — this is an admin console, not a landing page.
+   One flex row: identity (h1 + tagline) on the left, the ops summary strip
+   flush right, wrapping to its own full-width line only when the row can't
+   fit (narrow desktop, or <=768px where it stacks like every other hub
+   section). Replaces the old centered, multi-line marketing-style hero. */
+.hub-header {
+  display: flex; align-items: baseline; flex-wrap: wrap; column-gap: 14px; row-gap: 4px;
+  text-align: left; margin-bottom: 1rem; width: 100%; max-width: 1080px;
+}
 .hub-header h1 {
-  font-size: clamp(2.1rem, 4.4vw, 3rem); font-weight: 750; letter-spacing: -0.03em; margin: 0 0 0.5rem;
+  font-size: 15px; font-weight: 700; letter-spacing: -0.01em; margin: 0; flex-shrink: 0;
   background: linear-gradient(120deg, var(--text) 55%, var(--accent));
   -webkit-background-clip: text; background-clip: text; color: transparent;
 }
-.hub-header p { margin: 0; font-size: 15.5px; color: var(--text-dim); }
+.hub-header-tagline { margin: 0; font-size: 12px; color: var(--text-dim); flex-shrink: 1; min-width: 0; }
 .hub-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1.25rem; width: 100%; max-width: 1080px; animation: hub-grid-in 0.3s var(--ease); }
 @keyframes hub-grid-in { from { opacity: 0; transform: translateY(6px); } }
 .hub-card {
@@ -425,7 +433,12 @@ textarea.field { resize: vertical; }
    section body. Above that breakpoint every rule below is a no-op — the
    toggle affordances stay display:none and .collapsed never applies, so
    desktop rendering is identical to before this feature existed. */
-.hub-ops-wrap { width: 100%; }
+/* Sits inline at the end of the dense .hub-header row on desktop (flex-grow
+   so it claims the row's remaining width and its chips right-align within
+   it); falls back to a full-width line via flex-wrap when the row is too
+   narrow, and is forced full-width again at <=768px (existing collapsible-
+   section rule below) same as before this change. */
+.hub-ops-wrap { flex: 1 1 240px; min-width: 0; }
 .hub-section-toggle {
   display: none; width: 100%; align-items: center; gap: 8px;
   background: none; border: none; padding: 0; margin: 0 0 0.6rem; font: inherit; color: var(--text);
@@ -435,7 +448,30 @@ textarea.field { resize: vertical; }
 .hub-section-toggle-label { font-size: 13px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint); }
 .hub-section-toggle-summary { display: none; font-size: 12px; color: var(--text-dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hub-section-chevron { display: none; flex-shrink: 0; color: var(--text-faint); transition: transform 0.15s var(--ease); }
+/* Higher specificity than the display:none default above (regardless of
+   source order) — for the one section (usage attribution) whose chevron
+   must stay visible at every viewport, not just <=768px. */
+.hub-section-chevron.chevron-visible { display: inline-flex; }
 .hub-section-body { }
+
+/* ---- Live quota + terminal sessions row -----------------------------------
+   Quota at ~1/3 width, sessions at ~2/3, side by side at equal height (CSS
+   Grid's default stretch alignment handles the "equal height" part for
+   free — both columns fill the row track's height, which is in turn capped
+   by .hub-sessions-scroll's max-height below so a long session list can't
+   grow the row unboundedly). Drops to a single stacked column <=768px (see
+   the responsive block near the end of this file), same full-width stack
+   order as before this feature (quota above sessions). */
+.hub-qs-grid { display: grid; grid-template-columns: 1fr 2fr; align-items: stretch; gap: 1.25rem; width: 100%; max-width: 1080px; margin-bottom: 1.75rem; }
+.hub-qs-grid.single-col { grid-template-columns: 1fr; }
+.hub-qs-quota, .hub-qs-sessions { min-width: 0; margin-bottom: 0; }
+/* Scrolls internally once the session list is taller than this — the box's
+   own height is capped here (even though its content can be taller), which
+   is what keeps the shared grid row's height bounded instead of growing
+   with the session count. The header row stays pinned while the body
+   scrolls underneath it. */
+.hub-sessions-scroll { max-height: 22rem; overflow-y: auto; overflow-x: hidden; border-radius: var(--radius-lg); }
+.hub-sessions-scroll .hub-tmux-head-row > * { position: sticky; top: 0; background: var(--surface); z-index: 1; }
 /* Single CSS grid spanning every row: the header (HubTmuxHead) and each
    session row (SessionRowCompact) are `display: contents` wrappers, so
    their cells become flat, in-order items of *this* grid and share one set
@@ -520,6 +556,19 @@ textarea.field { resize: vertical; }
 .usage-band-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 9px; flex-wrap: wrap; }
 .usage-band-label { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint); }
 .usage-band-label .muted.small { text-transform: none; letter-spacing: normal; font-weight: 500; }
+
+/* Usage attribution's own collapse toggle — unlike every other hub-section
+   toggle (ops/quota/sessions), this one is interactive and respects
+   .collapsed at EVERY viewport, not just <=768px, since its whole purpose
+   is reclaiming vertical space above the project cards on desktop too. */
+.usage-attrib-head {
+  display: flex; width: 100%; align-items: center; gap: 8px;
+  background: none; border: none; padding: 0; margin: 0 0 9px; font: inherit; color: var(--text);
+  cursor: pointer; text-align: left;
+}
+.usage-attrib-head .usage-band-label { flex: 1 1 auto; }
+.usage-attrib-body.collapsed { display: none; }
+.usage-attrib-controls { justify-content: flex-end; margin-bottom: 12px; }
 
 /* Scoped per-model limits (dynamic — only currently-capped models appear).
    Nested inside .usage-gauges so they share the ok/warn/crit gauge language;
@@ -636,16 +685,31 @@ textarea.field { resize: vertical; }
 .empty-icon { font-size: 2rem; opacity: 0.5; }
 
 /* ---- bd (beads CLI) version row (hub) --------------------------------------
-   Compact, always-visible-when-known row between the ops strip and the Usage
-   section: `bd 1.1.0` plain; when behind, an amber "update available" chip
-   that copies the update command on click; when more than one `bd` binary
-   is on PATH, a quiet warning chip pointing at Settings for the detail. */
-.bd-version-row { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; margin: 0.75rem 0 0; }
+   Compact, always-visible-when-known row between the ops strip and the
+   quota/sessions grid: `bd 1.1.0` — now a hyperlink to the beads repo — plain;
+   when behind, an amber "update available" chip that copies the update
+   command on click; when more than one `bd` binary is on PATH, a quiet
+   warning chip pointing at Settings for the detail. A "docs" chip alongside
+   it links out to the hosted documentation. Left-aligned, full-width, to
+   match the dense admin-console header above it (not centered like before). */
+.bd-version-row { display: flex; align-items: center; justify-content: flex-start; flex-wrap: wrap; gap: 8px; margin: 0.6rem 0 0; width: 100%; max-width: 1080px; }
 .bd-version-chip {
   display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 12px; font-weight: 600;
   color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-pill);
-  padding: 4px 11px;
+  padding: 4px 11px; text-decoration: none;
 }
+/* Both external links (version → GitHub, docs chip) get the same hover
+   treatment and an inline external-link glyph (currentColor, so it themes)
+   in addition to target="_blank" — the affordance shouldn't rely on the
+   attribute alone, which isn't visually apparent. */
+.bd-version-link, .bd-docs-chip { transition: all 0.15s var(--ease); }
+.bd-version-link:hover, .bd-docs-chip:hover { color: var(--accent); border-color: var(--border-2); background: var(--surface-2); }
+.bd-docs-chip {
+  display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 12px; font-weight: 600;
+  color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-pill);
+  padding: 4px 11px; text-decoration: none; text-transform: lowercase;
+}
+.external-link-icon { flex-shrink: 0; opacity: 0.75; }
 .bd-version-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
 .bd-update-chip {
   display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 12px; font-weight: 600;
@@ -920,7 +984,7 @@ select.edit-input.link-type { flex: 0 0 auto; min-width: 150px; }
 .nav-link:hover { background: var(--surface-2); color: var(--text); }
 .nav-link.active { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 
-.ops-strip { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 0.9rem; }
+.ops-strip { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin-top: 0; }
 .ops-chip {
   background: var(--surface); border: 1px solid var(--border); color: var(--text-dim);
   border-radius: var(--radius-pill); padding: 5px 13px; font: inherit; font-size: 12.5px; font-weight: 500;
@@ -1188,24 +1252,27 @@ select.edit-input.link-type { flex: 0 0 auto; min-width: 150px; }
   .theme-picker { display: none; }
   .theme-switch-mobile { display: inline-flex; }
 
-  /* Collapsible hub sections (ops strip, tmux strip) — collapsed by default
-     on a phone (store.js's collapsedHubSections starts with both ids
-     collapsed) so project cards are reachable without scrolling past a
-     half-screen of chrome first. Tapping a header calls toggleHubSection(),
-     which flips .hub-section-body's "collapsed" class here. Every selector
-     below is otherwise unused above this breakpoint (toggle affordances
-     stay display:none, .collapsed never applies), so desktop is unaffected. */
+  /* Collapsible hub sections (ops strip, quota, sessions) — tapping a header
+     calls toggleHubSection(), which flips .hub-section-body's "collapsed"
+     class here; each section's own persisted state decides whether that
+     starts collapsed or not (see store.js — nothing collapsed by default
+     except the usage-attribution band, which collapses at every viewport,
+     not just here). Every selector below is otherwise unused above this
+     breakpoint (toggle affordances stay display:none, .collapsed never
+     applies), so desktop is unaffected. */
   .hub-header { margin-bottom: 1.25rem; }
+  .hub-header .ops-strip { justify-content: flex-start; }
   .hub-section { margin-bottom: 1rem; }
+  .hub-qs-grid { grid-template-columns: 1fr; gap: 1rem; }
   .hub-section-toggle { display: flex; }
   .hub-section-toggle-inline { cursor: pointer; flex-wrap: nowrap; }
   .hub-section-toggle-summary { display: block; flex: 1 1 auto; min-width: 0; text-align: right; }
   .hub-section-chevron { display: inline-flex; }
-  /* The tmux section's "View all" button is redundant with the collapsible
-     header itself here (tap to expand, or reach #/tmux via the ops strip's
-     "N tmux sessions" chip above) and its label wrapped awkwardly in the
-     header's now-tighter row — drop it at this width. */
-  .hub-tmux-section .hub-section-head > .btn { display: none; }
+  /* The sessions column's "View all" button is redundant with the
+     collapsible header itself here (tap to expand, or reach #/tmux via the
+     ops strip's "N tmux sessions" chip above) and its label wrapped
+     awkwardly in the header's now-tighter row — drop it at this width. */
+  .hub-qs-sessions .hub-section-head > .btn { display: none; }
   .hub-section-body.collapsed { display: none; }
 
   /* Usage gauges: stack full-width instead of the desktop single-line

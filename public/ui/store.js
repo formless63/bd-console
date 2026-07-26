@@ -125,7 +125,13 @@ export const store = {
   // so a first mobile visit shows project cards without scrolling.
   // Default: nothing collapsed — hub sections (esp. tmux) stay visible on
   // every viewport; collapsing is a per-user opt-in via the mobile toggles.
-  collapsedHubSections: signal(new Set(lsGet('bd_hub_sections_collapsed', []))),
+  // 'attrib' (usage attribution band) is an exception to the "nothing
+  // collapsed by default" rule above: it collapses at every viewport (not
+  // just mobile — see .usage-attrib-body.collapsed in styles.css) and
+  // defaults to collapsed so project cards are visible sooner on first
+  // load. Once a user has toggled anything, their persisted set wins over
+  // this default, including for users who re-expand 'attrib'.
+  collapsedHubSections: signal(new Set(lsGet('bd_hub_sections_collapsed', ['attrib']))),
 };
 
 // ---------------------------------------------------------------------------

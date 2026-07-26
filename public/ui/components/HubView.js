@@ -9,12 +9,24 @@ import { SessionRowCompact, HubTmuxHead } from './TmuxView.js';
 import { ProviderAttribution } from './UsageCharts.js';
 
 // Chevron used by the mobile collapsible-section headers (ops strip, tmux
-// strip) — see .hub-section-toggle / .hub-section-body in styles.css. Only
-// visible at <=768px; on desktop the toggle header itself is hidden so this
-// never renders there.
-function ChevronIcon({ open }) {
-  return html`<svg class="hub-section-chevron" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"
+// strip, usage/quota) — see .hub-section-toggle / .hub-section-body in
+// styles.css. Only visible at <=768px; on desktop the toggle header itself
+// is hidden so this never renders there. Pass alwaysVisible for a section
+// that collapses at every viewport (currently just the usage attribution
+// band), which needs the chevron on desktop too.
+function ChevronIcon({ open, alwaysVisible }) {
+  return html`<svg class=${'hub-section-chevron' + (alwaysVisible ? ' chevron-visible' : '')} width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"
     style=${'transform:rotate(' + (open ? '0' : '-90') + 'deg)'}><path fill="currentColor" d="M4 6l4 4 4-4"/></svg>`;
+}
+
+// Unmistakable external-link glyph (box + escaping arrow) — used by the bd
+// version link and the docs chip so both read as "leaves the app" even
+// without relying on target="_blank" alone (which isn't visually apparent).
+function ExternalLinkIcon() {
+  return html`<svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true" class="external-link-icon">
+    <path fill="currentColor" d="M6.5 2a.5.5 0 000 1H11.3L5.15 9.15a.5.5 0 10.7.7L12 3.7V8.5a.5.5 0 001 0v-6a.5.5 0 00-.5-.5h-6z"/>
+    <path fill="currentColor" d="M4 4a2 2 0 00-2 2v6a2 2 0 002 2h6a2 2 0 002-2V9a.5.5 0 00-1 0v3a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1h3a.5.5 0 000-1H4z"/>
+  </svg>`;
 }
 
 const METRICS_META = [
@@ -170,39 +182,12 @@ function OpsStrip() {
     </div>`;
 }
 
-function TmuxSection() {
-  const hasTmux = store.tmuxAvailable.value;
-  const sessions = store.tmuxSessions.value;
-  const projects = store.projects.value;
-  if (!hasTmux) return null;
-  const collapsed = store.collapsedHubSections.value.has('tmux');
-  const attached = sessions.filter((s) => s.attached).length;
-  const summary = `${sessions.length} session${sessions.length === 1 ? '' : 's'} · ${attached} attached`;
-  return html`
-    <section class="hub-section hub-tmux-section">
-      <div
-        class="hub-section-head hub-section-toggle-inline"
-        role="button"
-        tabIndex="0"
-        aria-expanded=${!collapsed}
-        onClick=${() => toggleHubSection('tmux')}
-        onKeyDown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleHubSection('tmux'); } }}
-      >
-        <h2>Terminal sessions</h2>
-        <span class="hub-section-toggle-summary">${summary}</span>
-        ${sessions.length > 0 && html`<button class="btn btn-ghost btn-xs" onClick=${(e) => { e.stopPropagation(); navigate('#/tmux'); }}>View all →</button>`}
-        <${ChevronIcon} open=${!collapsed} />
-      </div>
-      <div class=${'hub-section-body' + (collapsed ? ' collapsed' : '')}>
-        ${sessions.length === 0
-          ? html`<p class="muted small hub-section-empty">No tmux sessions running.</p>`
-          : html`<div class="hub-tmux-rows">
-              <${HubTmuxHead} />
-              ${sessions.slice(0, 6).map((s) => html`<${SessionRowCompact} key=${s.name} session=${s} projects=${projects} onClick=${() => navigate('#/tmux')} />`)}
-            </div>`}
-      </div>
-    </section>`;
-}
+// Note: the tmux session list used to be its own stacked hub-section
+// ("Terminal sessions", full-width, capped to 6 rows + "View all →"). It's
+// now rendered inline inside QuotaSessionsRow, side by side with the live
+// quota band — see that function, below the Usage section — showing every
+// session (no 6-row cap) inside its own internally-scrolling container
+// instead of truncating.
 
 // ---------------------------------------------------------------------------
 // bd (beads CLI) version row — GET /api/bd-version (see lib/bdversion.mjs).
@@ -217,26 +202,33 @@ async function copyUpdateCommand(cmd) {
   toast(ok ? `Copied "${cmd}"` : cmd, ok ? 'ok' : 'warn', ok ? 3200 : 8000);
 }
 
+const BEADS_REPO_URL = 'https://github.com/gastownhall/beads';
+const BEADS_DOCS_URL = 'https://beads.gascity.com';
+
 function BdVersionRow() {
   useEffect(() => { loadBdVersion(); }, []);
-  if (!store.bdVersionAvailable.value) return null;
+  const bdKnown = store.bdVersionAvailable.value;
   const v = store.bdVersion.value;
-  if (!v || !v.installed) return null;
-
-  const behind = v.behind === true && v.latest;
+  const showVersion = bdKnown && v && v.installed;
+  const behind = showVersion && v.behind === true && v.latest;
 
   return html`
     <div class="bd-version-row">
-      <span class="bd-version-chip" title=${'Installed via `bd version`' + (v.checkedAt ? ' · checked ' + timeAgo(v.checkedAt) : '')}>
-        <span class="bd-version-dot"></span>bd ${v.installed}
-      </span>
+      ${showVersion && html`
+        <a class="bd-version-chip bd-version-link" href=${BEADS_REPO_URL} target="_blank" rel="noopener noreferrer"
+          title=${'Installed via `bd version`' + (v.checkedAt ? ' · checked ' + timeAgo(v.checkedAt) : '') + ' — open beads on GitHub'}>
+          <span class="bd-version-dot"></span>bd ${v.installed}<${ExternalLinkIcon} />
+        </a>`}
+      <a class="bd-docs-chip" href=${BEADS_DOCS_URL} target="_blank" rel="noopener noreferrer" title="Open beads documentation">
+        docs<${ExternalLinkIcon} />
+      </a>
       ${behind && html`
         <button type="button" class="bd-update-chip"
           title=${v.updateHint ? `Copy: ${v.updateHint}` : 'A newer bd release is available — see Settings for update options'}
           onClick=${() => v.updateHint ? copyUpdateCommand(v.updateHint) : navigate('#/settings')}>
           <span class="bd-update-badge">update available</span> → ${v.latest}
         </button>`}
-      ${v.multipleBinaries && html`
+      ${showVersion && v.multipleBinaries && html`
         <span class="bd-multi-chip" title=${'Multiple bd binaries on PATH:\n' + v.binaries.join('\n') + '\n\nSee Settings for details.'}>
           ⚠ multiple bd on PATH
         </span>`}
@@ -397,6 +389,15 @@ function HistoryRangePicker({ days, onChange }) {
 // the route itself is unavailable (older server, or backend still landing);
 // individual providers degrade to a "gathering usage…" note via
 // ProviderAttribution when the route works but has no data yet.
+//
+// Its own collapse toggle (id 'attrib'), separate from the live-quota
+// section's 'usage' id — and unlike every other hub-section toggle, this one
+// collapses at EVERY viewport, not just <=768px (see .usage-attrib-head /
+// .usage-attrib-body.collapsed in styles.css, deliberately not gated by the
+// mobile media query). Defaults to collapsed (store.js) so project cards sit
+// higher on the page without the heavier chart content pushing them down;
+// still fully expandable, and the choice persists like every other hub
+// section's collapse state.
 function AttributionBand() {
   const days = store.usageHistoryDays.value;
   useEffect(() => {
@@ -406,14 +407,22 @@ function AttributionBand() {
   }, []);
 
   if (!store.usageHistoryAvailable.value) return null;
+  const collapsed = store.collapsedHubSections.value.has('attrib');
   const history = store.usageHistory.value;
+
+  const head = (summary) => html`
+    <button type="button" class="usage-attrib-head" aria-expanded=${!collapsed} onClick=${() => toggleHubSection('attrib')}>
+      <span class="usage-band-label">Usage attribution <span class="muted small">· ${summary}</span></span>
+      <${ChevronIcon} open=${!collapsed} alwaysVisible=${true} />
+    </button>`;
+
   if (!history) {
     return html`
       <div class="usage-band usage-attrib-band">
-        <div class="usage-band-head">
-          <span class="usage-band-label">Usage attribution <span class="muted small">· estimated, not quota</span></span>
+        ${head('estimated, not quota')}
+        <div class=${'usage-attrib-body' + (collapsed ? ' collapsed' : '')}>
+          <p class="muted small usage-empty">${store.usageHistoryLoading.value ? 'Gathering usage…' : 'No usage history yet.'}</p>
         </div>
-        <p class="muted small usage-empty">${store.usageHistoryLoading.value ? 'Gathering usage…' : 'No usage history yet.'}</p>
       </div>`;
   }
 
@@ -422,55 +431,103 @@ function AttributionBand() {
 
   return html`
     <div class="usage-band usage-attrib-band">
-      <div class="usage-band-head">
-        <span class="usage-band-label">Usage attribution <span class="muted small">· estimated from local session logs, not quota</span></span>
-        <${HistoryRangePicker} days=${days} onChange=${(d) => loadUsageHistory(d)} />
+      ${head('estimated from local session logs, not quota')}
+      <div class=${'usage-attrib-body' + (collapsed ? ' collapsed' : '')}>
+        <div class="usage-band-head usage-attrib-controls">
+          <${HistoryRangePicker} days=${days} onChange=${(d) => loadUsageHistory(d)} />
+        </div>
+        <${ProviderAttribution} label="Claude Code" data=${claude} showProjectCharts=${true} />
+        <${ProviderAttribution} label="Codex" data=${codex} showProjectCharts=${false} />
       </div>
-      <${ProviderAttribution} label="Claude Code" data=${claude} showProjectCharts=${true} />
-      <${ProviderAttribution} label="Codex" data=${codex} showProjectCharts=${false} />
     </div>`;
 }
 
-function UsageSection() {
+// Live quota (left, ~1/3) + terminal sessions (right, ~2/3), side by side at
+// equal height — see .hub-qs-grid in styles.css. Both halves keep their own
+// pre-existing collapse id ('usage' for quota, 'tmux' for sessions) and the
+// same hub-section-toggle-inline/hub-section-body markup every other hub
+// section uses, so the existing <=768px mobile-collapse behavior (and the
+// "desktop is unaffected" CSS gating that comes with it) is untouched — at
+// that breakpoint the grid also drops to a single column (styles.css) so the
+// two halves simply stack full-width in the same top-to-bottom order as
+// before this change (quota above sessions).
+//
+// This function owns the live-quota poll effect (previously UsageSection's)
+// and is always called unconditionally from HubView (never short-circuited
+// by `&&`) so that hook stays at a stable position across renders even
+// though either half — or both — can independently render nothing.
+function QuotaSessionsRow() {
   useEffect(() => {
     loadUsage();
     const t = setInterval(loadUsage, USAGE_POLL_MS);
     return () => clearInterval(t);
   }, []);
 
-  if (!store.usageAvailable.value) return null;
+  const projects = store.projects.value;
+  const hasProjects = Object.keys(projects).length > 0;
+  const showQuota = store.usageAvailable.value;
+  // Preserves the old TmuxSection's "hide entirely with zero registered
+  // projects" behavior in addition to the tmux-unavailable case.
+  const showSessions = hasProjects && store.tmuxAvailable.value;
+  if (!showQuota && !showSessions) return null;
 
   const usage = store.usage.value || {};
-  const collapsed = store.collapsedHubSections.value.has('usage');
-  const summary = `Claude ${summarizeUsage(usage.claude)} · Codex ${summarizeUsage(usage.codex)}`;
+  const usageCollapsed = store.collapsedHubSections.value.has('usage');
+  const usageSummary = `Claude ${summarizeUsage(usage.claude)} · Codex ${summarizeUsage(usage.codex)}`;
+
+  const sessions = store.tmuxSessions.value;
+  const tmuxCollapsed = store.collapsedHubSections.value.has('tmux');
+  const attached = sessions.filter((s) => s.attached).length;
+  const tmuxSummary = `${sessions.length} session${sessions.length === 1 ? '' : 's'} · ${attached} attached`;
 
   return html`
-    <section class="hub-section hub-usage-section">
-      <div
-        class="hub-section-head hub-section-toggle-inline"
-        role="button"
-        tabIndex="0"
-        aria-expanded=${!collapsed}
-        onClick=${() => toggleHubSection('usage')}
-        onKeyDown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleHubSection('usage'); } }}
-      >
-        <h2>Usage</h2>
-        <span class="hub-section-toggle-summary">${summary}</span>
-        <${ChevronIcon} open=${!collapsed} />
-      </div>
-      <div class=${'hub-section-body' + (collapsed ? ' collapsed' : '')}>
-        <div class="usage-band usage-quota-band">
-          <div class="usage-band-head">
-            <span class="usage-band-label">Live quota</span>
+    <div class=${'hub-qs-grid' + (showQuota && showSessions ? '' : ' single-col')}>
+      ${showQuota && html`
+        <section class="hub-section hub-qs-quota">
+          <div
+            class="hub-section-head hub-section-toggle-inline"
+            role="button"
+            tabIndex="0"
+            aria-expanded=${!usageCollapsed}
+            onClick=${() => toggleHubSection('usage')}
+            onKeyDown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleHubSection('usage'); } }}
+          >
+            <h2>Live quota</h2>
+            <span class="hub-section-toggle-summary">${usageSummary}</span>
+            <${ChevronIcon} open=${!usageCollapsed} />
           </div>
-          <div class="usage-rows">
-            <${ProviderUsageRow} name="claude" data=${usage.claude} />
-            <${ProviderUsageRow} name="codex" data=${usage.codex} />
+          <div class=${'hub-section-body' + (usageCollapsed ? ' collapsed' : '')}>
+            <div class="usage-rows">
+              <${ProviderUsageRow} name="claude" data=${usage.claude} />
+              <${ProviderUsageRow} name="codex" data=${usage.codex} />
+            </div>
           </div>
-        </div>
-        <${AttributionBand} />
-      </div>
-    </section>`;
+        </section>`}
+      ${showSessions && html`
+        <section class="hub-section hub-qs-sessions">
+          <div
+            class="hub-section-head hub-section-toggle-inline"
+            role="button"
+            tabIndex="0"
+            aria-expanded=${!tmuxCollapsed}
+            onClick=${() => toggleHubSection('tmux')}
+            onKeyDown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleHubSection('tmux'); } }}
+          >
+            <h2>Terminal sessions</h2>
+            <span class="hub-section-toggle-summary">${tmuxSummary}</span>
+            ${sessions.length > 0 && html`<button class="btn btn-ghost btn-xs" onClick=${(e) => { e.stopPropagation(); navigate('#/tmux'); }}>View all →</button>`}
+            <${ChevronIcon} open=${!tmuxCollapsed} />
+          </div>
+          <div class=${'hub-section-body' + (tmuxCollapsed ? ' collapsed' : '')}>
+            ${sessions.length === 0
+              ? html`<p class="muted small hub-section-empty">No tmux sessions running.</p>`
+              : html`<div class="hub-sessions-scroll"><div class="hub-tmux-rows">
+                  <${HubTmuxHead} />
+                  ${sessions.map((s) => html`<${SessionRowCompact} key=${s.name} session=${s} projects=${projects} onClick=${() => navigate('#/tmux')} />`)}
+                </div></div>`}
+          </div>
+        </section>`}
+    </div>`;
 }
 
 export function HubView() {
@@ -480,15 +537,15 @@ export function HubView() {
     <main class="hub">
       <div class="hub-header">
         <h1>Global Hub</h1>
-        <p class="muted">Select a project to manage its beads.</p>
+        <p class="hub-header-tagline muted small">Select a project to manage its beads.</p>
         ${OpsStrip()}
       </div>
 
       <${BdVersionRow} />
 
-      ${UsageSection()}
+      ${QuotaSessionsRow()}
 
-      ${entries.length > 0 && TmuxSection()}
+      ${AttributionBand()}
 
       ${entries.length === 0
         ? html`<div class="empty-state">
