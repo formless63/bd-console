@@ -361,11 +361,19 @@ textarea.field { resize: vertical; }
   text-align: left; margin-bottom: 1rem; width: 100%; max-width: 1080px;
 }
 .hub-header h1 {
-  font-size: 15px; font-weight: 700; letter-spacing: -0.01em; margin: 0; flex-shrink: 0;
+  /* Nudged back up from the 15px the last density pass left it at — that
+     read as body text, not a title. Still sized to sit on one dense row with
+     the tagline/ops chips beside it (not the old full-width marketing hero). */
+  font-size: 21px; font-weight: 700; letter-spacing: -0.01em; margin: 0; flex-shrink: 0;
   background: linear-gradient(120deg, var(--text) 55%, var(--accent));
   -webkit-background-clip: text; background-clip: text; color: transparent;
 }
 .hub-header-tagline { margin: 0; font-size: 12px; color: var(--text-dim); flex-shrink: 1; min-width: 0; }
+/* Heading above the project-card grid — reuses .hub-section-head's own h2
+   styling (small-caps label, same as "Live quota"/"Terminal sessions") for
+   visual consistency; width-matched to .hub-grid below since it isn't
+   wrapped in a full .hub-section itself. */
+.hub-projects-head { width: 100%; max-width: 1080px; }
 .hub-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1.25rem; width: 100%; max-width: 1080px; animation: hub-grid-in 0.3s var(--ease); }
 @keyframes hub-grid-in { from { opacity: 0; transform: translateY(6px); } }
 .hub-card {
@@ -455,22 +463,51 @@ textarea.field { resize: vertical; }
 .hub-section-body { }
 
 /* ---- Live quota + terminal sessions row -----------------------------------
-   Quota at ~1/3 width, sessions at ~2/3, side by side at equal height (CSS
-   Grid's default stretch alignment handles the "equal height" part for
-   free — both columns fill the row track's height, which is in turn capped
-   by .hub-sessions-scroll's max-height below so a long session list can't
-   grow the row unboundedly). Drops to a single stacked column <=768px (see
-   the responsive block near the end of this file), same full-width stack
-   order as before this feature (quota above sessions). */
+   Quota at ~1/3 width, sessions at ~2/3, side by side at equal height. CSS
+   Grid's default stretch alignment equalizes the two *cells* for free (both
+   .hub-qs-quota/.hub-qs-sessions sections fill the row track's height) — but
+   that alone left the bordered content INSIDE each cell (the .usage-row
+   provider cards; the .hub-tmux-rows session grid) sized to their own
+   natural content height, floating at the top of a taller stretched cell
+   with dead space below. Fixed by threading flex all the way down each
+   cell (section > .hub-section-body > content) so the actual bordered
+   panel — not just the outer cell — fills the available height:
+     quota:    .hub-section-body -> .usage-rows -> each .usage-row (flex:1
+               1 0, so N provider cards split the height evenly)
+     sessions: .hub-section-body -> .hub-sessions-scroll -> .hub-tmux-rows
+               (flex: 1 0 auto — grows to fill, never shrinks below its own
+               row content, so the internal scroll below still kicks in for
+               a long session list instead of squashing rows)
+   Drops to a single stacked column <=768px (see the responsive block near
+   the end of this file), same full-width stack order as before this
+   feature (quota above sessions). */
 .hub-qs-grid { display: grid; grid-template-columns: 1fr 2fr; align-items: stretch; gap: 1.25rem; width: 100%; max-width: 1080px; margin-bottom: 1.75rem; }
 .hub-qs-grid.single-col { grid-template-columns: 1fr; }
-.hub-qs-quota, .hub-qs-sessions { min-width: 0; margin-bottom: 0; }
-/* Scrolls internally once the session list is taller than this — the box's
-   own height is capped here (even though its content can be taller), which
-   is what keeps the shared grid row's height bounded instead of growing
-   with the session count. The header row stays pinned while the body
-   scrolls underneath it. */
-.hub-sessions-scroll { max-height: 22rem; overflow-y: auto; overflow-x: hidden; border-radius: var(--radius-lg); }
+.hub-qs-quota, .hub-qs-sessions { min-width: 0; margin-bottom: 0; display: flex; flex-direction: column; }
+/* Sessions' header carries an extra "View all →" button quota's doesn't, so
+   without this the two heads render at different heights, which then eats
+   into the body-fill fix below by that same difference (a few px) — pin both
+   to one shared min-height (align-items:center on .hub-section-head already
+   centers the shorter one) so the two heads, and therefore the two filled
+   panels beneath them, come out pixel-equal. */
+.hub-qs-quota .hub-section-head, .hub-qs-sessions .hub-section-head { min-height: 26px; }
+.hub-qs-quota .hub-section-body, .hub-qs-sessions .hub-section-body {
+  flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+}
+.hub-qs-quota .usage-rows { flex: 1 1 auto; min-height: 0; }
+.hub-qs-quota .usage-row { flex: 1 1 0; display: flex; flex-direction: column; justify-content: center; }
+/* Scrolls internally once the session list is taller than the available
+   row height — flex:1 lets it fill up to that height when content is
+   shorter (fixing the equal-height bug), min-height:0 lets it shrink below
+   its content size so overflow-y can take over instead of growing past the
+   available space, and the max-height stays as a belt-and-suspenders cap so
+   an unusually tall quota panel still can't drag a huge session list's row
+   past a sane ceiling. */
+.hub-sessions-scroll {
+  flex: 1 1 auto; min-height: 0; max-height: 22rem; display: flex; flex-direction: column;
+  overflow-y: auto; overflow-x: hidden; border-radius: var(--radius-lg);
+}
+.hub-sessions-scroll .hub-tmux-rows { flex: 1 0 auto; }
 .hub-sessions-scroll .hub-tmux-head-row > * { position: sticky; top: 0; background: var(--surface); z-index: 1; }
 /* Single CSS grid spanning every row: the header (HubTmuxHead) and each
    session row (SessionRowCompact) are `display: contents` wrappers, so
@@ -566,9 +603,21 @@ textarea.field { resize: vertical; }
   background: none; border: none; padding: 0; margin: 0 0 9px; font: inherit; color: var(--text);
   cursor: pointer; text-align: left;
 }
-.usage-attrib-head .usage-band-label { flex: 1 1 auto; }
+/* Bigger and case-normal here (vs. the small-caps "LIVE QUOTA"-style label
+   other hub sections use) — this band's collapsed-by-default, so its own
+   heading needs to read as worth a second look rather than as a quiet
+   secondary label. */
+.usage-attrib-head .usage-band-label {
+  flex: 1 1 auto; font-size: 14px; font-weight: 700; text-transform: none; letter-spacing: normal; color: var(--text);
+}
 .usage-attrib-body.collapsed { display: none; }
 .usage-attrib-controls { justify-content: flex-end; margin-bottom: 12px; }
+/* Explicit "Show"/"Hide" alongside the chevron — the collapse affordance
+   shouldn't rely on the arrow glyph alone to read as interactive. */
+.usage-attrib-toggle-word {
+  flex-shrink: 0; font-size: 11.5px; font-weight: 650; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--text-dim);
+}
 
 /* Scoped per-model limits (dynamic — only currently-capped models appear).
    Nested inside .usage-gauges so they share the ok/warn/crit gauge language;
@@ -684,46 +733,37 @@ textarea.field { resize: vertical; }
 .empty-state { text-align: center; padding: 4rem 1rem; color: var(--text-dim); display: flex; flex-direction: column; gap: 8px; align-items: center; }
 .empty-icon { font-size: 2rem; opacity: 0.5; }
 
-/* ---- bd (beads CLI) version row (hub) --------------------------------------
-   Compact, always-visible-when-known row between the ops strip and the
-   quota/sessions grid: `bd 1.1.0` — now a hyperlink to the beads repo — plain;
-   when behind, an amber "update available" chip that copies the update
-   command on click; when more than one `bd` binary is on PATH, a quiet
-   warning chip pointing at Settings for the detail. A "docs" chip alongside
-   it links out to the hosted documentation. Left-aligned, full-width, to
-   match the dense admin-console header above it (not centered like before). */
-.bd-version-row { display: flex; align-items: center; justify-content: flex-start; flex-wrap: wrap; gap: 8px; margin: 0.6rem 0 0; width: 100%; max-width: 1080px; }
-.bd-version-chip {
-  display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 12px; font-weight: 600;
-  color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-pill);
-  padding: 4px 11px; text-decoration: none;
+/* ---- Hub chip row (ops strip) ----------------------------------------------
+   One consolidated, uniformly-styled row: tmux sessions · scheduled prompts ·
+   bd version · bd-docs · update-available (when behind) · multiple-binaries
+   warning (when present) — see OpsStrip in HubView.js. Every chip is a
+   .hub-chip; only color/border-color/cursor vary by kind (.hub-chip-amber,
+   .hub-chip-warn) — padding, border-radius and font-size are shared by every
+   chip so the row reads as one visual system (this is asserted equal, not
+   just eyeballed — see the hub verification script). Emoji lead each label so
+   the row is glanceable without reading text first. External links (version →
+   GitHub, bd-docs) get the same hover treatment plus an inline external-link
+   glyph (currentColor, so it themes) in addition to target="_blank" — the
+   affordance shouldn't rely on the attribute alone, which isn't visually
+   apparent. */
+.hub-chip {
+  display: inline-flex; align-items: center; gap: 6px; font: inherit; font-family: var(--font-mono);
+  font-size: 12px; font-weight: 600; line-height: 1.3; color: var(--text-dim);
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-pill);
+  padding: 5px 12px; text-decoration: none; cursor: pointer; transition: all 0.15s var(--ease);
 }
-/* Both external links (version → GitHub, docs chip) get the same hover
-   treatment and an inline external-link glyph (currentColor, so it themes)
-   in addition to target="_blank" — the affordance shouldn't rely on the
-   attribute alone, which isn't visually apparent. */
-.bd-version-link, .bd-docs-chip { transition: all 0.15s var(--ease); }
-.bd-version-link:hover, .bd-docs-chip:hover { color: var(--accent); border-color: var(--border-2); background: var(--surface-2); }
-.bd-docs-chip {
-  display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 12px; font-weight: 600;
-  color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-pill);
-  padding: 4px 11px; text-decoration: none; text-transform: lowercase;
-}
+.hub-chip:hover { color: var(--text); border-color: var(--border-2); background: var(--surface-2); }
+.hub-chip-link:hover { color: var(--accent); }
 .external-link-icon { flex-shrink: 0; opacity: 0.75; }
-.bd-version-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
-.bd-update-chip {
-  display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 12px; font-weight: 600;
+.hub-chip-amber {
   color: var(--amber); background: color-mix(in srgb, var(--amber) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--amber) 40%, transparent); border-radius: var(--radius-pill);
-  padding: 4px 11px; cursor: pointer; transition: all 0.15s var(--ease);
+  border-color: color-mix(in srgb, var(--amber) 40%, transparent);
 }
-.bd-update-chip:hover { background: color-mix(in srgb, var(--amber) 20%, transparent); border-color: var(--amber); }
-.bd-update-badge { text-transform: uppercase; letter-spacing: 0.03em; font-size: 10.5px; }
-.bd-multi-chip {
-  display: inline-flex; align-items: center; font-size: 11.5px; font-weight: 500; color: var(--text-faint);
-  background: var(--bg); border: 1px dashed var(--border-2); border-radius: var(--radius-pill); padding: 4px 11px;
-  cursor: help;
+.hub-chip-amber:hover { color: var(--amber); background: color-mix(in srgb, var(--amber) 20%, transparent); border-color: var(--amber); }
+.hub-chip-warn {
+  color: var(--text-faint); background: var(--bg); border-style: dashed; border-color: var(--border-2); cursor: help;
 }
+.hub-chip-warn:hover { color: var(--text-faint); background: var(--bg); border-color: var(--border-2); }
 
 /* ==========================================================================
    Project view — tabs + three panes
@@ -984,14 +1024,9 @@ select.edit-input.link-type { flex: 0 0 auto; min-width: 150px; }
 .nav-link:hover { background: var(--surface-2); color: var(--text); }
 .nav-link.active { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 
-.ops-strip { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin-top: 0; }
-.ops-chip {
-  background: var(--surface); border: 1px solid var(--border); color: var(--text-dim);
-  border-radius: var(--radius-pill); padding: 5px 13px; font: inherit; font-size: 12.5px; font-weight: 500;
-  cursor: pointer; transition: all 0.15s var(--ease);
-}
-.ops-chip:hover { border-color: var(--border-2); color: var(--text); background: var(--surface-2); }
-.ops-sep { color: var(--text-faint); }
+/* Chip layout only — the chips themselves are .hub-chip (see the hub chip
+   row rules above), shared with the version/docs/update/warning chips. */
+.ops-strip { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 0; }
 
 /* ==========================================================================
    Shared "strip" view shell (tmux + schedule)
@@ -1128,9 +1163,10 @@ select.edit-input.link-type { flex: 0 0 auto; min-width: 150px; }
 .source-chip.src-config { color: var(--green); border-color: color-mix(in srgb, var(--green) 35%, transparent); background: color-mix(in srgb, var(--green) 12%, transparent); }
 
 /* ---- Beads CLI panel (Settings) --------------------------------------------
-   Fuller counterpart to the hub's compact .bd-version-row: installed/latest/
-   checked-at/flavor as settings-rows, the copyable update command, and (when
-   more than one `bd` is on PATH) a listing of every path found. */
+   Fuller counterpart to the hub's compact bd version/update/multi-binary
+   .hub-chip row: installed/latest/checked-at/flavor as settings-rows, the
+   copyable update command, and (when more than one `bd` is on PATH) a
+   listing of every path found. */
 .bd-behind-badge { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 30%, transparent); background: color-mix(in srgb, var(--amber) 14%, transparent); margin-left: 6px; }
 .bd-uptodate-badge { color: var(--green); border-color: color-mix(in srgb, var(--green) 30%, transparent); background: color-mix(in srgb, var(--green) 14%, transparent); margin-left: 6px; }
 .bd-update-options { display: flex; flex-direction: column; gap: 6px; }

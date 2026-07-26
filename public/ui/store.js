@@ -21,6 +21,48 @@ const SCHED_UNAVAILABLE_MSG = 'scheduler requires Node >= 22';
 const lsGet = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* ignore */ } };
 
+// ---------------------------------------------------------------------------
+// Hub section collapse state — with a one-time migration for the 'attrib'
+// (usage attribution) default.
+//
+// 'attrib' collapses-by-default is a policy introduced after this key
+// already existed for plenty of users (anyone who'd ever toggled ops/usage/
+// tmux). A plain `lsGet(KEY, ['attrib'])` only seeds that default when the
+// key is completely ABSENT — an existing user's already-persisted `[]` (or
+// any set that predates 'attrib') would win over the default forever, so
+// they'd keep seeing attribution expanded with no way for the new default to
+// ever reach them. HUB_ATTRIB_MIGRATED_KEY marks "the one-time seed has run
+// on this browser" so it fires exactly once (adding 'attrib' to whatever set
+// already existed, existing choices untouched) and never fires again — once
+// migrated, a deliberate re-expand (removing 'attrib' from the set) persists
+// across reloads exactly like every other section's collapse choice.
+// ---------------------------------------------------------------------------
+const HUB_SECTIONS_KEY = 'bd_hub_sections_collapsed';
+const HUB_ATTRIB_MIGRATED_KEY = 'bd_hub_attrib_migrated_v1';
+
+function initCollapsedHubSections() {
+  if (localStorage.getItem(HUB_ATTRIB_MIGRATED_KEY) === '1') {
+    // Migration already ran on this browser — respect exactly what's
+    // persisted (falling back to the 'attrib'-collapsed default only if the
+    // key somehow got cleared entirely since), including a deliberate
+    // re-expand of 'attrib'.
+    return new Set(lsGet(HUB_SECTIONS_KEY, ['attrib']));
+  }
+  // First read ever on this browser (fresh profile, or pre-migration
+  // existing user): seed 'attrib' into whatever's already there — [] for a
+  // fresh profile — persist it, and mark the migration done so this branch
+  // never runs again.
+  const set = new Set(lsGet(HUB_SECTIONS_KEY, []));
+  set.add('attrib');
+  lsSet(HUB_SECTIONS_KEY, [...set]);
+  // Plain (non-JSON) marker, read back above via a raw getItem — lsSet
+  // would JSON-encode it (producing the 3-char string `"1"`), which would
+  // never match the raw `=== '1'` check above and make this branch (and the
+  // re-add of 'attrib' it does) run again on every single reload.
+  localStorage.setItem(HUB_ATTRIB_MIGRATED_KEY, '1');
+  return set;
+}
+
 export const store = {
   // routing
   route: signal(parseHash()),
@@ -131,7 +173,7 @@ export const store = {
   // defaults to collapsed so project cards are visible sooner on first
   // load. Once a user has toggled anything, their persisted set wins over
   // this default, including for users who re-expand 'attrib'.
-  collapsedHubSections: signal(new Set(lsGet('bd_hub_sections_collapsed', ['attrib']))),
+  collapsedHubSections: signal(initCollapsedHubSections()),
 };
 
 // ---------------------------------------------------------------------------
@@ -352,7 +394,7 @@ export function toggleHubSection(id) {
   const set = new Set(store.collapsedHubSections.value);
   set.has(id) ? set.delete(id) : set.add(id);
   store.collapsedHubSections.value = set;
-  lsSet('bd_hub_sections_collapsed', [...set]);
+  lsSet(HUB_SECTIONS_KEY, [...set]);
 }
 
 // ---------------------------------------------------------------------------

@@ -6,7 +6,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { store, navigate, loadProjectStats, loadTmux, loadSchedule, loadProjectsGit, loadUsage, loadUsageHistory, loadBdVersion, toggleHubSection, toast } from '../store.js';
 import { timeAgo, copyToClipboard } from './common.js';
 import { SessionRowCompact, HubTmuxHead } from './TmuxView.js';
-import { ProviderAttribution } from './UsageCharts.js';
+import { ProviderAttribution, formatTokens } from './UsageCharts.js';
 
 // Chevron used by the mobile collapsible-section headers (ops strip, tmux
 // strip, usage/quota) — see .hub-section-toggle / .hub-section-body in
@@ -148,6 +148,14 @@ function ProjectCard({ id, project }) {
 
 // One-shot (not polled) summary strip — cheap enough to fetch every time the
 // hub mounts, but the tmux/schedule views themselves own the live polling.
+// Also the hub's single "glanceable status" chip row: tmux sessions and
+// scheduled prompts (native to this strip) plus the bd version/docs/update/
+// multiple-binaries chips that used to be their own standalone row below the
+// header (see the removed BdVersionRow — folded in here per the consolidation
+// pass so every hub-wide status lives in one uniformly-styled row). Every
+// chip shares the .hub-chip base (padding/radius/font-size/border) — only
+// color varies (.hub-chip-amber, .hub-chip-warn) — plus a leading emoji so
+// each kind is glanceable without reading the text first.
 //
 // At <=768px this and the tmux strip below eat half the viewport before a
 // single project card is visible, so both get a tappable, per-section
@@ -157,12 +165,18 @@ function ProjectCard({ id, project }) {
 // .hub-section-body's "collapsed" class only takes effect <=768px (see
 // styles.css), so desktop rendering is untouched either way.
 function OpsStrip() {
-  useEffect(() => { loadTmux(); loadSchedule(); loadProjectsGit(); }, []);
+  useEffect(() => { loadTmux(); loadSchedule(); loadProjectsGit(); loadBdVersion(); }, []);
   const sessions = store.tmuxSessions.value;
   const pending = store.scheduleJobs.value.filter((j) => j.status === 'pending').length;
   const hasTmux = store.tmuxAvailable.value;
   const collapsed = store.collapsedHubSections.value.has('ops');
   const summary = `${hasTmux ? sessions.length + ' tmux session' + (sessions.length === 1 ? '' : 's') : 'tmux unavailable'} · ${pending} scheduled prompt${pending === 1 ? '' : 's'}`;
+
+  const bdKnown = store.bdVersionAvailable.value;
+  const v = store.bdVersion.value;
+  const showVersion = bdKnown && v && v.installed;
+  const behind = showVersion && v.behind === true && v.latest;
+
   return html`
     <div class="hub-ops-wrap">
       <button type="button" class="hub-section-toggle" aria-expanded=${!collapsed} onClick=${() => toggleHubSection('ops')}>
@@ -171,13 +185,30 @@ function OpsStrip() {
         <${ChevronIcon} open=${!collapsed} />
       </button>
       <div class=${'ops-strip hub-section-body' + (collapsed ? ' collapsed' : '')}>
-        <button class="ops-chip" onClick=${() => navigate('#/tmux')}>
-          ${hasTmux ? `${sessions.length} tmux session${sessions.length === 1 ? '' : 's'}` : 'tmux unavailable'}
+        <button type="button" class="hub-chip" onClick=${() => navigate('#/tmux')}>
+          🖥️ ${hasTmux ? `${sessions.length} tmux session${sessions.length === 1 ? '' : 's'}` : 'tmux unavailable'}
         </button>
-        <span class="ops-sep">·</span>
-        <button class="ops-chip" onClick=${() => navigate('#/schedule')}>
-          ${pending} scheduled prompt${pending === 1 ? '' : 's'}
+        <button type="button" class="hub-chip" onClick=${() => navigate('#/schedule')}>
+          ⏰ ${pending} scheduled prompt${pending === 1 ? '' : 's'}
         </button>
+        ${showVersion && html`
+          <a class="hub-chip hub-chip-link" href=${BEADS_REPO_URL} target="_blank" rel="noopener noreferrer"
+            title=${'Installed via `bd version`' + (v.checkedAt ? ' · checked ' + timeAgo(v.checkedAt) : '') + ' — open beads on GitHub'}>
+            🏷️ bd ${v.installed}<${ExternalLinkIcon} />
+          </a>`}
+        <a class="hub-chip hub-chip-link" href=${BEADS_DOCS_URL} target="_blank" rel="noopener noreferrer" title="Open beads documentation">
+          📚 bd-docs<${ExternalLinkIcon} />
+        </a>
+        ${behind && html`
+          <button type="button" class="hub-chip hub-chip-amber"
+            title=${v.updateHint ? `Copy: ${v.updateHint}` : 'A newer bd release is available — see Settings for update options'}
+            onClick=${() => v.updateHint ? copyUpdateCommand(v.updateHint) : navigate('#/settings')}>
+            ⬆️ update available → ${v.latest}
+          </button>`}
+        ${showVersion && v.multipleBinaries && html`
+          <span class="hub-chip hub-chip-warn" title=${'Multiple bd binaries on PATH:\n' + v.binaries.join('\n') + '\n\nSee Settings for details.'}>
+            ⚠️ multiple bd on PATH
+          </span>`}
       </div>
     </div>`;
 }
@@ -190,12 +221,13 @@ function OpsStrip() {
 // instead of truncating.
 
 // ---------------------------------------------------------------------------
-// bd (beads CLI) version row — GET /api/bd-version (see lib/bdversion.mjs).
-// One-shot fetch (the server caches the GitHub lookup for hours, so polling
-// here would just re-hit the same cached value); a manual refresh isn't
-// offered from the hub — Settings has the fuller card + explicit "recheck".
-// Placed right above the Usage section: same "hub-wide glanceable status"
-// family as the ops strip and usage gauges above it.
+// bd (beads CLI) version helpers — GET /api/bd-version (see lib/bdversion.mjs)
+// backs the version/update/multi-binary chips rendered inline in OpsStrip
+// above (one-shot fetch there; the server caches the GitHub lookup for hours,
+// so polling would just re-hit the same cached value). A manual refresh
+// isn't offered from the hub — Settings has the fuller card + explicit
+// "recheck". These used to back a standalone BdVersionRow beneath the
+// header; consolidated into the single ops chip row per the hub cleanup.
 // ---------------------------------------------------------------------------
 async function copyUpdateCommand(cmd) {
   const ok = await copyToClipboard(cmd);
@@ -204,36 +236,6 @@ async function copyUpdateCommand(cmd) {
 
 const BEADS_REPO_URL = 'https://github.com/gastownhall/beads';
 const BEADS_DOCS_URL = 'https://beads.gascity.com';
-
-function BdVersionRow() {
-  useEffect(() => { loadBdVersion(); }, []);
-  const bdKnown = store.bdVersionAvailable.value;
-  const v = store.bdVersion.value;
-  const showVersion = bdKnown && v && v.installed;
-  const behind = showVersion && v.behind === true && v.latest;
-
-  return html`
-    <div class="bd-version-row">
-      ${showVersion && html`
-        <a class="bd-version-chip bd-version-link" href=${BEADS_REPO_URL} target="_blank" rel="noopener noreferrer"
-          title=${'Installed via `bd version`' + (v.checkedAt ? ' · checked ' + timeAgo(v.checkedAt) : '') + ' — open beads on GitHub'}>
-          <span class="bd-version-dot"></span>bd ${v.installed}<${ExternalLinkIcon} />
-        </a>`}
-      <a class="bd-docs-chip" href=${BEADS_DOCS_URL} target="_blank" rel="noopener noreferrer" title="Open beads documentation">
-        docs<${ExternalLinkIcon} />
-      </a>
-      ${behind && html`
-        <button type="button" class="bd-update-chip"
-          title=${v.updateHint ? `Copy: ${v.updateHint}` : 'A newer bd release is available — see Settings for update options'}
-          onClick=${() => v.updateHint ? copyUpdateCommand(v.updateHint) : navigate('#/settings')}>
-          <span class="bd-update-badge">update available</span> → ${v.latest}
-        </button>`}
-      ${showVersion && v.multipleBinaries && html`
-        <span class="bd-multi-chip" title=${'Multiple bd binaries on PATH:\n' + v.binaries.join('\n') + '\n\nSee Settings for details.'}>
-          ⚠ multiple bd on PATH
-        </span>`}
-    </div>`;
-}
 
 // ---------------------------------------------------------------------------
 // Usage section — Claude Code / Codex quota gauges (GET /api/usage, polled
@@ -398,6 +400,16 @@ function HistoryRangePicker({ days, onChange }) {
 // higher on the page without the heavier chart content pushing them down;
 // still fully expandable, and the choice persists like every other hub
 // section's collapse state.
+// One-line "worth opening" teaser shown next to the collapsed head — total
+// tokens across both providers over the current range, so the collapsed
+// state still communicates there's real content underneath instead of
+// reading as an empty/optional section.
+function attribTeaser(history, days) {
+  const total = (history?.claude?.totalTokens || 0) + (history?.codex?.totalTokens || 0);
+  if (!total) return null;
+  return `${formatTokens(total)} tokens · last ${days}d`;
+}
+
 function AttributionBand() {
   const days = store.usageHistoryDays.value;
   useEffect(() => {
@@ -410,9 +422,15 @@ function AttributionBand() {
   const collapsed = store.collapsedHubSections.value.has('attrib');
   const history = store.usageHistory.value;
 
-  const head = (summary) => html`
+  // Chevron + explicit "Show"/"Hide" wording (not chevron alone) so the
+  // collapse affordance reads unambiguously even without noticing the arrow.
+  const head = (summary, teaser) => html`
     <button type="button" class="usage-attrib-head" aria-expanded=${!collapsed} onClick=${() => toggleHubSection('attrib')}>
-      <span class="usage-band-label">Usage attribution <span class="muted small">· ${summary}</span></span>
+      <span class="usage-band-label">
+        Usage attribution
+        <span class="muted small">· ${summary}${teaser ? ' · ' + teaser : ''}</span>
+      </span>
+      <span class="usage-attrib-toggle-word">${collapsed ? 'Show' : 'Hide'}</span>
       <${ChevronIcon} open=${!collapsed} alwaysVisible=${true} />
     </button>`;
 
@@ -431,7 +449,7 @@ function AttributionBand() {
 
   return html`
     <div class="usage-band usage-attrib-band">
-      ${head('estimated from local session logs, not quota')}
+      ${head('estimated from local session logs, not quota', attribTeaser(history, days))}
       <div class=${'usage-attrib-body' + (collapsed ? ' collapsed' : '')}>
         <div class="usage-band-head usage-attrib-controls">
           <${HistoryRangePicker} days=${days} onChange=${(d) => loadUsageHistory(d)} />
@@ -541,8 +559,6 @@ export function HubView() {
         ${OpsStrip()}
       </div>
 
-      <${BdVersionRow} />
-
       ${QuotaSessionsRow()}
 
       ${AttributionBand()}
@@ -553,7 +569,9 @@ export function HubView() {
             <p>No projects registered.</p>
             <p class="muted small">Run <code>bd-console add</code> inside a project to register it.</p>
           </div>`
-        : html`<div class="hub-grid">
+        : html`
+          <div class="hub-section-head hub-projects-head"><h2>Tracked Projects</h2></div>
+          <div class="hub-grid">
             ${entries.map(([id, project]) => html`<${ProjectCard} key=${id} id=${id} project=${project} />`)}
           </div>`}
     </main>`;
