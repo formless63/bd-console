@@ -5,6 +5,8 @@ import { join, resolve } from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import net from 'node:net';
 import { renderServiceUnit } from '../lib/systemd.mjs';
+// Pure frontend derivation, importable in Node — see public/ui/relationships.js
+import { blockersOf, blockedByIssue } from '../public/ui/relationships.js';
 import { parseScopedLimits } from '../lib/usage.mjs';
 
 function run(cmd, args, options = {}) {
@@ -258,6 +260,31 @@ try {
   assert(noTitle.status === 400, `empty title should 400, got ${noTitle.status}`);
 
   console.log(`smoke ok (create + epics): epic=${epicRes.id}, child=${childRes.id}`);
+
+  // --- blocker DIRECTION regression guard -----------------------------------
+  // `bd dep add A B` = "A depends on B" (B blocks A), stored as a row on A.
+  // Reading that backwards inverted blocked/ready across the whole UI for
+  // weeks (see docs/beads-coverage.md), so pin the invariant against a real
+  // bd-created dependency rather than a hand-written fixture.
+  const depA = trimLastLine(run('bd', ['create', '--silent', '--type', 'task', '-p', '2', '--title', 'Dependent A'], { cwd: repoDir }));
+  const depB = trimLastLine(run('bd', ['create', '--silent', '--type', 'task', '-p', '2', '--title', 'Blocker B'], { cwd: repoDir }));
+  run('bd', ['dep', 'add', depA, depB], { cwd: repoDir });
+  run('bd', ['export', '-o', '.beads/issues.jsonl'], { cwd: repoDir });
+
+  const relIssues = (await fetch(p('/issues')).then((r) => r.json())).issues;
+  const issueA = relIssues.find((i) => i.id === depA);
+  const issueB = relIssues.find((i) => i.id === depB);
+  assert(issueA && issueB, 'dependency fixture issues missing from the export');
+  assert(blockersOf(issueA).includes(depB),
+    `blockersOf(A) must contain B (A depends on B); got ${JSON.stringify(blockersOf(issueA))}`);
+  assert(blockersOf(issueB).length === 0,
+    `blockersOf(B) must be empty (nothing blocks B); got ${JSON.stringify(blockersOf(issueB))}`);
+  assert(blockedByIssue(depB, relIssues).includes(depA), 'blockedByIssue(B) must contain A');
+  // parent-child must never count as a blocker
+  assert(blockersOf(relIssues.find((i) => i.id === childRes.id) || {}).length === 0,
+    'a parent-child row must not make a child look blocked');
+
+  console.log(`smoke ok (blocker direction): ${depB} blocks ${depA}`);
 
   // --- tmux sessions API (hub-level, not project-scoped) ---------------------
   let tmuxPresent = true;

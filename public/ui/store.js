@@ -126,17 +126,10 @@ export function parentOf(issue) {
   const p = (issue.dependencies || []).find((d) => d.type === 'parent-child');
   return p ? p.depends_on_id : null;
 }
-export function blockersOf(issue) {
-  const out = new Set();
-  for (const b of store.issues.value) {
-    if (b.id === issue.id) continue;
-    if ((b.dependencies || []).some((d) => d.type === 'blocks' && d.depends_on_id === issue.id)) out.add(b.id);
-  }
-  for (const d of issue.dependencies || []) {
-    if (d.type === 'depends') out.add(d.depends_on_id);
-  }
-  return [...out];
-}
+// Direction invariant + blocking-type set live in relationships.js (pure, so
+// smoke.mjs can assert them in Node). Re-exported here so every existing
+// import site keeps working.
+export { blockersOf, BLOCKING_DEP_TYPES } from './relationships.js';
 export function openBlockersOf(issue) {
   const m = byId.value;
   return blockersOf(issue).filter((id) => { const b = m.get(id); return b && b.status !== 'closed'; });
