@@ -106,7 +106,7 @@ function Edit({ issue }) {
   const [label, setLabel] = useState('');
   const [parent, setParent] = useState(parentOf(issue) || '');
   const [blk, setBlk] = useState('');
-  const [defer, setDefer] = useState(issue.deferred_until || '');
+  const [defer, setDefer] = useState(issue.defer_until || '');
   const [linkType, setLinkType] = useState('related');
   const [linkId, setLinkId] = useState('');
   const [supersedeId, setSupersedeId] = useState('');

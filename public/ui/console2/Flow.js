@@ -14,6 +14,7 @@ const LANES = [
   ['ready', 'Ready', 'ready'],
   ['in_progress', 'In progress', 'in_progress'],
   ['blocked', 'Blocked', 'blocked'],
+  ['deferred', 'Deferred', 'deferred'],
   ['done', 'Done · 7d', 'done'],
 ];
 

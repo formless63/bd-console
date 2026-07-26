@@ -324,6 +324,7 @@
 .lane-ready .c2-lane-dot { background: var(--green); }
 .lane-in_progress .c2-lane-dot { background: var(--accent); }
 .lane-blocked .c2-lane-dot { background: var(--red); }
+.lane-deferred .c2-lane-dot { background: var(--amber); }
 .lane-done .c2-lane-dot { background: var(--text-faint); }
 .c2-lane-title { font-family: var(--font-display); font-size: 12px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; flex: 1; }
 .c2-lane-count { font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); }

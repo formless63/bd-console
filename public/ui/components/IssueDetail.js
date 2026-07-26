@@ -32,7 +32,7 @@ function EditTools({ issue }) {
   const [labelAdd, setLabelAdd] = useState('');
   const [parent, setParent] = useState(parentOf(issue) || '');
   const [blocker, setBlocker] = useState('');
-  const [defer, setDefer] = useState(issue.deferred_until || '');
+  const [defer, setDefer] = useState(issue.defer_until || '');
   const [linkType, setLinkType] = useState('related');
   const [linkId, setLinkId] = useState('');
   const [supersedeId, setSupersedeId] = useState('');

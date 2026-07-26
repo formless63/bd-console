@@ -32,7 +32,7 @@ export function isStale(issue) {
 export const lanes = computed(() => {
   const issues = store.issues.value;
   const weekAgo = Date.now() - 7 * DAY;
-  const triage = [], ready = [], progress = [], blocked = [], done = [];
+  const triage = [], ready = [], progress = [], blocked = [], done = [], deferred = [];
   for (const i of issues) {
     const s = effStatus(i);
     if (s === 'closed') {
@@ -41,6 +41,14 @@ export const lanes = computed(() => {
     }
     if (s === 'in_progress') { progress.push(i); continue; }
     if (s === 'blocked') { blocked.push(i); continue; }
+    // `bd update --defer` sets status to 'deferred' (with defer_until). Without
+    // this branch a deferred issue matched none of the checks above and fell
+    // into Ready — visible and claimable on the primary screen, while the
+    // pulse's Ready tile (which keys off isReady, i.e. status === 'open')
+    // correctly excluded it, so the lane and the count disagreed. Deferred work
+    // is deliberately not-now: it gets its own lane rather than being hidden,
+    // so "I deferred that" stays visible without polluting Ready.
+    if (s === 'deferred') { deferred.push(i); continue; }
     // open + unblocked
     if (hasLabel(i, 'triage')) triage.push(i);
     else ready.push(i); // containers (epic/molecule) live in Ready too, sorted last
@@ -52,6 +60,7 @@ export const lanes = computed(() => {
     ready: ready.sort(containerLast),
     in_progress: progress.sort(byPri),
     blocked: blocked.sort(byPri),
+    deferred: deferred.sort((a, b) => ts(a.defer_until) - ts(b.defer_until) || byPri(a, b)),
     done: done.sort((a, b) => ts(b.closed_at) - ts(a.closed_at)),
   };
 });

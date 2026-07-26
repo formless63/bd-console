@@ -51,7 +51,10 @@ export function statusClass(issue) { return 'st-' + effStatus(issue); }
 export function glyphStatus(issue) {
   const s = effStatus(issue);
   if (s !== 'open') return s; // in_progress | blocked | closed
-  if (issue.deferred_until && new Date(issue.deferred_until).getTime() > Date.now()) return 'deferred';
+  // bd's field is defer_until (this read was `deferred_until`, which never
+  // matched, making the branch dead code). It survives as a fallback for an
+  // issue left status:'open' with a future defer date.
+  if (issue.defer_until && new Date(issue.defer_until).getTime() > Date.now()) return 'deferred';
   return isReady(issue) ? 'ready' : 'open';
 }
 
