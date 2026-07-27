@@ -17,7 +17,8 @@ import {
 // Pure MapView edge-model derivation (docs/beads-coverage.md Phase 2) — see
 // public/ui/console2/graphModel.js's header for why it's signal-free and
 // therefore importable here exactly like relationships.js above.
-import { buildGraph } from '../public/ui/console2/graphModel.js';
+import { buildGraph, mapScopeIssues } from '../public/ui/console2/graphModel.js';
+import { docGroup, groupDocs, starterDocs } from '../public/ui/console2/docsModel.js';
 // Pure formula derivations (docs/molecules-design.md) — same import-free
 // contract as relationships.js above.
 import {
@@ -1608,6 +1609,51 @@ try {
     assert(!graph.overlayEdges.some((e) => e.from === 'g-h' || e.to === 'g-h'), 'a closed issue must not appear on any overlay edge');
 
     console.log(`smoke ok (graph edge model: layoutEdges excludes non-blocking types, related deduped): ${layoutPairs.join(',')}`);
+  }
+
+  // --- Large-project Map/Docs scopes (bd-console-7wn.6) -------------------
+  {
+    const scopeIssues = [
+      { id: 's-epic', title: 'Checkout epic', issue_type: 'epic', status: 'open', priority: 2, dependencies: [] },
+      { id: 's-active', title: 'Active checkout work', issue_type: 'task', status: 'in_progress', priority: 2, dependencies: [
+        { issue_id: 's-active', depends_on_id: 's-epic', type: 'parent-child' },
+        { issue_id: 's-active', depends_on_id: 's-blocker', type: 'blocks' }] },
+      { id: 's-blocker', title: 'Required migration', issue_type: 'task', status: 'open', priority: 3, dependencies: [] },
+      { id: 's-next', title: 'Follows active work', issue_type: 'task', status: 'open', priority: 3, dependencies: [
+        { issue_id: 's-next', depends_on_id: 's-epic', type: 'parent-child' },
+        { issue_id: 's-next', depends_on_id: 's-active', type: 'blocks' }] },
+      { id: 's-urgent', title: 'Urgent independent work', issue_type: 'bug', status: 'open', priority: 1, dependencies: [] },
+      { id: 's-noise', title: 'Unrelated backlog', issue_type: 'task', status: 'open', priority: 4, dependencies: [] },
+      { id: 's-done', title: 'Closed history', issue_type: 'task', status: 'closed', priority: 0, dependencies: [] },
+    ];
+    const currentIds = mapScopeIssues(scopeIssues, 'current').map((i) => i.id);
+    for (const id of ['s-active', 's-blocker', 's-next', 's-urgent', 's-epic']) {
+      assert(currentIds.includes(id), `current map scope should preserve active/urgent context ${id}; got ${JSON.stringify(currentIds)}`);
+    }
+    assert(!currentIds.includes('s-noise') && !currentIds.includes('s-done'),
+      `current map scope should omit unrelated backlog and closed history; got ${JSON.stringify(currentIds)}`);
+    const epicIds = mapScopeIssues(scopeIssues, 'epic', 's-epic').map((i) => i.id);
+    assert(epicIds.includes('s-epic') && epicIds.includes('s-active') && epicIds.includes('s-next') && epicIds.includes('s-blocker'),
+      `epic map scope should include descendants and their external blocker; got ${JSON.stringify(epicIds)}`);
+    assert(!epicIds.includes('s-urgent') && !epicIds.includes('s-noise'),
+      `epic map scope should not include unrelated open work; got ${JSON.stringify(epicIds)}`);
+    assert(mapScopeIssues(scopeIssues, 'all').length === 6, 'all-open map scope must preserve access to every non-closed issue');
+
+    const docsFixture = [
+      { path: 'README.md' }, { path: 'AGENTS.md' }, { path: 'docs/index.md' },
+      { path: 'docs/operators/deploy.md' }, { path: 'notes/2026-07.md' },
+    ];
+    assert(docGroup('README.md') === 'Project root' && docGroup('docs/operators/deploy.md') === 'docs',
+      'document groups should use the top-level folder and keep root files together');
+    const grouped = groupDocs(docsFixture);
+    assert(JSON.stringify(grouped.map((g) => [g.name, g.items.length])) === JSON.stringify([
+      ['Project root', 2], ['docs', 2], ['notes', 1],
+    ]), `document grouping should remain compact and deterministic; got ${JSON.stringify(grouped)}`);
+    assert(groupDocs(docsFixture, 'deploy').flatMap((g) => g.items).map((d) => d.path).join() === 'docs/operators/deploy.md',
+      'document search must still reach a file nested below grouped folders');
+    assert(starterDocs(docsFixture, 3).map((d) => d.path).includes('README.md'),
+      'document start page should prioritize a repository README');
+    console.log('smoke ok (large-project map scopes + grouped/searchable docs navigation)');
   }
 
   // --- Phase 3 / bd-console-6ag.4: molecules group like epics --------------

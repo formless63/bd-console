@@ -29,6 +29,63 @@ import {
   SUPERSEDE_DEP_TYPE, DUPLICATE_DEP_TYPE,
 } from '../relationships.js';
 
+// Large repositories need a useful subset before they need the complete
+// picture. This stays pure/store-free so the scope rules can be smoke-tested
+// alongside the graph model below.
+const parentId = (issue) => (issue.dependencies || []).find((d) => d.type === 'parent-child')?.depends_on_id || null;
+const updatedAt = (issue) => new Date(issue.updated_at || issue.created_at || 0).getTime() || 0;
+
+export function mapScopeIssues(issues, mode = 'current', epicId = null) {
+  const open = (issues || []).filter((i) => i.status !== 'closed');
+  if (mode === 'all') return open;
+
+  const byId = new Map(open.map((i) => [i.id, i]));
+  const ids = new Set();
+  if (mode === 'epic' && epicId && byId.has(epicId)) {
+    ids.add(epicId);
+    // Include descendants, not just direct children: nested planning
+    // structures should remain intact when an epic is selected.
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const issue of open) {
+        if (!ids.has(issue.id) && ids.has(parentId(issue))) { ids.add(issue.id); changed = true; }
+      }
+    }
+  } else {
+    // "Current work" means actively worked and urgent work. Cap the urgent
+    // tail so a repo with years of P1s does not recreate the all-open hairball.
+    const active = open.filter((i) => i.status === 'in_progress');
+    const urgent = open
+      .filter((i) => i.status !== 'in_progress' && Number(i.priority) <= 1)
+      .sort((a, b) => Number(a.priority) - Number(b.priority) || updatedAt(b) - updatedAt(a))
+      .slice(0, 24);
+    [...active, ...urgent].forEach((i) => ids.add(i.id));
+
+    // A quiet project still needs an entry point: show the most important,
+    // recently touched open work instead of an unexplained empty graph.
+    if (!ids.size) {
+      open.slice().sort((a, b) => Number(a.priority) - Number(b.priority) || updatedAt(b) - updatedAt(a)).slice(0, 12)
+        .forEach((i) => ids.add(i.id));
+    }
+  }
+
+  // Pull in one dependency step around the focus. External blockers explain
+  // why focused work is stuck; immediate dependents show what it unlocks.
+  const focused = new Set(ids);
+  for (const issue of open) {
+    const blockers = blockersOf(issue);
+    if (ids.has(issue.id)) blockers.forEach((id) => { if (byId.has(id)) focused.add(id); });
+    if (blockers.some((id) => ids.has(id))) focused.add(issue.id);
+  }
+  // Keep the owning epic visible as context without pulling in all siblings.
+  for (const id of [...focused]) {
+    const parent = parentId(byId.get(id));
+    if (parent && byId.has(parent)) focused.add(parent);
+  }
+  return open.filter((i) => focused.has(i.id));
+}
+
 // Raw dependency types eligible for the overlay layer: every `bd dep add
 // --type` value that ISN'T in BLOCKING_DEP_TYPES, minus `parent-child`
 // (hierarchy has its own dedicated surface — epic grouping in Flow — and

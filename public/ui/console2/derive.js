@@ -129,8 +129,8 @@ export function unblockHint() {
 // graphModel.js so it can be unit-tested from plain Node (see
 // scripts/smoke.mjs) without a signals runtime. Returns
 // { nodes, layoutEdges, overlayEdges, width, height, criticalChain }.
-export function graphLayout() {
-  return buildGraph(store.issues.value);
+export function graphLayout(issues = store.issues.value) {
+  return buildGraph(issues);
 }
 
 // ---------------------------------------------------------------------------

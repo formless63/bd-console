@@ -3,7 +3,7 @@
 // set, and DELEGATE (prefilled compose → live tmux session picker → Send now /
 // Schedule). Every mutation echoes its bd / tmux equivalent via flashCli.
 import { html } from 'htm/preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import {
   store, byId, parentOf, blockersOf, openBlockersOf, childrenOf, blocksList,
   effStatus, isReady, selectIssue, addComment, loadTmux,
@@ -79,6 +79,51 @@ function Field(title, body, k) {
     <span class="c2-hud-label">${title}${k ? html`<${ConceptDot} k=${k} />` : ''}</span>${body}</div>`;
 }
 
+// Narrative fields are often where imported or long-running issues become
+// unwieldy. Keep the full markdown in the DOM, but start genuinely long
+// fields collapsed so they cannot bury blockers and controls. Native details
+// also gives keyboard and screen-reader users a familiar disclosure control.
+function NarrativeField({ title, value, plain = false }) {
+  if (!value) return null;
+  const text = String(value);
+  const isLong = text.length > 560 || text.split('\n').length > 8;
+  const body = plain
+    ? html`<div class="c2-md">${text}</div>`
+    : html`<div class="markdown c2-md" dangerouslySetInnerHTML=${{ __html: renderMarkdown(text) }}></div>`;
+  return html`
+    <details class=${'c2-narrative' + (isLong ? ' long' : '')} open=${!isLong}>
+      <summary>
+        <span>${title}</span>
+        ${isLong && html`<span class="c2-narrative-size">${text.length.toLocaleString()} characters</span>`}
+      </summary>
+      <div class="c2-narrative-body">${body}</div>
+    </details>`;
+}
+
+function PrimaryActions({ issue }) {
+  const id = issue.id;
+  const run = (fn) => () => { fn().catch(() => {}); };
+  const askClose = () => actClose(id, prompt('Close reason (optional):', '') || '');
+  const askReopen = () => actReopen(id, prompt('Reopen reason (optional):', '') || '');
+  const askDefer = () => {
+    const when = prompt('Defer until (+2d or 2026-08-01):', issue.defer_until || '+2d');
+    return when == null || !when.trim() ? Promise.resolve() : actDefer(id, when.trim());
+  };
+
+  return html`<div class="c2-primary-actions" aria-label="Issue actions">
+    ${issue.status === 'closed'
+      ? html`<button class="c2-mini accent" onClick=${run(askReopen)}>Reopen</button>`
+      : html`
+        ${issue.status !== 'in_progress' && html`<button class="c2-mini" onClick=${run(() => actClaim(id))}>Claim</button>`}
+        ${issue.status !== 'in_progress' && html`<button class="c2-mini accent" onClick=${run(() => actStart(id))}>Start</button>`}
+        <button class="c2-mini" onClick=${run(askClose)}>Close</button>
+        ${issue.defer_until
+          ? html`<button class="c2-mini" onClick=${run(() => actDefer(id, ''))}>Resume now</button>`
+          : html`<button class="c2-mini" onClick=${run(askDefer)}>Defer…</button>`}
+      `}
+  </div>`;
+}
+
 // The concept behind each generic link section, keyed by the section key
 // linkSectionsOf() produces ("out:tracks", "in:caused-by", …). Both directions
 // of a type point at the same definition — the definition explains both ends.
@@ -122,14 +167,6 @@ function Edit({ issue }) {
 
   return html`
     <div class="c2-edit">
-      <div class="c2-edit-row">
-        ${issue.status !== 'in_progress' && html`<button class="c2-mini" onClick=${run(() => actClaim(id))}>claim</button>`}
-        ${issue.status !== 'in_progress' && html`<button class="c2-mini" onClick=${run(() => actStart(id))}>start</button>`}
-        ${issue.status !== 'closed'
-          ? html`<button class="c2-mini" onClick=${run(() => actClose(id, prompt('Close reason (optional):', '') || ''))}>close</button>`
-          : html`<button class="c2-mini" onClick=${run(() => actReopen(id, prompt('Reopen reason (optional):', '') || ''))}>reopen</button>`}
-      </div>
-
       <div class="c2-edit-row">
         <span class="c2-edit-k">Priority</span>
         ${[0, 1, 2, 3, 4].map((p) => html`<button key=${p} class=${'c2-mini' + (issue.priority === p ? ' on' : '')} onClick=${run(() => actPriority(id, p))}>${PRI_LABEL[p]}</button>`)}
@@ -278,8 +315,8 @@ function MoleculeSteps({ root }) {
   return html`
     <div class="c2-mol">
       <div class="c2-mol-progress" data-mol-progress>
-        <span class="c2-progress-track">
-          ${Array.from({ length: Math.max(total, 1) }).map((_, n) => html`<span key=${n} class=${'c2-progress-cell' + (n < done ? ' on' : '')}></span>`)}
+        <span class="c2-progress-track" aria-hidden="true">
+          <span class="c2-progress-fill" style=${`width:${pct}%`}></span>
         </span>
         <span class="c2-progress-num">${done}/${total} steps (${pct}%)</span>
       </div>
@@ -417,6 +454,9 @@ export function Detail() {
   const id = store.selectedId.value;
   const issue = id ? byId.value.get(id) : null;
   const open = !!issue;
+  const [section, setSection] = useState('overview');
+  const dialogRef = useRef(null);
+  const returnFocus = useRef(null);
   // The molecule this selection belongs to: itself when it IS a root, its
   // parent when it's a step of one, null otherwise.
   const molRoot = issue ? moleculeRootFor(issue) : null;
@@ -436,8 +476,63 @@ export function Detail() {
     else { molDetail.id.value = null; molDetail.data.value = null; }
   }, [molRoot?.id, issuesGen]);
 
+  useEffect(() => { setSection('overview'); }, [id]);
+
+  // This is a custom slide-over rather than a native <dialog>, so it must
+  // supply the modal keyboard contract itself: move focus inside, keep Tab
+  // within the panel, close on Escape, and return to the card/control that
+  // opened it. The background regions are inert while it is open so pointer
+  // and assistive-technology navigation agree with aria-modal.
+  useEffect(() => {
+    if (!open) return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    returnFocus.current = document.activeElement;
+    const background = document.querySelectorAll('.c2-header, .c2-pulsebar-wrap, .c2-nudgeslot, .c2-body');
+    background.forEach((el) => { el.inert = true; });
+    const focusable = () => [...dialog.querySelectorAll(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), details > summary, [tabindex]:not([tabindex="-1"])',
+    )].filter((el) => !el.hidden && el.getClientRects().length > 0);
+    const focusTimer = setTimeout(() => (focusable()[0] || dialog).focus(), 0);
+    const onKeyDown = (e) => {
+      // A native dialog opened from this panel owns focus until it closes.
+      if (e.target.closest?.('dialog[open]')) return;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        selectIssue(null);
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const items = focusable();
+      if (!items.length) { e.preventDefault(); dialog.focus(); return; }
+      const first = items[0], last = items[items.length - 1];
+      if (e.shiftKey && (document.activeElement === first || document.activeElement === dialog)) {
+        e.preventDefault(); last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault(); first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      clearTimeout(focusTimer);
+      document.removeEventListener('keydown', onKeyDown, true);
+      background.forEach((el) => { el.inert = false; });
+      const target = returnFocus.current;
+      returnFocus.current = null;
+      if (target?.isConnected) setTimeout(() => target.focus(), 0);
+    };
+  }, [open]);
+
+  const tabs = [
+    ['overview', 'Overview'],
+    ['connections', 'Connections'],
+    ['activity', 'Activity'],
+    ['manage', 'Manage'],
+  ];
+
   return html`
-    <div class=${'c2-detail' + (open ? ' open' : '')} role="dialog" aria-hidden=${!open}>
+    <div ref=${dialogRef} class=${'c2-detail' + (open ? ' open' : '')} role="dialog" aria-modal="true"
+      aria-labelledby="c2-detail-title" aria-hidden=${!open} tabIndex="-1">
       ${open && html`
         <div class="c2-detail-inner" key=${id}>
           <div class="c2-detail-head">
@@ -445,9 +540,9 @@ export function Detail() {
               <span class=${'c2-detail-status st-' + glyphStatus(issue)}>${StatusGlyph(issue)} ${effStatus(issue).replace('_', ' ')}</span>
               <span class="c2-rel-id">${issue.id}</span>
             </div>
-            <button class="c2-detail-close" title="Close" onClick=${() => selectIssue(null)}>✕</button>
+            <button class="c2-detail-close" title="Close" aria-label="Close issue details" onClick=${() => selectIssue(null)}>✕</button>
           </div>
-          <h2 class="c2-detail-title">${issue.title}</h2>
+          <h2 class="c2-detail-title" id="c2-detail-title">${issue.title}</h2>
           ${(issue.labels || []).length > 0 && html`<div class="c2-detail-labels">${(issue.labels || []).map((l) => html`<span key=${l} class=${'c2-chip' + (l === 'triage' ? ' triage' : '')}>${l}</span>`)}</div>`}
 
           ${/* Molecule identity, above everything else: what this thing IS
@@ -483,68 +578,96 @@ export function Detail() {
             return isReady(issue) && !isContainer(issue) ? html`<div class="c2-banner ready">✓ Ready — no open blockers</div>` : null;
           })()}
 
-          ${issue.description && Field('Description', html`<div class="markdown c2-md" dangerouslySetInnerHTML=${{ __html: renderMarkdown(issue.description) }}></div>`)}
-          ${issue.status === 'closed' && issue.close_reason && Field('Close reason', html`<div class="c2-md">${issue.close_reason}</div>`)}
-          ${issue.design && Field('Design', html`<div class="markdown c2-md" dangerouslySetInnerHTML=${{ __html: renderMarkdown(issue.design) }}></div>`)}
-          ${issue.notes && Field('Notes', html`<div class="markdown c2-md" dangerouslySetInnerHTML=${{ __html: renderMarkdown(issue.notes) }}></div>`)}
-          ${issue.acceptance_criteria && Field('Acceptance', html`<div class="markdown c2-md" dangerouslySetInnerHTML=${{ __html: renderMarkdown(issue.acceptance_criteria) }}></div>`)}
-
-          ${/* A molecule root's children ARE its steps — rendered here as the
-                richer, progress-and-parallel-group-aware Steps section, and
-                suppressed from the generic Children row below so the same
-                beads don't appear twice. */ ''}
-          ${isMolecule(issue) && Field('Steps', html`<${MoleculeSteps} root=${issue} />`, 'molecule')}
-
-          ${(() => { const p = parentOf(issue); return p ? Field('Parent', RelChip(p), 'parent-child') : null; })()}
-          ${(() => { const b = blockersOf(issue); return b.length ? Field('Blocked by', html`<div class="c2-rels">${b.map(RelChip)}</div>`, 'blocks') : null; })()}
-          ${(() => { const b = blocksList(id); return b.length ? Field('Blocks', html`<div class="c2-rels">${b.map((x) => RelChip(x.id))}</div>`, 'blocks') : null; })()}
           ${(() => {
-            if (isMolecule(issue)) return null; // already rendered as Steps
-            const c = childrenOf(id);
-            return c.length ? Field('Children', html`<div class="c2-rels">${c.map((x) => RelChip(x.id))}</div>`, 'parent-child') : null;
+            const b = openBlockersOf(issue);
+            return b.length ? html`<div class="c2-blocker-summary">
+              <span class="c2-hud-label">Resolve first</span>
+              <div class="c2-rels">${b.map(RelChip)}</div>
+            </div>` : null;
           })()}
 
-          ${/* Bidirectional: rendered once whichever side created the row. */ ''}
-          ${(() => { const r = relatedOf(issue); return r.length ? Field('Related', html`<div class="c2-rels c2-rels-chips">${r.map(RelChip)}</div>`, 'related') : null; })()}
-          ${/* discovered-from / tracks / caused-by / validates / … — a section
-                per type that actually has members, in both directions, so the
-                panel never grows ten empty headings. */ ''}
-          ${linkSectionsOf(issue).map((s) => html`<div key=${s.key}>${Field(s.label, html`<div class="c2-rels">${s.ids.map(RelChip)}</div>`, conceptForLinkSection(s.key))}</div>`)}
+          <div class="c2-detail-workbar">
+            <${PrimaryActions} issue=${issue} />
+            <nav class="c2-detail-tabs" aria-label="Issue detail sections" role="tablist">
+              ${tabs.map(([key, label]) => html`<button key=${key} class=${section === key ? 'on' : ''}
+                id=${'c2-detail-tab-' + key} role="tab" aria-controls=${'c2-detail-panel-' + key}
+                aria-selected=${section === key} tabIndex=${section === key ? '0' : '-1'}
+                onClick=${() => setSection(key)}
+                onKeyDown=${(e) => {
+                  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+                  e.preventDefault();
+                  const at = tabs.findIndex(([tabKey]) => tabKey === key);
+                  const next = e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1
+                    : (at + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+                  setSection(tabs[next][0]);
+                  setTimeout(() => document.querySelector('#c2-detail-tab-' + tabs[next][0])?.focus(), 0);
+                }}>${label}</button>`)}
+            </nav>
+          </div>
 
-          ${/* The relationship sections above only render when they have
-                members — which is right, but it means an unconnected issue
-                shows nothing at all where its connections would be, and a
-                beginner has no way to discover that connections are a thing.
-                One quiet block, only when EVERY relationship section is
-                empty, that says what would go here and jumps to the control
-                that creates one. Disappears forever the moment there is a
-                single link — it is replaced by the user's own content, which
-                is the only decay mechanism an empty state needs. */ ''}
-          ${!hasAnyRelationship(issue) && Field('Connections', html`
-            <${LearnEmpty} compact k="blocks"
-              what="Nothing is connected to this yet."
-              why="Saying that this waits on another issue is what makes the Ready lane and the Map work — and a “related” or “discovered from” link is how anyone reading this in six months finds out why it exists."
-              actionLabel="Add a connection"
-              onAction=${() => {
-                const el = document.querySelector('#c2-link-id');
-                el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-                setTimeout(() => el?.focus(), 220);
-              }} />`)}
+          <div class="c2-detail-sections">
+            <section class="c2-detail-section" id="c2-detail-panel-overview" role="tabpanel" tabIndex="0" aria-labelledby="c2-detail-tab-overview"
+              data-section="overview" hidden=${section !== 'overview'}>
+              ${issue.description || issue.close_reason || issue.design || issue.notes || issue.acceptance_criteria
+                ? html`
+                  <${NarrativeField} title="Description" value=${issue.description} />
+                  ${issue.status === 'closed' && html`<${NarrativeField} title="Close reason" value=${issue.close_reason} plain />`}
+                  <${NarrativeField} title="Design" value=${issue.design} />
+                  <${NarrativeField} title="Notes" value=${issue.notes} />
+                  <${NarrativeField} title="Acceptance" value=${issue.acceptance_criteria} />`
+                : html`<div class="c2-lane-empty">No description, notes, design, or acceptance criteria yet.</div>`}
+            </section>
 
-          ${isContainer(issue) && childrenOf(id).length > 0
-            && Field('Reuse', html`<${TemplateBox} issue=${issue} />`, 'formula')}
+            <section class="c2-detail-section" id="c2-detail-panel-connections" role="tabpanel" tabIndex="0" aria-labelledby="c2-detail-tab-connections"
+              data-section="connections" hidden=${section !== 'connections'}>
+              ${/* A molecule root's children ARE its steps — rendered here as
+                    the richer section and suppressed from Children. */ ''}
+              ${isMolecule(issue) && Field('Steps', html`<${MoleculeSteps} root=${issue} />`, 'molecule')}
+              ${(() => { const p = parentOf(issue); return p ? Field('Parent', RelChip(p), 'parent-child') : null; })()}
+              ${(() => { const b = blockersOf(issue); return b.length ? Field('Blocked by', html`<div class="c2-rels">${b.map(RelChip)}</div>`, 'blocks') : null; })()}
+              ${(() => { const b = blocksList(id); return b.length ? Field('Blocks', html`<div class="c2-rels">${b.map((x) => RelChip(x.id))}</div>`, 'blocks') : null; })()}
+              ${(() => {
+                if (isMolecule(issue)) return null;
+                const c = childrenOf(id);
+                return c.length ? Field('Children', html`<div class="c2-rels">${c.map((x) => RelChip(x.id))}</div>`, 'parent-child') : null;
+              })()}
+              ${(() => { const r = relatedOf(issue); return r.length ? Field('Related', html`<div class="c2-rels c2-rels-chips">${r.map(RelChip)}</div>`, 'related') : null; })()}
+              ${linkSectionsOf(issue).map((s) => html`<div key=${s.key}>${Field(s.label, html`<div class="c2-rels">${s.ids.map(RelChip)}</div>`, conceptForLinkSection(s.key))}</div>`)}
+              ${!hasAnyRelationship(issue) && Field('Connections', html`
+                <${LearnEmpty} compact k="blocks"
+                  what="Nothing is connected to this yet."
+                  why="Saying that this waits on another issue is what makes the Ready lane and the Map work — and a “related” or “discovered from” link is how anyone reading this in six months finds out why it exists."
+                  actionLabel="Add a connection"
+                  onAction=${() => {
+                    setSection('manage');
+                    setTimeout(() => {
+                      const el = document.querySelector('#c2-link-id');
+                      el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                      el?.focus();
+                    }, 80);
+                  }} />`)}
+            </section>
 
-          ${isMolecule(issue) && Field('Undo', html`<${BurnBox} root=${issue} />`)}
+            <section class="c2-detail-section" id="c2-detail-panel-activity" role="tabpanel" tabIndex="0" aria-labelledby="c2-detail-tab-activity"
+              data-section="activity" hidden=${section !== 'activity'}>
+              ${Field('Comments', html`<${Comments} id=${id} />`)}
+              ${Field('Delegate', html`<${Delegate} issue=${issue} />`)}
+              ${Field('Meta', html`<div class="c2-meta">
+                <span>Assignee</span><span>${issue.assignee || '—'}</span>
+                <span>Created</span><span>${new Date(issue.created_at).toLocaleString()}</span>
+                <span>Updated</span><span>${new Date(issue.updated_at).toLocaleString()}</span>
+                ${issue.closed_at ? html`<span>Closed</span><span>${new Date(issue.closed_at).toLocaleString()}</span>` : ''}
+              </div>`)}
+            </section>
 
-          ${Field('Edit', html`<${Edit} issue=${issue} />`)}
-          ${Field('Delegate', html`<${Delegate} issue=${issue} />`)}
-          ${Field('Comments', html`<${Comments} id=${id} />`)}
-          ${Field('Meta', html`<div class="c2-meta">
-            <span>Assignee</span><span>${issue.assignee || '—'}</span>
-            <span>Created</span><span>${new Date(issue.created_at).toLocaleString()}</span>
-            <span>Updated</span><span>${new Date(issue.updated_at).toLocaleString()}</span>
-            ${issue.closed_at ? html`<span>Closed</span><span>${new Date(issue.closed_at).toLocaleString()}</span>` : ''}
-          </div>`)}
+            <section class="c2-detail-section" id="c2-detail-panel-manage" role="tabpanel" tabIndex="0" aria-labelledby="c2-detail-tab-manage"
+              data-section="manage" hidden=${section !== 'manage'}>
+              ${Field('Edit issue', html`<${Edit} issue=${issue} />`)}
+              ${isContainer(issue) && childrenOf(id).length > 0
+                && Field('Reuse workflow', html`<${TemplateBox} issue=${issue} />`, 'formula')}
+              ${isMolecule(issue) && Field('Undo molecule', html`<${BurnBox} root=${issue} />`)}
+            </section>
+          </div>
         </div>`}
     </div>`;
 }

@@ -15,6 +15,7 @@ import { html } from 'htm/preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { store, selectIssue } from '../store.js';
 import { graphLayout, OVERLAY_TOGGLE_TYPES } from './derive.js';
+import { mapScopeIssues } from './graphModel.js';
 import { c2, loadMapOverlayPref, setMapOverlayPref } from './state.js';
 import { TYPE_GLYPH, glyphStatus, STATUS_GLYPH_CHAR, STATUS_GLYPH_LABEL } from './ui.js';
 import { LearnEmpty, ConceptDot } from '../components/ConceptTip.js';
@@ -97,7 +98,16 @@ function overlayPath(e) {
 
 export function MapView() {
   const issues = store.issues.value; // subscribe
-  const layout = useMemo(() => graphLayout(), [issues]);
+  const [scopeMode, setScopeMode] = useState('current');
+  const [epicId, setEpicId] = useState('');
+  const [displayMode, setDisplayMode] = useState('graph');
+  const openIssues = useMemo(() => issues.filter((i) => i.status !== 'closed'), [issues]);
+  const epics = useMemo(() => openIssues
+    .filter((i) => i.issue_type === 'epic' || i.issue_type === 'molecule')
+    .sort((a, b) => Number(a.priority) - Number(b.priority) || a.title.localeCompare(b.title)), [openIssues]);
+  const effectiveEpicId = epicId || epics[0]?.id || '';
+  const scopedIssues = useMemo(() => mapScopeIssues(issues, scopeMode, effectiveEpicId), [issues, scopeMode, effectiveEpicId]);
+  const layout = useMemo(() => graphLayout(scopedIssues), [scopedIssues]);
   const { nodes, layoutEdges, overlayEdges, width, height, criticalChain } = layout;
 
   const [view, setView] = useState({ x: 0, y: 0, k: 1 });
@@ -105,6 +115,14 @@ export function MapView() {
   const drag = useRef(null);
   const pinch = useRef(null);
   const svgRef = useRef(null);
+
+  useEffect(() => {
+    setScopeMode('current');
+    setEpicId('');
+    setDisplayMode('graph');
+  }, [store.projectId.value]);
+
+  useEffect(() => { setView({ x: 0, y: 0, k: 1 }); }, [scopeMode, effectiveEpicId]);
 
   // Per-project overlay-type toggle set — loaded on project switch, then
   // read reactively off c2.mapOverlayTypes (subscribed via .value below).
@@ -198,28 +216,6 @@ export function MapView() {
     };
   }, [view.x, view.y, view.k]);
 
-  // Two genuinely different empty states, and conflating them was the old
-  // bug in miniature: "there is nothing to draw" and "there is plenty to draw
-  // but you have never told the tool how any of it fits together" need
-  // completely different sentences. The second one is the single most common
-  // reason a new user finds this view useless.
-  if (nodes.length === 0) {
-    return html`
-      <div class="c2-map"><div class="c2-map-emptywrap">
-        <${LearnEmpty} icon="◇" title="Dependency map"
-          what="This draws a picture of what is waiting on what, across all the open work."
-          why="There is no open work to draw right now. Capture something and it will appear here." />
-      </div></div>`;
-  }
-  if (layoutEdges.length === 0) {
-    return html`
-      <div class="c2-map"><div class="c2-map-emptywrap">
-        <${LearnEmpty} icon="◇" title="Nothing depends on anything yet" k="blocks"
-          what=${`All ${nodes.length} open ${nodes.length === 1 ? 'issue is' : 'issues are'} standing on their own, so there is no shape to draw.`}
-          why="Open an issue and use its “Blocked by” row to say what has to happen first. Do that a few times and this becomes a map of the order things must happen in — and the Ready lane starts telling you what you can actually pick up." />
-      </div></div>`;
-  }
-
   const layoutEdge = (e, i) => {
     const d = layoutPath(e);
     const onChain = criticalChain.has(e.from) && criticalChain.has(e.to);
@@ -256,6 +252,9 @@ export function MapView() {
       <g key=${n.id} transform=${`translate(${n.x - (w - NODE_W) / 2} ${n.y - (h - NODE_H) / 2})`}
          class=${'c2-node st-' + s + (onChain ? ' crit' : '') + (litBlocking ? ' lit' : '') + (litOverlay ? ' ov-lit' : '') + (dim ? ' dim' : '')}
          onMouseEnter=${() => setHover(n.id)} onMouseLeave=${() => setHover(null)}
+         onFocus=${() => setHover(n.id)} onBlur=${() => setHover(null)}
+         role="button" tabIndex="0" aria-haspopup="dialog" aria-label=${`${n.issue.title}. ${STATUS_GLYPH_LABEL[s] || s}. Open issue ${n.id}`}
+         onKeyDown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectIssue(n.id); } }}
          onClick=${() => selectIssue(n.id)} style="cursor:pointer">
         <rect width=${w} height=${h} rx="10" class="c2-node-box" />
         <text x="12" y="21" class="c2-node-glyph">${TYPE_GLYPH[n.issue.issue_type] || '●'}</text>
@@ -267,14 +266,56 @@ export function MapView() {
 
   const directionalTypes = OVERLAY_TOGGLE_TYPES.filter((t) => !SYMMETRIC_OVERLAY_TYPES.has(t));
 
+  const listRows = nodes.slice().sort((a, b) => Number(a.issue.priority) - Number(b.issue.priority) || a.id.localeCompare(b.id));
+  const blockingIn = new Map(), blockingOut = new Map();
+  for (const e of layoutEdges) {
+    (blockingIn.get(e.to) || blockingIn.set(e.to, []).get(e.to)).push(e.from);
+    (blockingOut.get(e.from) || blockingOut.set(e.from, []).get(e.from)).push(e.to);
+  }
+
+  const setScope = (mode) => {
+    if (mode === 'epic' && !effectiveEpicId) return;
+    setScopeMode(mode);
+  };
+
   return html`
     <div class="c2-map">
       <div class="c2-map-toolbar">
-        <span class="c2-hud-label">Dependency map<${ConceptDot} k="blocks" /></span>
-        <span class="c2-map-legend"><i class="lg crit"></i> critical chain · scroll to zoom · drag to pan</span>
-        <button class="c2-mini" onClick=${reset}>reset view</button>
+        <h2 class="c2-hud-label">Dependency map<${ConceptDot} k="blocks" /></h2>
+        <span class="c2-map-scope-count">${nodes.length} of ${openIssues.length} open</span>
+        <div class="c2-map-viewtoggle" role="group" aria-label="Map display">
+          <button class=${'c2-mini' + (displayMode === 'graph' ? ' active' : '')} aria-pressed=${displayMode === 'graph'} onClick=${() => setDisplayMode('graph')}>Graph</button>
+          <button class=${'c2-mini' + (displayMode === 'list' ? ' active' : '')} aria-pressed=${displayMode === 'list'} onClick=${() => setDisplayMode('list')}>List</button>
+        </div>
+        ${displayMode === 'graph' && layoutEdges.length > 0 ? html`<button class="c2-mini" onClick=${reset}>reset view</button>` : ''}
       </div>
-      ${presentOverlayTypes.length ? html`
+      <div class="c2-map-scopebar" role="group" aria-label="Choose which work to map">
+        <span class="c2-map-scope-label">Show</span>
+        <button class=${'c2-map-scope' + (scopeMode === 'current' ? ' active' : '')} aria-pressed=${scopeMode === 'current'} onClick=${() => setScope('current')}>
+          Current work
+        </button>
+        <button class=${'c2-map-scope' + (scopeMode === 'epic' ? ' active' : '')} aria-pressed=${scopeMode === 'epic'} disabled=${!epics.length} onClick=${() => setScope('epic')}>
+          One epic
+        </button>
+        <button class=${'c2-map-scope' + (scopeMode === 'all' ? ' active' : '')} aria-pressed=${scopeMode === 'all'} onClick=${() => setScope('all')}>
+          All open
+        </button>
+        ${scopeMode === 'epic' && epics.length ? html`
+          <label class="c2-map-epicpick">
+            <span class="sr-only">Epic to map</span>
+            <select value=${effectiveEpicId} onChange=${(e) => setEpicId(e.target.value)}>
+              ${epics.map((epic) => html`<option key=${epic.id} value=${epic.id}>${epic.id} · ${epic.title}</option>`)}
+            </select>
+          </label>` : ''}
+        <span class="c2-map-scope-help">
+          ${scopeMode === 'current' ? 'Active and urgent work, plus what blocks or follows it.'
+            : scopeMode === 'epic' ? 'The selected epic, its children, and their immediate dependencies.'
+              : 'Every open issue. Best for small projects or a full audit.'}
+        </span>
+      </div>
+      ${displayMode === 'graph' && layoutEdges.length > 0 ? html`
+        <div class="c2-map-graphhint"><i class="lg crit"></i> critical chain · scroll to zoom · drag to pan</div>` : ''}
+      ${displayMode === 'graph' && presentOverlayTypes.length && layoutEdges.length > 0 ? html`
         <div class="c2-map-overlaybar" role="group" aria-label="Overlay link types">
           <span class="c2-ov-static"><i class="c2-ovswatch c2-ovswatch-blocking"></i>Blocking</span>
           ${presentOverlayTypes.map((t) => html`
@@ -285,11 +326,46 @@ export function MapView() {
               <span class="c2-ovcount">${overlayCounts.get(t)}</span>
             </label>`)}
         </div>` : ''}
+      ${nodes.length === 0 ? html`
+        <div class="c2-map-emptywrap">
+          <${LearnEmpty} icon="◇" title=${openIssues.length ? 'No work in this scope' : 'Dependency map'}
+            what=${openIssues.length ? 'Choose another scope above to see more work.' : 'This draws a picture of what is waiting on what, across open work.'}
+            why=${openIssues.length ? 'Current work is intentionally compact. All open always gives you the complete project.' : 'There is no open work to draw right now. Capture something and it will appear here.'} />
+        </div>`
+      : displayMode === 'list' ? html`
+        <div class="c2-map-listwrap">
+          <table class="c2-map-list">
+            <caption class="sr-only">Issues in the selected dependency map scope</caption>
+            <thead><tr><th>Issue</th><th>Status</th><th>Waiting on</th><th>Unlocks</th><th></th></tr></thead>
+            <tbody>
+              ${listRows.map((n) => {
+                const s = glyphStatus(n.issue);
+                const waits = blockingIn.get(n.id) || [];
+                const unlocks = blockingOut.get(n.id) || [];
+                return html`<tr key=${n.id}>
+                  <td><strong>${n.issue.title}</strong><span>${n.id} · P${n.issue.priority}</span></td>
+                  <td><span class=${'c2-map-list-status st-' + s}>${STATUS_GLYPH_CHAR[s] || STATUS_GLYPH_CHAR.open} ${STATUS_GLYPH_LABEL[s] || s}</span></td>
+                  <td>${waits.length ? waits.join(', ') : '—'}</td>
+                  <td>${unlocks.length ? unlocks.join(', ') : '—'}</td>
+                  <td><button class="c2-mini" onClick=${() => selectIssue(n.id)}>Open</button></td>
+                </tr>`;
+              })}
+            </tbody>
+          </table>
+        </div>`
+      : layoutEdges.length === 0 ? html`
+        <div class="c2-map-emptywrap">
+          <${LearnEmpty} icon="◇" title="No dependencies in this scope" k="blocks"
+            what=${`${nodes.length} open ${nodes.length === 1 ? 'issue is' : 'issues are'} visible here, but none are waiting on another.`}
+            why="Switch to List for a selectable overview, choose a wider scope, or open an issue and use “Blocked by” to describe what must happen first." />
+        </div>`
+      : html`
       <div class="c2-map-zoombtns">
         <button class="c2-map-zoombtn" aria-label="Zoom in" onClick=${() => zoomBy(1.25)}>+</button>
         <button class="c2-map-zoombtn" aria-label="Zoom out" onClick=${() => zoomBy(1 / 1.25)}>−</button>
       </div>
-      <svg ref=${svgRef} class="c2-map-svg" onWheel=${onWheel} onMouseDown=${onDown} onMouseMove=${onMove} onMouseUp=${onUp} onMouseLeave=${onUp}>
+      <svg ref=${svgRef} class="c2-map-svg" aria-label="Dependency graph. Use Tab to reach issue nodes, or switch to List for a table."
+        onWheel=${onWheel} onMouseDown=${onDown} onMouseMove=${onMove} onMouseUp=${onUp} onMouseLeave=${onUp}>
         <defs>
           <marker id="c2arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
             <path d="M 0 0 L 10 5 L 0 10 z" class="c2-arrowhead" />
@@ -304,6 +380,6 @@ export function MapView() {
           <g class="c2-edges-overlay">${visibleOverlayEdges.map(overlayEdge)}</g>
           <g class="c2-nodes">${nodes.map(node)}</g>
         </g>
-      </svg>
+      </svg>`}
     </div>`;
 }

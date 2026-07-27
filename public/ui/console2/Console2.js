@@ -32,6 +32,7 @@ import { MoleculeDialog } from './MoleculeDialog.js';
 import { DistillDialog, FormulaEditorDialog } from './FormulaAuthor.js';
 import { mol, openMolDialog, loadFormulas } from './molecules.js';
 import { ThemeSwitch } from './ThemeSwitch.js';
+import { WorkflowGuide } from './WorkflowGuide.js';
 import { NudgeRail } from '../components/ConceptTip.js';
 import { learnContext } from '../learn.js';
 
@@ -45,12 +46,12 @@ function CliFlash() {
   // a command being suggested to the user — every action flashes through
   // here (capture, claim, close, defer, …), so the fix is universal.
   return html`
-    <div class="c2-cli" key=${cli.at}>
+    <div class="c2-cli" key=${cli.at} role="status" aria-live="polite">
       <span class="c2-cli-ran" aria-hidden="true">✓ ran</span>
       <span class="c2-cli-dollar">$</span>
       <code class="c2-cli-cmd">${cli.cmd}</code>
-      <button class="c2-cli-copy" title="Copy" onClick=${copy}>copy</button>
-      <button class="c2-cli-x" title="Dismiss" onClick=${() => (c2.lastCli.value = null)}>✕</button>
+      <button class="c2-cli-copy" title="Copy" aria-label="Copy command" onClick=${copy}>copy</button>
+      <button class="c2-cli-x" title="Dismiss" aria-label="Dismiss command receipt" onClick=${() => (c2.lastCli.value = null)}>✕</button>
     </div>`;
 }
 
@@ -69,7 +70,7 @@ function Header() {
         <div class="c2-brand">
           <span class="c2-brand-mark">◆</span>
           <div class="c2-brand-txt">
-            <span class="c2-brand-name">${meta?.name || pid || 'project'}</span>
+            <h1 class="c2-brand-name">${meta?.name || pid || 'project'}</h1>
             <span class="c2-brand-sub">CONSOLE 2.0 · MISSION CONTROL</span>
           </div>
         </div>
@@ -88,10 +89,12 @@ function Header() {
           <button class="c2-molbtn" data-mol-open
             title=${molCount ? `Pour a molecule — ${molCount} formula${molCount === 1 ? '' : 's'} available in this project` : 'Molecules — create a whole set of connected issues from a saved recipe'}
             onClick=${() => openMolDialog('')}>
-            <span aria-hidden="true">⚗</span><span class="c2-btn-label"> Molecules</span>
+            <span aria-hidden="true">⚗</span><span class="c2-btn-label"> Templates</span>
             ${molCount > 0 && html`<span class="c2-molbtn-n">${molCount}</span>`}
           </button>
-          <a class="c2-learnlink" href="#/learn" title="Concepts — what beads words mean" aria-label="Concepts reference">?</a>
+          <a class="c2-learnlink" href="#/learn" title="Guide and concepts — learn the project workflow">
+            <span aria-hidden="true">?</span><span class="c2-btn-label"> Guide</span>
+          </a>
           <div class="c2-themesw-header"><${ThemeSwitch} /></div>
           <span class=${'c2-sync sync-' + syncState} title=${'Issue export: ' + syncState}>${syncState}</span>
           <a class="c2-classic" href=${'#/p/' + encodeURIComponent(pid || '')} title="Open the classic project view">
@@ -105,13 +108,29 @@ function Header() {
 
 function Canvas() {
   const mode = c2.canvasMode.value;
+  const chooseMode = (next) => {
+    c2.canvasMode.value = next;
+    setTimeout(() => document.querySelector('#c2-view-tab-' + next)?.focus(), 0);
+  };
   return html`
     <div class="c2-canvas">
-      <div class="c2-segmented">
+      <nav class="c2-segmented" aria-label="Project workspace views" role="tablist">
         ${MODES.map(([m, label]) => html`
-          <button key=${m} class=${'c2-seg' + (mode === m ? ' on' : '')} onClick=${() => (c2.canvasMode.value = m)}>${label}</button>`)}
-      </div>
-      <div class="c2-canvas-body">
+          <button key=${m} class=${'c2-seg' + (mode === m ? ' on' : '')}
+            id=${'c2-view-tab-' + m} role="tab" aria-selected=${mode === m}
+            aria-controls="c2-view-panel" tabIndex=${mode === m ? '0' : '-1'}
+            onClick=${() => (c2.canvasMode.value = m)}
+            onKeyDown=${(e) => {
+              if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+              e.preventDefault();
+              const at = MODES.findIndex(([key]) => key === m);
+              const next = e.key === 'Home' ? 0 : e.key === 'End' ? MODES.length - 1
+                : (at + (e.key === 'ArrowRight' ? 1 : -1) + MODES.length) % MODES.length;
+              chooseMode(MODES[next][0]);
+            }}>${label}</button>`)}
+      </nav>
+      <div class="c2-canvas-body" id="c2-view-panel" role="tabpanel"
+        aria-labelledby=${'c2-view-tab-' + mode} tabIndex="0">
         ${mode === 'flow' ? html`<${Flow} />` : mode === 'map' ? html`<${MapView} />` : html`<${Docs2} />`}
       </div>
     </div>`;
@@ -145,7 +164,10 @@ function Nudges() {
       default: break;
     }
   };
-  return html`<div class="c2-nudgeslot"><${NudgeRail} ctx=${ctx} onAction=${onAction} /></div>`;
+  return html`<div class="c2-nudgeslot">
+    <${WorkflowGuide} />
+    <${NudgeRail} ctx=${ctx} onAction=${onAction} />
+  </div>`;
 }
 
 export function Console2() {
@@ -189,9 +211,9 @@ export function Console2() {
       <${Header} />
       <${PulseBar} />
       <${Nudges} />
-      <div class="c2-body">
+      <main class="c2-body" id="c2-project-workspace">
         <${Canvas} />
-      </div>
+      </main>
       <${Detail} />
       <${MoleculeDialog} />
       ${/* The two authoring surfaces the pour dialog's prerequisite needs
@@ -200,7 +222,7 @@ export function Console2() {
             as well, not only from the empty state that motivated them. */ ''}
       <${DistillDialog} />
       <${FormulaEditorDialog} />
-      ${detailOpen && html`<div class="c2-scrim" onClick=${() => selectIssue(null)}></div>`}
-      ${store.issuesError.value && html`<div class="c2-boot-err">Failed to load issues: ${store.issuesError.value} · <a href=${'#/p/' + encodeURIComponent(pid || '')}>classic view</a></div>`}
+      ${detailOpen && html`<div class="c2-scrim" aria-hidden="true" onClick=${() => selectIssue(null)}></div>`}
+      ${store.issuesError.value && html`<div class="c2-boot-err" role="alert">Failed to load issues: ${store.issuesError.value} · <a href=${'#/p/' + encodeURIComponent(pid || '')}>classic view</a></div>`}
     </div>`;
 }

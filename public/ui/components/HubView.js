@@ -33,6 +33,7 @@ const METRICS_META = [
   ['open', 'Ready', 'green'],
   ['in_progress', 'Active', 'accent'],
   ['blocked', 'Blocked', 'red'],
+  ['triage', 'Inbox', 'purple'],
 ];
 
 function truncate(s, n) {
@@ -99,15 +100,7 @@ function GitInsights({ git }) {
     </div>`;
 }
 
-function ProjectCard({ id, project }) {
-  const [stats, setStats] = useState(null);
-  const [err, setErr] = useState(false);
-  useEffect(() => {
-    let live = true;
-    loadProjectStats(id).then((s) => live && setStats(s)).catch(() => live && setErr(true));
-    return () => { live = false; };
-  }, [id]);
-
+function ProjectCard({ id, project, stats, err }) {
   const git = store.projectsGit.value[id];
   // Console 2.0 is the hub's primary destination (the classic view is being
   // retired) — the card's whole click-through, and its CTA hint below, both
@@ -120,7 +113,7 @@ function ProjectCard({ id, project }) {
     <div class="hub-card" role="button" tabIndex="0" onClick=${open} onKeyDown=${onKeyDown}>
       <div class="hub-card-top">
         <span class="hub-card-title">${id}</span>
-        ${stats && html`<span class="hub-card-total">${stats.total} issue${stats.total === 1 ? '' : 's'}</span>`}
+        ${stats && html`<span class="hub-card-total">${stats.openTotal} open · ${stats.total} lifetime</span>`}
       </div>
       <div class="hub-card-path">${project.path}</div>
 
@@ -141,9 +134,48 @@ function ProjectCard({ id, project }) {
             `}
       </div>
       <div class="hub-card-cta">
-        <span>Open Console 2.0 →</span>
+        <span>Open project workspace →</span>
       </div>
     </div>`;
+}
+
+// Dense, always-visible project radar: the landing page remains an
+// information station, but entering a project and spotting where attention is
+// needed no longer requires scrolling past the host-wide instrumentation.
+function ProjectRadar({ entries, statsById, errors }) {
+  if (entries.length === 0) return null;
+  return html`
+    <section class="hub-radar" aria-labelledby="hub-radar-title">
+      <div class="hub-section-head hub-radar-head">
+        <div>
+          <h2 id="hub-radar-title">Project radar</h2>
+          <span class="muted small">Current work across every registered project</span>
+          <span class="hub-radar-legend" aria-label="Metric key: ready, active, blocked, inbox">
+            <b>R</b> ready · <b>A</b> active · <b>B</b> blocked · <b>I</b> inbox
+          </span>
+        </div>
+        <a class="hub-guide-link" href="#/learn">Start here · project workflow →</a>
+      </div>
+      <div class="hub-radar-grid">
+        ${entries.map(([id]) => {
+          const s = statsById[id];
+          return html`
+            <button type="button" class="hub-radar-project" key=${id}
+              onClick=${() => navigate('#/p2/' + encodeURIComponent(id))}>
+              <span class="hub-radar-name">${id}</span>
+              ${errors.has(id) ? html`<span class="muted small">unavailable</span>`
+                : !s ? html`<span class="hub-radar-loading" aria-label="Loading project health"></span>`
+                  : html`
+                    <span class="hub-radar-total">${s.openTotal} open</span>
+                    <span class="hub-radar-metric ready" title="Ready now">${s.open}R</span>
+                    <span class="hub-radar-metric active" title="In progress">${s.in_progress}A</span>
+                    <span class="hub-radar-metric blocked" title="Blocked">${s.blocked}B</span>
+                    <span class="hub-radar-metric triage" title="Inbox / triage">${s.triage}I</span>`}
+              <span aria-hidden="true" class="hub-radar-arrow">→</span>
+            </button>`;
+        })}
+      </div>
+    </section>`;
 }
 
 // One-shot (not polled) summary strip — cheap enough to fetch every time the
@@ -199,6 +231,9 @@ function OpsStrip() {
         <a class="hub-chip hub-chip-link" href=${BEADS_DOCS_URL} target="_blank" rel="noopener noreferrer" title="Open beads documentation">
           📚 bd-docs<${ExternalLinkIcon} />
         </a>
+        <button type="button" class="hub-chip" onClick=${() => navigate('#/learn')}>
+          🧭 project guide
+        </button>
         ${behind && html`
           <button type="button" class="hub-chip hub-chip-amber"
             title=${v.updateHint ? `Copy: ${v.updateHint}` : 'A newer bd release is available — see Settings for update options'}
@@ -559,6 +594,24 @@ function QuotaSessionsRow() {
 export function HubView() {
   const projects = store.projects.value;
   const entries = Object.entries(projects);
+  const [statsById, setStatsById] = useState({});
+  const [statErrors, setStatErrors] = useState(new Set());
+
+  useEffect(() => {
+    let live = true;
+    const nextStats = {};
+    const nextErrors = new Set();
+    Promise.all(entries.map(async ([id]) => {
+      try { nextStats[id] = await loadProjectStats(id); }
+      catch { nextErrors.add(id); }
+    })).then(() => {
+      if (!live) return;
+      setStatsById(nextStats);
+      setStatErrors(nextErrors);
+    });
+    return () => { live = false; };
+  }, [entries.map(([id]) => id).join('\n')]);
+
   return html`
     <main class="hub">
       <div class="hub-header">
@@ -566,6 +619,8 @@ export function HubView() {
         <p class="hub-header-tagline muted small">Select a project to manage its beads.</p>
         ${OpsStrip()}
       </div>
+
+      <${ProjectRadar} entries=${entries} statsById=${statsById} errors=${statErrors} />
 
       ${QuotaSessionsRow()}
 
@@ -580,7 +635,8 @@ export function HubView() {
         : html`
           <div class="hub-section-head hub-projects-head"><h2>Tracked Projects</h2></div>
           <div class="hub-grid">
-            ${entries.map(([id, project]) => html`<${ProjectCard} key=${id} id=${id} project=${project} />`)}
+            ${entries.map(([id, project]) => html`<${ProjectCard} key=${id} id=${id} project=${project}
+              stats=${statsById[id]} err=${statErrors.has(id)} />`)}
           </div>`}
     </main>`;
 }

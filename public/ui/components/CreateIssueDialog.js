@@ -25,6 +25,7 @@ const LABEL_RE = /^[A-Za-z0-9_.:-]+$/;
 
 export function CreateIssueDialog() {
   const ref = useRef(null);
+  const returnFocus = useRef(null);
   const open = store.createOpen.value;
   const [intentId, setIntentId] = useState('idea');
   const [title, setTitle] = useState('');
@@ -59,6 +60,7 @@ export function CreateIssueDialog() {
     const d = ref.current;
     if (!d) return;
     if (open && !d.open) {
+      returnFocus.current = document.activeElement;
       d.showModal();
       setErr('');
       setEpicManual(false);
@@ -66,7 +68,11 @@ export function CreateIssueDialog() {
       loadSettings();
       setTimeout(() => d.querySelector('#create-title')?.focus(), 30);
     }
-    if (!open && d.open) d.close();
+    if (!open && d.open) {
+      d.close();
+      if (returnFocus.current?.isConnected) returnFocus.current.focus();
+      returnFocus.current = null;
+    }
   }, [open]);
 
   // Preselect the project's configured default epic for the active intent —
@@ -153,20 +159,25 @@ export function CreateIssueDialog() {
   };
 
   return html`
-    <dialog class="dialog dialog-lg" ref=${ref} onClose=${close} onClick=${(e) => { if (e.target === ref.current) close(); }}>
+    <dialog class="dialog dialog-lg" ref=${ref} aria-labelledby="create-dialog-title"
+      onCancel=${(e) => { e.preventDefault(); close(); }}
+      onClose=${close} onClick=${(e) => { if (e.target === ref.current) close(); }}>
       <div class="dialog-body" onKeyDown=${(e) => { if (e.key === 'Escape') close(); }}>
-        <div class="dialog-head">New issue</div>
+        <h2 class="dialog-head" id="create-dialog-title">New issue</h2>
 
-        <div class="intent-chips" data-intent-chips>
+        <div class="intent-chips" data-intent-chips role="group" aria-label="Issue type">
           ${INTENTS.map((i) => html`
-            <button key=${i.id} type="button" class=${'intent-chip' + (i.id === intentId ? ' on' : '')} onClick=${() => setIntentId(i.id)}>
+            <button key=${i.id} type="button" class=${'intent-chip' + (i.id === intentId ? ' on' : '')}
+              aria-pressed=${i.id === intentId} onClick=${() => setIntentId(i.id)}>
               ${i.label}
             </button>`)}
         </div>
 
         <input id="create-title" class="field" placeholder="Title" value=${title}
+          aria-label="Issue title" required
           onInput=${(e) => setTitle(e.target.value)} onKeyDown=${titleKeyDown} />
-        <textarea class="field" rows="3" placeholder="Description (optional)…" value=${desc} onInput=${(e) => setDesc(e.target.value)}></textarea>
+        <textarea class="field" rows="3" placeholder="Description (optional)…" value=${desc}
+          aria-label="Issue description" onInput=${(e) => setDesc(e.target.value)}></textarea>
 
         <div class="dialog-row">
           <label class="dialog-field"><span>priority</span>
@@ -211,7 +222,7 @@ export function CreateIssueDialog() {
             ${intent.labels.map((l) => html`<span key=${'auto-' + l} class="chip auto" title="Applied automatically by the selected type">${l}</span>`)}
           </div>
           <div class="edit-row">
-            <input class="edit-input" placeholder="add a label…" value=${labelInput}
+            <input class="edit-input" placeholder="add a label…" aria-label="Label to add" value=${labelInput}
               onInput=${(e) => setLabelInput(e.target.value)}
               onKeyDown=${(e) => { if (e.key === 'Enter') { e.preventDefault(); addLabel(); } }} />
             <button type="button" class="btn" onClick=${addLabel}>Add</button>
@@ -220,17 +231,17 @@ export function CreateIssueDialog() {
 
         ${!isEpic && html`
           <label class="dialog-field"><span>acceptance criteria</span>
-            <textarea class="field" rows="2" placeholder="Optional…" value=${acceptance} onInput=${(e) => setAcceptance(e.target.value)}></textarea>
+            <textarea class="field" rows="2" placeholder="Optional…" value=${acceptance} aria-label="Acceptance criteria" onInput=${(e) => setAcceptance(e.target.value)}></textarea>
           </label>`}
         ${!isEpic && html`
           <label class="dialog-field"><span>assignee</span>
-            <input class="field" placeholder="Optional" value=${assignee} onInput=${(e) => setAssignee(e.target.value)} />
+            <input class="field" placeholder="Optional" value=${assignee} aria-label="Assignee" onInput=${(e) => setAssignee(e.target.value)} />
           </label>`}
 
         <div class="dialog-actions">
-          ${err && html`<span class="form-err">${err}</span>`}
-          <button class="btn btn-ghost" onClick=${close}>Cancel</button>
-          <button class="btn btn-accent" disabled=${busy} onClick=${submit}>Create</button>
+          ${err && html`<span class="form-err" role="alert">${err}</span>`}
+          <button type="button" class="btn btn-ghost" onClick=${close}>Cancel</button>
+          <button type="button" class="btn btn-accent" disabled=${busy} onClick=${submit}>Create</button>
         </div>
       </div>
     </dialog>`;

@@ -3,33 +3,74 @@
 // toggle) and PROMOTE — select text in the rendered view to spin a new
 // doc:<path>-labelled issue prefilled with the quoted selection.
 import { html } from 'htm/preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { store, openDoc, loadDocs } from '../store.js';
 import { c2 } from './state.js';
 import { renderMarkdown } from '../markdown.js';
 import { saveDoc, capturePromoted } from './actions.js';
 import { LearnEmpty } from '../components/ConceptTip.js';
+import { docGroup, groupDocs, starterDocs } from './docsModel.js';
 
-function Tree() {
+const RECENT_DOCS_KEY = 'bd_c2_recent_docs';
+function loadRecentDocs(projectId) {
+  try { return (JSON.parse(localStorage.getItem(RECENT_DOCS_KEY)) || {})[projectId] || []; } catch { return []; }
+}
+function saveRecentDoc(projectId, path) {
+  if (!projectId || !path) return [];
+  try {
+    const all = JSON.parse(localStorage.getItem(RECENT_DOCS_KEY)) || {};
+    all[projectId] = [path, ...(all[projectId] || []).filter((p) => p !== path)].slice(0, 8);
+    localStorage.setItem(RECENT_DOCS_KEY, JSON.stringify(all));
+    return all[projectId];
+  } catch { return [path]; }
+}
+
+function Tree({ pick }) {
   const q = (store.docFilter.value || '').toLowerCase();
-  const docs = store.docs.value.filter((d) => !q || d.path.toLowerCase().includes(q));
+  const groups = useMemo(() => groupDocs(store.docs.value, q), [store.docs.value, q]);
+  const matchCount = groups.reduce((n, group) => n + group.items.length, 0);
   const sel = store.selectedDocPath.value;
-  const pick = (path) => { openDoc(path); c2.docTreeOpen.value = false; };
+  const [openGroups, setOpenGroups] = useState(new Set(['Project root']));
+  const toggle = (name) => setOpenGroups((old) => {
+    const next = new Set(old);
+    next.has(name) ? next.delete(name) : next.add(name);
+    return next;
+  });
+  useEffect(() => {
+    if (!sel) return;
+    const group = docGroup(sel);
+    setOpenGroups((old) => new Set([...old, group]));
+  }, [sel]);
+  useEffect(() => { setOpenGroups(new Set(['Project root'])); }, [store.projectId.value]);
+  const choose = (path) => { pick(path); c2.docTreeOpen.value = false; };
   return html`
     <aside class=${'c2-doctree' + (c2.docTreeOpen.value ? ' open' : '')}>
       <div class="c2-doctree-bar">
-        <input class="c2-docfilter" type="search" placeholder="Filter docs…" value=${store.docFilter.value}
+        <input class="c2-docfilter" type="search" aria-label="Search all project documents" placeholder="Search ${store.docs.value.length} docs…" value=${store.docFilter.value}
           onInput=${(e) => (store.docFilter.value = e.target.value)} />
         <button class="c2-doctree-close" aria-label="Close doc list" title="Close" onClick=${() => (c2.docTreeOpen.value = false)}>✕</button>
       </div>
-      <div class="c2-doctree-list">
-        ${docs.length === 0 ? html`<div class="c2-lane-empty">${q ? 'no match' : 'no docs'}</div>`
-          : docs.map((d) => html`
-            <button key=${d.path} class=${'c2-doc-item' + (sel === d.path ? ' active' : '')} title=${d.path}
-              onClick=${() => pick(d.path)}>
-              <span class="c2-doc-name">${d.path.split('/').pop()}</span>
-              <span class="c2-doc-group">${d.group && d.group !== '(top level)' ? d.group : ''}</span>
-            </button>`)}
+      <div class="c2-doctree-summary">${q ? `${matchCount} matches` : `${store.docs.value.length} documents · grouped by folder`}</div>
+      <div class="c2-doctree-list" aria-label="Project document folders">
+        ${groups.length === 0 ? html`<div class="c2-lane-empty">${q ? 'No documents match' : 'No documents'}</div>`
+          : groups.map((group) => {
+            const expanded = !!q || openGroups.has(group.name);
+            return html`
+              <section class="c2-doc-folder" key=${group.name}>
+                <button class="c2-doc-folder-head" aria-expanded=${expanded} onClick=${() => toggle(group.name)}>
+                  <span aria-hidden="true">${expanded ? '▾' : '▸'}</span>
+                  <strong>${group.name}</strong><span>${group.items.length}</span>
+                </button>
+                ${expanded ? html`<div class="c2-doc-folder-items">
+                  ${group.items.map((d) => html`
+                    <button key=${d.path} class=${'c2-doc-item' + (sel === d.path ? ' active' : '')} title=${d.path}
+                      aria-current=${sel === d.path ? 'page' : undefined} onClick=${() => choose(d.path)}>
+                      <span class="c2-doc-name">${d.path.split('/').pop()}</span>
+                      <span class="c2-doc-group">${d.path}</span>
+                    </button>`)}
+                </div>` : ''}
+              </section>`;
+          })}
       </div>
     </aside>`;
 }
@@ -125,12 +166,55 @@ function Editor({ path }) {
     </div>`;
 }
 
+function DocsLanding({ pick, recentPaths }) {
+  const docs = store.docs.value;
+  const byPath = new Map(docs.map((d) => [d.path, d]));
+  const recent = recentPaths.map((path) => byPath.get(path)).filter(Boolean).slice(0, 5);
+  const recentSet = new Set(recent.map((d) => d.path));
+  const starters = starterDocs(docs, 6).filter((d) => !recentSet.has(d.path)).slice(0, 5);
+  const groups = groupDocs(docs);
+  const docButton = (doc) => html`
+    <button key=${doc.path} class="c2-doc-entry" title=${doc.path} onClick=${() => pick(doc.path)}>
+      <span class="c2-doc-entry-icon" aria-hidden="true">❐</span>
+      <span><strong>${doc.path.split('/').pop()}</strong><small>${doc.path}</small></span>
+      <span aria-hidden="true">→</span>
+    </button>`;
+  return html`
+    <div class="c2-doc-home">
+      <header class="c2-doc-home-head">
+        <div><span class="c2-kicker">Project knowledge</span><h2>Documents</h2>
+          <p>${docs.length} markdown files, grouped by folder so plans and reference material stay findable.</p></div>
+        <button class="c2-mini accent" onClick=${() => (c2.docTreeOpen.value = true)}>Browse all ${docs.length}</button>
+      </header>
+      <div class="c2-doc-home-grid">
+        ${recent.length ? html`<section class="c2-doc-home-section"><h3>Recently opened</h3><div>${recent.map(docButton)}</div></section>` : ''}
+        <section class="c2-doc-home-section"><h3>${recent.length ? 'Useful entry points' : 'Start here'}</h3><div>${starters.map(docButton)}</div></section>
+      </div>
+      <section class="c2-doc-areas">
+        <h3>Browse by folder</h3>
+        <div>${groups.slice(0, 12).map((group) => html`
+          <button key=${group.name} onClick=${() => {
+            store.docFilter.value = group.name === 'Project root' ? '' : group.name + '/';
+            c2.docTreeOpen.value = true;
+          }}><span>▰</span><strong>${group.name}</strong><small>${group.items.length} files</small></button>`)}
+        </div>
+      </section>
+    </div>`;
+}
+
 export function Docs2() {
   const path = store.selectedDocPath.value;
   const content = store.docContent.value;
   const editing = c2.docEditing.value;
   const hasDocs = store.docs.value.length > 0;
   const loadingDocs = store.docsLoading.value;
+  const [recentPaths, setRecentPaths] = useState(() => loadRecentDocs(store.projectId.value));
+
+  useEffect(() => { setRecentPaths(loadRecentDocs(store.projectId.value)); }, [store.projectId.value]);
+  const pick = (nextPath) => {
+    setRecentPaths(saveRecentDoc(store.projectId.value, nextPath));
+    openDoc(nextPath);
+  };
 
   // reset editor state when switching docs
   useEffect(() => {
@@ -146,16 +230,10 @@ export function Docs2() {
 
   return html`
     <div class="c2-docs">
-      ${Tree()}
+      <${Tree} pick=${pick} />
       <section class="c2-doc-main">
         ${!path ? (hasDocs
-          ? html`
-            <div class="c2-map-emptywrap">
-              <${LearnEmpty} icon="❐" title="Docs"
-                what="Every markdown file in this project, readable and editable right here."
-                why="Select any sentence in a document and a “Promote to issue” button appears — the new issue keeps the quote and remembers which file it came from, so a note in a document can become real work without being retyped."
-                actionLabel="Browse docs…" onAction=${() => (c2.docTreeOpen.value = true)} />
-            </div>`
+          ? html`<${DocsLanding} pick=${pick} recentPaths=${recentPaths} />`
           : html`
             <div class="c2-map-emptywrap">
               <${LearnEmpty} icon="❐" title="No documents here"

@@ -440,7 +440,7 @@ export async function loadProjectsGit() {
 export async function loadProjectStats(id) {
   const data = await apiGetRaw('/api/p/' + encodeURIComponent(id) + '/issues');
   const issues = data.issues || [];
-  const t = { open: 0, in_progress: 0, blocked: 0, closed: 0, total: issues.length, closed7d: 0, openBugs: 0 };
+  const t = { open: 0, in_progress: 0, blocked: 0, closed: 0, total: issues.length, openTotal: 0, triage: 0, closed7d: 0, openBugs: 0 };
   const sevenDaysAgo = Date.now() - 7 * 86400000;
   // Hub cards used to re-derive "blocked" inline, in the inverted direction
   // and with a `depends` type that bd never writes. Delegate to the shared
@@ -449,6 +449,10 @@ export async function loadProjectStats(id) {
   // inflate this count.
   const openIds = new Set(issues.filter((x) => x.status !== 'closed').map((x) => x.id));
   for (const i of issues) {
+    if (i.status !== 'closed') {
+      t.openTotal++;
+      if ((i.labels || []).includes('triage')) t.triage++;
+    }
     let s = i.status;
     if (s === 'open' && blockersOf(i).some((b) => openIds.has(b))) s = 'blocked';
     if (t[s] != null) t[s]++;

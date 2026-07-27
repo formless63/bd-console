@@ -16,6 +16,11 @@ export const c2 = {
   epicGroup: signal(true),       // Flow: regroup lanes into epic rows (default ON — see loadEpicGroupPref)
   laneFocus: signal(null),       // Pulse click → focus a lane/status bucket
 
+  // Persistent workflow rail: unlike one-shot learning nudges this remains a
+  // dependable "where am I / what next?" path for people learning beads from
+  // the UI. Experienced users can collapse it to a compact summary.
+  workflowCollapsed: signal((() => { try { return localStorage.getItem('bd_c2_workflow') === 'closed'; } catch { return false; } })()),
+
   // Map: which OVERLAY link types (everything but blocking, which is always
   // on) are currently drawn — a Set of display type strings, e.g. {'related'}.
   // Default/persistence: see loadMapOverlayPref/setMapOverlayPref below.
@@ -45,6 +50,11 @@ export function flashCli(cmd, label) {
 export function setPulseBarCollapsed(v) {
   c2.pulseBarCollapsed.value = v;
   try { localStorage.setItem('bd_c2_pulsebar', v ? 'closed' : 'open'); } catch { /* ignore */ }
+}
+
+export function setWorkflowCollapsed(v) {
+  c2.workflowCollapsed.value = v;
+  try { localStorage.setItem('bd_c2_workflow', v ? 'closed' : 'open'); } catch { /* ignore */ }
 }
 
 // ---------------------------------------------------------------------------

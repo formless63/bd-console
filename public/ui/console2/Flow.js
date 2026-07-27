@@ -2,6 +2,7 @@
 // progress · Blocked · Done this week) of intent cards, plus an epic-grouping
 // toggle that regroups everything into epic rows with layer-by-layer progress.
 import { html } from 'htm/preact';
+import { useState } from 'preact/hooks';
 import { store, selectIssue, effStatus, containerGroups } from '../store.js';
 import { c2, setEpicGroup } from './state.js';
 import { lanes, isStale, focusedIds, LANE_LABEL } from './derive.js';
@@ -17,6 +18,13 @@ const LANES = [
   ['deferred', 'Deferred', 'deferred'],
   ['done', 'Done · 7d', 'done'],
 ];
+
+// Rendering every card in a large project makes Flow slower and, more
+// importantly, makes the current work indistinguishable from its history.
+// Reveal cards in small, predictable batches. Counts always describe the full
+// set, so this is presentation-only and never changes the underlying filter.
+const REVEAL_BATCH = 12;
+const CURRENT_INITIAL = 4;
 
 // An empty lane is the best teaching moment in the app: the user is looking
 // straight at a labelled box with nothing in it and wondering what it is for.
@@ -67,22 +75,23 @@ function Card({ issue }) {
 
   return html`
     <div class=${'c2-card st-' + g + (sel ? ' sel' : '') + (issue.priority <= 0 ? ' p0' : '')}
-         role="button" tabIndex="0"
-         onClick=${() => selectIssue(id)}
-         onKeyDown=${(e) => { if (e.key === 'Enter') selectIssue(id); }}>
-      <div class="c2-card-top">
-        ${StatusGlyph(issue)}
-        ${TypeGlyph(issue.issue_type)}
-        <span class="c2-card-title">${issue.title}</span>
-        ${Pip(issue.priority)}
-      </div>
-      <div class="c2-card-meta">
-        <span class="c2-card-id">${id}</span>
-        ${(issue.labels || []).slice(0, 3).map((l) => html`<span key=${l} class=${'c2-chip' + (l === 'triage' ? ' triage' : '')}>${l}</span>`)}
-        ${issue.assignee && html`<span class="c2-assignee" title="Assignee">@${issue.assignee}</span>`}
-        ${s === 'in_progress' && AgeChip(issue)}
-        ${stale && html`<span class="c2-age c2-age-amber" title="No update in 21d+">stale</span>`}
-      </div>
+         >
+      <button class="c2-card-open" aria-label=${`Open ${issue.issue_type || 'issue'} ${id}: ${issue.title}`}
+        aria-haspopup="dialog" onClick=${() => selectIssue(id)}>
+        <span class="c2-card-top">
+          ${StatusGlyph(issue)}
+          ${TypeGlyph(issue.issue_type)}
+          <span class="c2-card-title">${issue.title}</span>
+          ${Pip(issue.priority)}
+        </span>
+        <span class="c2-card-meta">
+          <span class="c2-card-id">${id}</span>
+          ${(issue.labels || []).slice(0, 3).map((l) => html`<span key=${l} class=${'c2-chip' + (l === 'triage' ? ' triage' : '')}>${l}</span>`)}
+          ${issue.assignee && html`<span class="c2-assignee" title="Assignee">@${issue.assignee}</span>`}
+          ${s === 'in_progress' && AgeChip(issue)}
+          ${stale && html`<span class="c2-age c2-age-amber" title="No update in 21d+">stale</span>`}
+        </span>
+      </button>
       ${!closed && html`
         <div class="c2-card-actions">
           ${issue.status !== 'in_progress' && html`<button class="c2-mini" title="Claim" onClick=${stop(() => actClaim(id))}>claim</button>`}
@@ -99,14 +108,17 @@ function Card({ issue }) {
 // items don't intersect it visibly empty out rather than just dimming, so
 // the focus control has an actual, assertable effect on rendered card count.
 function Lane({ laneKey, title, cls, items, focus, focusSet }) {
+  const [limit, setLimit] = useState(REVEAL_BATCH);
   const filtered = focusSet ? items.filter((i) => focusSet.has(i.id)) : items;
+  const shown = filtered.slice(0, limit);
+  const remaining = filtered.length - shown.length;
   const focused = focus && filtered.length > 0 && (focus === laneKey || focus === 'stale');
   const dimLane = !!focus && filtered.length === 0;
   return html`
     <section class=${'c2-lane lane-' + cls + (dimLane ? ' dim' : '') + (focused ? ' focus' : '')}>
       <header class="c2-lane-head">
         <span class="c2-lane-dot"></span>
-        <span class="c2-lane-title">${title}</span>
+        <h2 class="c2-lane-title">${title}</h2>
         <span class="c2-lane-count">${filtered.length}</span>
       </header>
       <div class="c2-lane-body">
@@ -119,8 +131,116 @@ function Lane({ laneKey, title, cls, items, focus, focusSet }) {
             : html`<${LearnEmpty} compact k=${LANE_EMPTY[laneKey]?.concept}
                 what=${LANE_EMPTY[laneKey]?.what || 'Nothing here yet.'}
                 why=${LANE_EMPTY[laneKey]?.why} />`)
-          : filtered.map((i) => html`<${Card} key=${i.id} issue=${i} />`)}
+          : html`
+              ${shown.map((i) => html`<${Card} key=${i.id} issue=${i} />`)}
+              ${remaining > 0 && html`
+                <button class="c2-reveal" onClick=${() => setLimit(limit + REVEAL_BATCH)}>
+                  Show ${Math.min(REVEAL_BATCH, remaining)} more
+                  <span>${remaining} remaining</span>
+                </button>`}
+            `}
       </div>
+    </section>`;
+}
+
+function stopEvent(fn) {
+  return (e) => { e.stopPropagation(); fn(); };
+}
+
+// A container row deliberately separates current work from completed history.
+// Completed containers stay visible as compact summaries, while active
+// containers open with only their non-closed children. A status focus is an
+// explicit request, so it bypasses history hiding (but keeps batched reveal).
+function IssueGroup({ container, kids, closed, total, complete, focusActive, standalone = false }) {
+  const [expanded, setExpanded] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [currentLimit, setCurrentLimit] = useState(CURRENT_INITIAL);
+  const [historyLimit, setHistoryLimit] = useState(REVEAL_BATCH);
+  const current = kids.filter((i) => i.status !== 'closed');
+  const history = kids.filter((i) => i.status === 'closed');
+  const bodyOpen = focusActive || !complete || expanded;
+  const showHistory = focusActive || historyOpen || (complete && expanded);
+  const shownCurrent = current.slice(0, currentLimit);
+  const shownHistory = showHistory ? history.slice(0, historyLimit) : [];
+  const currentRemaining = current.length - shownCurrent.length;
+  const historyRemaining = history.length - shownHistory.length;
+  const visible = focusActive
+    ? kids.slice(0, Math.max(currentLimit, historyLimit))
+    : [...shownCurrent, ...shownHistory];
+  const focusRemaining = focusActive ? kids.length - visible.length : 0;
+  const title = standalone ? 'Standalone' : container.title;
+  const rowId = standalone ? '__orphans' : container.id;
+  const rowType = standalone ? '' : ' ct-' + container.issue_type;
+  const statusSummary = focusActive
+    ? `${kids.length} ${kids.length === 1 ? 'match' : 'matches'}`
+    : `${current.length} active · ${history.length} complete`;
+  const openDetail = standalone ? null : () => selectIssue(container.id);
+
+  return html`
+    <section class=${'c2-epicrow' + rowType + (standalone ? ' standalone' : '') + (complete && !bodyOpen ? ' collapsed' : '')}
+      key=${rowId} aria-labelledby=${'c2-group-' + rowId}>
+      <header class="c2-epicrow-head">
+        ${standalone
+          ? html`<h2 class="c2-epicrow-title muted" id=${'c2-group-' + rowId}>${title}</h2>`
+          : html`<button class="c2-epicrow-open" onClick=${openDetail} aria-haspopup="dialog"
+              aria-label=${`Open ${container.issue_type || 'group'} ${container.id}: ${title}`}>
+              ${StatusGlyph(container)}
+              ${TypeGlyph(container.issue_type)}
+              <span class="c2-epicrow-title" id=${'c2-group-' + rowId}>${title}</span>
+              <span class="c2-epicrow-id">${container.id}</span>
+            </button>`}
+        <span class="c2-epicrow-summary">${statusSummary}</span>
+        ${!standalone && html`
+          <span class="c2-progress" title=${`${closed}/${total} closed`}>
+            <span class="c2-progress-track" aria-hidden="true">
+              <span class="c2-progress-fill" style=${`width:${total ? Math.round((closed / total) * 100) : 0}%`}></span>
+            </span>
+            <span class="c2-progress-num">${closed}/${total}</span>
+          </span>`}
+        ${complete && history.length > 0 && !focusActive && html`
+          <button class="c2-mini c2-rowtoggle" aria-expanded=${bodyOpen}
+              onClick=${stopEvent(() => setExpanded(!expanded))}>
+            ${expanded ? 'Collapse' : `Show ${history.length} completed`}
+          </button>`}
+      </header>
+      ${bodyOpen && html`
+        <div class="c2-epicrow-body">
+          ${visible.length === 0
+            ? (focusActive
+              ? html`<div class="c2-lane-empty c2-gridwide">no matches</div>`
+              : html`<${LearnEmpty} compact k="epic"
+                  what=${'Nothing has been put inside "' + title + '" yet.'}
+                  why="Open any issue, set its Parent to this one, and it will appear here with a progress bar across the whole group." />`)
+            : visible.map((k) => html`<${Card} key=${k.id} issue=${k} />`)}
+          ${!focusActive && currentRemaining > 0 && html`
+            <button class="c2-reveal" onClick=${() => setCurrentLimit(currentLimit + REVEAL_BATCH)}>
+              Show ${Math.min(REVEAL_BATCH, currentRemaining)} more active
+              <span>${currentRemaining} remaining</span>
+            </button>`}
+          ${!focusActive && !showHistory && history.length > 0 && html`
+            <button class="c2-reveal c2-history-reveal" aria-expanded="false" onClick=${() => setHistoryOpen(true)}>
+              Show completed work
+              <span>${history.length} hidden</span>
+            </button>`}
+          ${!focusActive && showHistory && historyRemaining > 0 && html`
+            <button class="c2-reveal c2-history-reveal" onClick=${() => setHistoryLimit(historyLimit + REVEAL_BATCH)}>
+              Show ${Math.min(REVEAL_BATCH, historyRemaining)} more completed
+              <span>${historyRemaining} remaining</span>
+            </button>`}
+          ${!focusActive && showHistory && !complete && html`
+            <button class="c2-reveal c2-history-hide" aria-expanded="true" onClick=${() => setHistoryOpen(false)}>
+              Hide completed work
+              <span>return to current work</span>
+            </button>`}
+          ${focusRemaining > 0 && html`
+            <button class="c2-reveal" onClick=${() => {
+              setCurrentLimit(currentLimit + REVEAL_BATCH);
+              setHistoryLimit(historyLimit + REVEAL_BATCH);
+            }}>
+              Show ${Math.min(REVEAL_BATCH, focusRemaining)} more matches
+              <span>${focusRemaining} remaining</span>
+            </button>`}
+        </div>`}
     </section>`;
 }
 
@@ -143,11 +263,27 @@ function EpicRows({ focusSet }) {
       kids: focusSet ? children.filter((k) => focusSet.has(k.id)) : children,
       closed,
       total,
+      // Do not collapse a container that still has current work even if its
+      // own status was closed early. Empty closed containers and containers
+      // whose children are all closed are completed summaries.
+      complete: children.every((k) => k.status === 'closed') && (container.status === 'closed' || children.length > 0),
     }))
-    .filter((r) => !focusSet || r.kids.length > 0);
+    .filter((r) => !focusSet || r.kids.length > 0)
+    // Stable sort: preserve the project's container order within each bucket,
+    // but make users pass current work before they reach completed summaries.
+    .sort((a, b) => Number(a.complete) - Number(b.complete));
   const orphans = focusSet ? allOrphans.filter((o) => focusSet.has(o.id)) : allOrphans;
+  const hiddenHistory = groups.reduce((n, g) => n + g.closed, 0)
+    + allOrphans.filter((o) => o.status === 'closed').length;
+  const completedSections = rows.filter((r) => r.complete).length
+    + (allOrphans.length > 0 && allOrphans.every((o) => o.status === 'closed') ? 1 : 0);
   return html`
     <div class="c2-epicrows">
+      ${!focusSet && hiddenHistory > 0 && html`
+        <div class="c2-flow-scope">
+          <strong>Current work first</strong>
+          <span>${hiddenHistory} completed ${hiddenHistory === 1 ? 'item is' : 'items are'} available inside ${hiddenHistory === 1 ? 'its' : 'their'} groups${completedSections ? `; ${completedSections} completed ${completedSections === 1 ? 'group is' : 'groups are'} collapsed` : ''}.</span>
+        </div>`}
       ${focusSet && rows.length === 0 && orphans.length === 0 && html`<div class="c2-lane-empty">No issues match this focus.</div>`}
       ${/* Grouping is ON by default, so a project that has never made an epic
             lands here and sees a single "Standalone" pile with nothing
@@ -161,35 +297,13 @@ function EpicRows({ focusSet }) {
           why="An epic is an issue whose job is to hold other issues. Make one, set it as the parent of a few of these, and this view becomes one row per epic with its own progress bar."
           actionLabel="Create an epic"
           onAction=${() => { store.createOpen.value = true; }} />`}
-      ${rows.map(({ epic, kids, closed, total }) => html`
-        <section class=${'c2-epicrow ct-' + epic.issue_type} key=${epic.id}>
-          <header class="c2-epicrow-head" onClick=${() => selectIssue(epic.id)}>
-            ${StatusGlyph(epic)}
-            ${TypeGlyph(epic.issue_type)}
-            <span class="c2-epicrow-title">${epic.title}</span>
-            <span class="c2-epicrow-id">${epic.id}</span>
-            <span class="c2-progress" title=${`${closed}/${total} closed`}>
-              <span class="c2-progress-track">
-                ${Array.from({ length: Math.max(total, 1) }).map((_, n) => html`<span key=${n} class=${'c2-progress-cell' + (n < closed ? ' on' : '')}></span>`)}
-              </span>
-              <span class="c2-progress-num">${closed}/${total}</span>
-            </span>
-          </header>
-          <div class="c2-epicrow-body">
-            ${kids.length === 0
-              ? (focusSet
-                ? html`<div class="c2-lane-empty">no matches</div>`
-                : html`<${LearnEmpty} compact k="epic"
-                    what=${'Nothing has been put inside "' + epic.title + '" yet.'}
-                    why="Open any issue, set its Parent to this one, and it will appear here with a progress bar across the whole group." />`)
-              : kids.map((k) => html`<${Card} key=${k.id} issue=${k} />`)}
-          </div>
-        </section>`)}
+      ${rows.map(({ epic, kids, closed, total, complete }) => html`
+        <${IssueGroup} key=${epic.id} container=${epic} kids=${kids} closed=${closed} total=${total}
+          complete=${complete} focusActive=${!!focusSet} />`)}
       ${orphans.length > 0 && html`
-        <section class="c2-epicrow" key="__orphans">
-          <header class="c2-epicrow-head"><span class="c2-epicrow-title muted">Standalone</span><span class="c2-epicrow-id">${orphans.length}</span></header>
-          <div class="c2-epicrow-body">${orphans.map((k) => html`<${Card} key=${k.id} issue=${k} />`)}</div>
-        </section>`}
+        <${IssueGroup} key="__orphans" kids=${orphans} closed=${orphans.filter((k) => k.status === 'closed').length}
+          total=${orphans.length} complete=${orphans.every((k) => k.status === 'closed')}
+          focusActive=${!!focusSet} standalone />`}
     </div>`;
 }
 
