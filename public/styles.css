@@ -593,6 +593,11 @@ textarea.field { resize: vertical; }
   padding: 12px 14px; box-shadow: var(--shadow-sm);
 }
 .usage-row-quiet { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; }
+/* Wraps the provider name + its CLI version chips as one flex item so the
+   quiet rows (no-creds/token-expired/error) keep their existing two-item
+   space-between layout (name-ish stuff on the left, status message on the
+   right) even though the name side now sometimes carries extra chips. */
+.usage-row-quiet-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .usage-row-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; flex-wrap: wrap; }
 .usage-provider-name { font-weight: 650; font-size: 13.5px; }
 .usage-plan-chip {
@@ -600,6 +605,34 @@ textarea.field { resize: vertical; }
   border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 2px 8px; text-transform: capitalize;
 }
 .usage-asof { margin-left: auto; }
+
+/* Claude Code / Codex CLI version + "update available" chips (GET
+   /api/cli-versions), rendered next to the provider name in ProviderUsageRow
+   — the Live-quota-scale counterpart to the bd-version chips in the ops
+   strip below (.hub-chip / .hub-chip-amber). Deliberately NOT .hub-chip
+   reused here: that class is 12px mono with 5px/12px padding, sized for the
+   wide full-bleed ops-strip row, and would look oversized in this ~1/3-width
+   card next to the 11px .usage-plan-chip — so these match .usage-plan-chip's
+   scale instead. The amber update chip borrows .hub-chip-amber's exact
+   color-mix formula (including its hover state) so the two sections still
+   read as the same visual language, just at two different scales. */
+.usage-cli-chips { display: inline-flex; align-items: center; gap: 6px; }
+.usage-version-chip {
+  font-size: 11px; font-weight: 600; font-family: var(--font-mono); color: var(--text-dim);
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 2px 8px;
+}
+.usage-update-chip {
+  font: inherit; font-size: 11px; font-weight: 600; font-family: var(--font-mono); line-height: 1.3;
+  color: var(--amber); background: color-mix(in srgb, var(--amber) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--amber) 40%, transparent); border-radius: var(--radius-pill);
+  padding: 2px 8px; transition: all 0.15s var(--ease);
+}
+/* Only the <button> variant (a copyable updateHint) is clickable — the
+   <span> variant (no updateHint known) gets `cursor: help` instead, same as
+   .hub-chip-warn's non-interactive chip. */
+button.usage-update-chip { cursor: pointer; }
+button.usage-update-chip:hover { color: var(--amber); background: color-mix(in srgb, var(--amber) 20%, transparent); border-color: var(--amber); }
+span.usage-update-chip { cursor: help; }
 .usage-gauges { display: flex; flex-direction: column; gap: 9px; }
 .usage-gauge-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .usage-gauge-label { font-family: var(--font-mono); font-size: 11.5px; font-weight: 600; color: var(--text-dim); width: 30px; flex-shrink: 0; }

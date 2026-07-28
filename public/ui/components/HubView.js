@@ -3,7 +3,7 @@
 // metrics and (optional) git insights.
 import { html } from 'htm/preact';
 import { useEffect, useState } from 'preact/hooks';
-import { store, navigate, loadProjectStats, loadTmux, loadSchedule, loadProjectsGit, loadUsage, loadUsageHistory, loadBdVersion, toggleHubSection, toast } from '../store.js';
+import { store, navigate, loadProjectStats, loadTmux, loadSchedule, loadProjectsGit, loadUsage, loadUsageHistory, loadBdVersion, loadCliVersions, toggleHubSection, toast } from '../store.js';
 import { timeAgo, copyToClipboard } from './common.js';
 import { SessionRowCompact, HubTmuxHead } from './TmuxView.js';
 import { ProviderAttribution, formatTokens } from './UsageCharts.js';
@@ -356,27 +356,59 @@ function summarizeUsage(data) {
   return 'not detected';
 }
 
+// Version + "update available" chips for the Claude Code / Codex CLIs,
+// mirroring the bd-version chips in OpsStrip above but sized down to match
+// .usage-plan-chip (this row is ~1/3-width, not the full-bleed ops strip —
+// see the .usage-version-chip / .usage-update-chip comment in styles.css).
+// Reads store.cliVersions (GET /api/cli-versions, one-shot fetch — see the
+// QuotaSessionsRow effect below) and renders nothing at all when the tool
+// isn't installed, its info is missing, or the endpoint never came back —
+// exactly like a machine without Codex looks today.
+function CliVersionChips({ name }) {
+  const info = store.cliVersions.value[name];
+  if (!info || !info.installed) return null;
+  const behind = info.behind === true && info.latest;
+  const checkTitle = `Installed — from \`${name} --version\`` + (info.checkedAt ? ' · checked ' + timeAgo(info.checkedAt) : '');
+  return html`
+    <span class="usage-cli-chips">
+      <span class="usage-version-chip" title=${checkTitle}>🏷️ ${info.installed}</span>
+      ${behind && (info.updateHint
+        ? html`<button type="button" class="usage-update-chip" title=${`Update available: ${info.latest} — copy: ${info.updateHint}`}
+            onClick=${() => copyUpdateCommand(info.updateHint)}>⬆️ ${info.latest}</button>`
+        : html`<span class="usage-update-chip" title=${`A newer release (${info.latest}) is available`}>⬆️ ${info.latest}</span>`)}
+    </span>`;
+}
+
 function ProviderUsageRow({ name, data }) {
   const label = PROVIDER_LABEL[name] || name;
 
   if (!data || data.status === 'no-creds' || data.status === 'no-data') {
     return html`
       <div class="usage-row usage-row-quiet">
-        <span class="usage-provider-name">${label}</span>
+        <span class="usage-row-quiet-name">
+          <span class="usage-provider-name">${label}</span>
+          <${CliVersionChips} name=${name} />
+        </span>
         <span class="muted small">not detected</span>
       </div>`;
   }
   if (data.status === 'token-expired') {
     return html`
       <div class="usage-row usage-row-quiet">
-        <span class="usage-provider-name">${label}</span>
+        <span class="usage-row-quiet-name">
+          <span class="usage-provider-name">${label}</span>
+          <${CliVersionChips} name=${name} />
+        </span>
         <span class="muted small">${data.message || 'open Claude Code to refresh'}</span>
       </div>`;
   }
   if (data.status === 'error' || data.status === 'rate-limited') {
     return html`
       <div class="usage-row usage-row-quiet">
-        <span class="usage-provider-name">${label}</span>
+        <span class="usage-row-quiet-name">
+          <span class="usage-provider-name">${label}</span>
+          <${CliVersionChips} name=${name} />
+        </span>
         <span class="muted small">${data.status === 'rate-limited' ? (data.message || 'rate-limited; retrying') : 'usage unavailable'}</span>
       </div>`;
   }
@@ -385,6 +417,7 @@ function ProviderUsageRow({ name, data }) {
     <div class="usage-row">
       <div class="usage-row-head">
         <span class="usage-provider-name">${label}</span>
+        <${CliVersionChips} name=${name} />
         ${data.plan && html`<span class="usage-plan-chip"
           title=${name === 'claude'
             ? 'Plan as recorded at your last Claude Code login — run /login in Claude Code to refresh (usage percentages are computed server-side against your real limits either way)'
@@ -520,6 +553,11 @@ function AttributionBand() {
 function QuotaSessionsRow() {
   useEffect(() => {
     loadUsage();
+    // One-shot, NOT part of the 60s poll below — the server caches the CLI
+    // registry lookup for hours (same reasoning as loadBdVersion() in
+    // OpsStrip), so polling it on USAGE_POLL_MS would just re-read the same
+    // cached value every minute for no benefit.
+    loadCliVersions();
     const t = setInterval(loadUsage, USAGE_POLL_MS);
     return () => clearInterval(t);
   }, []);

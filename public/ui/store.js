@@ -159,6 +159,15 @@ export const store = {
   bdVersion: signal(null),
   bdVersionAvailable: signal(true),
 
+  // installed vs. latest Claude Code / Codex CLI versions (hub-level; GET
+  // /api/cli-versions). Keyed by tool name ('claude'/'codex') so a single
+  // signal backs both chips rendered inline in the Live quota rows — see
+  // loadCliVersions() below. Same "…Available" degrade convention as
+  // bdVersionAvailable above: unavailable on 401/404/network, never breaks
+  // the hub.
+  cliVersions: signal({}),
+  cliVersionsAvailable: signal(false),
+
   // hub sections (ops strip, tmux strip, …) collapsed on mobile — collapsed
   // state is a set of section ids, persisted per-browser. Only meaningful at
   // the <=768px breakpoint (see .hub-section-body.collapsed in styles.css);
@@ -695,6 +704,26 @@ export async function loadBdVersion({ force = false } = {}) {
   } catch (e) {
     store.bdVersionAvailable.value = false;
     console.warn('bd version check unavailable: ' + e.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Claude Code / Codex CLI version check (hub-level) — GET /api/cli-versions.
+// Same shape and same reasoning as loadBdVersion() above: `force` re-checks
+// past the server's own cache TTL, and this is a brand-new route (may 401 on
+// an unconfigured token or 404 on a server whose backend half hasn't landed
+// yet) so any failure just leaves the version/update chips off the Live quota
+// rows rather than surfacing anywhere — a machine that can't determine a
+// version looks exactly like one that never asked.
+// ---------------------------------------------------------------------------
+export async function loadCliVersions({ force = false } = {}) {
+  try {
+    const data = await apiGetRaw('/api/cli-versions' + (force ? '?refresh=1' : ''));
+    store.cliVersions.value = data.tools || {};
+    store.cliVersionsAvailable.value = true;
+  } catch (e) {
+    store.cliVersionsAvailable.value = false;
+    console.warn('CLI version check unavailable: ' + e.message);
   }
 }
 

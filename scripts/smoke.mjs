@@ -38,6 +38,7 @@ import {
 import { LINK_TYPES as SERVER_LINK_TYPES } from '../lib/bd.mjs';
 import { parseScopedLimits } from '../lib/usage.mjs';
 import { parseBdVersionStdout, compareVersions, isBehind } from '../lib/bdversion.mjs';
+import { parseCliVersionStdout } from '../lib/cliversions.mjs';
 
 function run(cmd, args, options = {}) {
   return execFileSync(cmd, args, {
@@ -1558,6 +1559,73 @@ try {
     } finally {
       bdvAuthServer.kill('SIGTERM');
       await new Promise((resolveP) => bdvAuthServer.once('exit', () => resolveP()));
+    }
+  }
+
+  // --- Claude Code / Codex CLI version check (lib/cliversions.mjs +
+  // GET /api/cli-versions) --------------------------------------------------
+  // Same shape as the bd version suite above: pure-function assertions first
+  // (no server, no network), then the live route against the real installed
+  // `claude`/`codex`, with the npm registry lookup redirected via
+  // BD_CONSOLE_NPM_REGISTRY_BASE at an unroutable port — never the real npm
+  // registry, so this suite is offline-safe.
+  {
+    // --- pure: `--version` stdout parsing -----------------------------------
+    assert(parseCliVersionStdout('2.1.220 (Claude Code)') === '2.1.220',
+      'parseCliVersionStdout should extract the version out of real `claude --version` stdout');
+    assert(parseCliVersionStdout('codex-cli 0.144.1') === '0.144.1',
+      'parseCliVersionStdout should extract the version out of real `codex --version` stdout, ignoring the codex-cli prefix');
+    assert(parseCliVersionStdout('v1.2.3') === '1.2.3',
+      'parseCliVersionStdout should tolerate a v-prefixed version');
+    assert(parseCliVersionStdout('garbage, no version here') === null,
+      'parseCliVersionStdout should return null on malformed stdout');
+    assert(parseCliVersionStdout('') === null, 'parseCliVersionStdout should return null on empty stdout');
+    assert(parseCliVersionStdout(null) === null, 'parseCliVersionStdout should return null on null stdout');
+    console.log('smoke ok (cli versions: --version stdout parsing — plain/prefixed/v-prefixed/malformed/empty/null)');
+
+    // --- API: real claude/codex, npm registry lookup pointed at an
+    // unreachable port ------------------------------------------------------
+    // Nothing listens on 127.0.0.1:1 — connections fail immediately
+    // (ECONNREFUSED) rather than needing a slow black-hole-route timeout,
+    // simulating "offline" cheaply. Must never throw, and must never lose
+    // the local "installed" fact just because the network is unreachable.
+    const clivConfigDir = join(tempRoot, 'cliversions-offline-config');
+    mkdirSync(clivConfigDir, { recursive: true });
+    const clivPort = await getPort();
+    const clivEnv = {
+      ...process.env,
+      BD_CONSOLE_CONFIG_DIR: clivConfigDir,
+      BD_CONSOLE_NPM_REGISTRY_BASE: 'http://127.0.0.1:1'
+    };
+    const clivServer = spawn(process.execPath, [serverEntry, '--host', '127.0.0.1', '--port', String(clivPort)], {
+      cwd: process.cwd(), env: clivEnv, stdio: ['ignore', 'pipe', 'pipe']
+    });
+    try {
+      await waitFor(`http://127.0.0.1:${clivPort}/api/meta`);
+      const res = await fetch(`http://127.0.0.1:${clivPort}/api/cli-versions`);
+      assert(res.status === 200, `/api/cli-versions should 200, got ${res.status}`);
+      const body = await res.json();
+      assert(body && body.tools && typeof body.tools === 'object',
+        `/api/cli-versions should return a tools object, got: ${JSON.stringify(body)}`);
+      for (const tool of ['claude', 'codex']) {
+        const info = body.tools[tool];
+        assert(info, `/api/cli-versions tools should include "${tool}", got: ${JSON.stringify(body.tools)}`);
+        assert(info.tool === tool, `${tool} info.tool should echo the tool key, got: ${info.tool}`);
+        assert(typeof info.label === 'string' && info.label,
+          `${tool} info should have a non-empty label, got: ${JSON.stringify(info.label)}`);
+        assert(info.latest === null, `${tool} latest should be null when the npm registry is unreachable, got: ${JSON.stringify(info.latest)}`);
+        assert(info.latestSource === null, `${tool} latestSource should be null when the npm registry is unreachable, got: ${info.latestSource}`);
+        assert(info.behind === null, `${tool} behind should be null when latest is unknown, got: ${info.behind}`);
+        assert(Array.isArray(info.binaries), `${tool} info.binaries should be an array, got: ${JSON.stringify(info.binaries)}`);
+        assert(typeof info.multipleBinaries === 'boolean', `${tool} info missing boolean multipleBinaries`);
+        assert(typeof info.checkedAt === 'number' && info.checkedAt > 0, `${tool} info missing numeric checkedAt`);
+        assert('installed' in info && 'installFlavor' in info && 'updateHint' in info && 'error' in info,
+          `${tool} info should have the full field set, got: ${JSON.stringify(Object.keys(info))}`);
+      }
+      console.log(`smoke ok (cli versions API: offline npm registry -> claude installed=${body.tools.claude.installed}, codex installed=${body.tools.codex.installed}, latest:null both, never throws)`);
+    } finally {
+      clivServer.kill('SIGTERM');
+      await new Promise((resolveP) => clivServer.once('exit', () => resolveP()));
     }
   }
 
