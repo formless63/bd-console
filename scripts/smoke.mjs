@@ -284,6 +284,28 @@ try {
   });
   assert(badParent.status === 400, `bad parent should 400, got ${badParent.status}`);
 
+  // Create validates the assignee with the SAME ASSIGNEE_RE as the
+  // set-assignee edit op — it must reject, not sanitize. This route used to
+  // strip disallowed characters and keep the remains, so "alice smith" was
+  // filed under "alicesmith": an assignee nobody typed and nobody can search
+  // for. A 400 is the only honest answer.
+  const badAssignee = await fetch(p('/create'), {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title: 'bad assignee', assignee: 'alice smith' })
+  });
+  assert(badAssignee.status === 400, `create with a malformed assignee should 400, got ${badAssignee.status}`);
+  const flagAssignee = await fetch(p('/create'), {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title: 'flag assignee', assignee: '--json' })
+  });
+  assert(flagAssignee.status === 400, `create with a flag-shaped assignee should 400, got ${flagAssignee.status}`);
+  const okAssignee = await fetch(p('/create'), {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title: 'assigned at birth', assignee: 'ann-marie.o@example.com' })
+  }).then((r) => r.json());
+  assert(okAssignee.ok && okAssignee.issue.assignee === 'ann-marie.o@example.com',
+    `create should keep a valid assignee verbatim, got ${JSON.stringify(okAssignee.issue && okAssignee.issue.assignee)}`);
+
   const noTitle = await fetch(p('/create'), {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ title: '   ' })
@@ -476,6 +498,53 @@ try {
 
   console.log(`smoke ok (supersede/duplicate): ${oldSpec}→${newSpec}, ${dupIssue}→${canonical}`);
 
+  // --- set-assignee: reassign AND clear -------------------------------------
+  // The clear is the half that's easy to get wrong, so it is pinned against
+  // the real binary: `bd update <id> --assignee ""` REMOVES the field (the key
+  // disappears from the JSONL export) rather than setting it to "". If a
+  // future bd changes that, this fails loudly instead of leaving a UI whose
+  // "Clear" button silently does nothing.
+  const owned = trimLastLine(run('bd', ['create', '--silent', '--type', 'task', '-p', '2', '--title', 'Owned work', '-a', 'alice'], { cwd: repoDir }));
+  const assigneeOf = async (issueId) => (await issuesNow()).find((i) => i.id === issueId)?.assignee;
+  assert(await assigneeOf(owned) === 'alice', `fixture should start assigned to alice; got ${await assigneeOf(owned)}`);
+
+  const reassign = await editJson({ id: owned, op: 'set-assignee', assignee: 'bob' });
+  assert(reassign.status === 200 && reassign.body.ok, `set-assignee failed: ${JSON.stringify(reassign.body)}`);
+  assert(await assigneeOf(owned) === 'bob', `reassign did not persist; got ${await assigneeOf(owned)}`);
+  assert(reassign.body.issue && reassign.body.issue.assignee === 'bob', 'set-assignee must echo the updated issue');
+
+  const unassign = await editJson({ id: owned, op: 'set-assignee', assignee: '' });
+  assert(unassign.status === 200 && unassign.body.ok, `set-assignee (clear) failed: ${JSON.stringify(unassign.body)}`);
+  const clearedAssignee = await assigneeOf(owned);
+  assert(!clearedAssignee, `clearing must leave no assignee; got ${JSON.stringify(clearedAssignee)}`);
+  assert(clearedAssignee !== '', 'bd must REMOVE the assignee, not set it to an empty string');
+
+  // Clearing an already-unassigned issue is a no-op, not an error.
+  assert((await editJson({ id: owned, op: 'set-assignee', assignee: '' })).status === 200, 'clearing an unassigned issue should be idempotent');
+  // An omitted `assignee` is the same as an explicit clear (String(undefined ?? '')).
+  assert((await editJson({ id: owned, op: 'set-assignee' })).status === 200, 'set-assignee with no assignee field should clear, not 500');
+
+  // Validation: nothing user-typed reaches the CLI unchecked. `--json` here is
+  // the interesting one — bd's flag parser accepts it as a literal VALUE
+  // (verified on v1.1.0), so without ASSIGNEE_RE it would become an assignee.
+  assert((await editJson({ id: owned, op: 'set-assignee', assignee: 'alice smith' })).status === 400, 'set-assignee must reject whitespace in a name');
+  assert((await editJson({ id: owned, op: 'set-assignee', assignee: '; rm -rf /' })).status === 400, 'set-assignee must reject shell metacharacters');
+  assert((await editJson({ id: owned, op: 'set-assignee', assignee: '--json' })).status === 400, 'set-assignee must reject a flag-shaped value');
+  assert((await editJson({ id: owned, op: 'set-assignee', assignee: '-a' })).status === 400, 'set-assignee must reject a short-flag-shaped value');
+  assert((await editJson({ id: owned, op: 'set-assignee', assignee: '-bob' })).status === 400, 'set-assignee must reject any leading hyphen');
+  assert((await editJson({ id: owned, op: 'set-assignee', assignee: 'a'.repeat(129) })).status === 400, 'set-assignee must reject an over-long name');
+  assert((await editJson({ id: 'not a valid id!', op: 'set-assignee', assignee: 'bob' })).status === 400, 'set-assignee must reject a bad issue id');
+  // The forms a real handle takes must all survive — including a hyphen in
+  // the MIDDLE, which is the whole reason the rule is "no leading '-'" rather
+  // than "no '-'".
+  for (const who of ['bob', 'bob.smith', 'bob_smith-2', 'ann-marie', 'bob@example.com']) {
+    assert((await editJson({ id: owned, op: 'set-assignee', assignee: who })).status === 200, `set-assignee must accept ${who}`);
+    assert(await assigneeOf(owned) === who, `set-assignee did not persist ${who}`);
+  }
+  await editJson({ id: owned, op: 'set-assignee', assignee: '' });
+
+  console.log(`smoke ok (set-assignee: reassign + clear removes the field + validation): ${owned}`);
+
   // --- tmux sessions API (hub-level, not project-scoped) ---------------------
   let tmuxPresent = true;
   try {
@@ -610,6 +679,127 @@ try {
     assert(/not found/i.test(finalJob.error || ''), `due job error should mention "not found", got: ${finalJob.error}`);
 
     console.log(`smoke ok (scheduler CRUD + tick-driven failure): future=${futureJobId}, due=${dueJobId}`);
+
+    // --- requeue a failed job -----------------------------------------------
+    // dueJobId is a GENUINELY failed job (its session never existed), which is
+    // exactly the state the retry feature exists for. Nothing below creates a
+    // tmux session; a requeue re-arms send-keys against a session that may or
+    // may not be there, and the response says which.
+    const retryPost = (body) => fetch(`http://127.0.0.1:${port}/api/schedule/retry`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const jobById = async (jobId) => (await fetch(`http://127.0.0.1:${port}/api/schedule`).then((r) => r.json())).jobs.find((j) => j.id === jobId);
+
+    const failedBefore = await jobById(dueJobId);
+    const retargetSession = `smoke-retarget-${Date.now()}`;
+    const retryRes = await retryPost({ id: dueJobId, runAt: Date.now() + 5 * 60 * 1000, session: retargetSession });
+    assert(retryRes.status === 200, `retry of a failed job should 200, got ${retryRes.status}`);
+    const retryBody = await retryRes.json();
+    assert(retryBody.ok && retryBody.job, `retry failed: ${JSON.stringify(retryBody)}`);
+    // The SAME row is re-armed — not cloned into a second job.
+    assert(retryBody.job.id === dueJobId, 'retry must re-arm the same job row, not create a new one');
+    assert(retryBody.job.status === 'pending', `a requeued job must be pending, got ${retryBody.job.status}`);
+    assert(retryBody.job.session === retargetSession, 'retry must honour a session retarget');
+    assert(retryBody.job.error === null, 'retry must clear the stale error');
+    assert(retryBody.job.fired_at === null, 'retry must clear the stale fired_at');
+    assert(retryBody.job.retry_count === 1, `retry_count should be 1, got ${retryBody.job.retry_count}`);
+    assert(retryBody.job.last_error === failedBefore.error, 'retry must preserve the failure it is retrying in last_error');
+    assert(retryBody.sessionLive === false, 'a fabricated session name must report sessionLive:false, never be created');
+    const jobCount = (await fetch(`http://127.0.0.1:${port}/api/schedule`).then((r) => r.json())).jobs.filter((j) => j.id === dueJobId).length;
+    assert(jobCount === 1, 'requeue must not leave a duplicate row behind');
+
+    // runAt is REQUIRED: the old run_at is in the past, so silently reusing it
+    // would fire the prompt on the very next tick.
+    assert((await retryPost({ id: dueJobId })).status === 400, 'retry without runAt must 400 rather than reuse the stale time');
+    assert((await retryPost({ id: dueJobId, runAt: 'soon' })).status === 400, 'retry with a non-integer runAt must 400');
+    assert((await retryPost({ id: dueJobId, runAt: Date.now(), session: 'bad name!' })).status === 400, 'retry with a bad session name must 400');
+    assert((await retryPost({ id: 999999, runAt: Date.now() })).status === 400, 'retry of an unknown job must 400');
+    // Already pending: nothing to retry.
+    assert((await retryPost({ id: dueJobId, runAt: Date.now() })).status === 400, 'retry of a pending job must 400');
+
+    // Cancelled IS retryable (the user is undoing their own withdrawal), and
+    // a requeue that fires against a still-missing session must fail again
+    // cleanly rather than resurrect anything.
+    await fetch(`http://127.0.0.1:${port}/api/schedule/cancel`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: dueJobId }),
+    });
+    const retryCancelled = await retryPost({ id: dueJobId, runAt: Date.now() }).then((r) => r.json());
+    assert(retryCancelled.ok, `retry of a cancelled job should be allowed: ${JSON.stringify(retryCancelled)}`);
+    assert(retryCancelled.job.retry_count === 2, `retry_count should accumulate, got ${retryCancelled.job.retry_count}`);
+
+    let refailed = null;
+    for (let i = 0; i < 30; i++) {
+      const job = await jobById(dueJobId);
+      if (job && job.status !== 'pending') { refailed = job; break; }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    assert(refailed, 'the requeued job was never processed by the scheduler');
+    assert(refailed.status === 'failed', `a requeue aimed at a missing session must fail again, got "${refailed.status}"`);
+    assert(/not found/i.test(refailed.error || ''), `re-failure should still name the missing session; got: ${refailed.error}`);
+
+    console.log(`smoke ok (schedule retry: same row re-armed, retarget, explicit runAt required, refires cleanly): job=${dueJobId}`);
+
+    // --- schedule.db migration onto a PRE-EXISTING database ------------------
+    // retry_count/last_error were added after the jobs table shipped, so every
+    // existing install has a schedule.db without them. The tests above only
+    // ever exercise a database this run created, which would pass forever even
+    // if the ALTERs were wrong. This one builds the ORIGINAL schema, drops a
+    // failed job in it, and then opens it through the real openScheduleDb():
+    // if the migration breaks, an upgrading user's scheduler view breaks with
+    // it, and that has to fail here rather than on their machine.
+    //
+    // It runs in a child process on its own BD_CONSOLE_CONFIG_DIR because
+    // CONFIG_DIR is resolved at module load — importing lib/schedule.mjs into
+    // this process would open the developer's REAL ~/.config/bd-console.
+    const migrateDir = join(tempRoot, 'sched-migrate');
+    const migrateScript = join(tempRoot, 'sched-migrate.mjs');
+    writeFileSync(migrateScript, `
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+
+const dir = process.env.BD_CONSOLE_CONFIG_DIR;
+mkdirSync(dir, { recursive: true });
+
+// The jobs table EXACTLY as it shipped before retry_count/last_error existed.
+const seed = new DatabaseSync(join(dir, 'schedule.db'));
+seed.exec(\`
+  CREATE TABLE jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    prompt TEXT NOT NULL,
+    session TEXT NOT NULL,
+    run_at INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at INTEGER NOT NULL,
+    fired_at INTEGER,
+    error TEXT
+  )
+\`);
+seed.prepare('INSERT INTO jobs (prompt, session, run_at, status, created_at, fired_at, error) VALUES (?, ?, ?, ?, ?, ?, ?)')
+  .run('legacy prompt', 'legacy-session', 1000, 'failed', 900, 1001, 'tmux session not found');
+seed.close();
+
+const { listJobs, retryJob } = await import(process.argv[2]);
+const before = (await listJobs())[0];
+const retried = await retryJob(before.id, { runAt: Date.now() + 60 * 60 * 1000 });
+console.log(JSON.stringify({ before, retried }));
+`);
+    const migrateOut = JSON.parse(trimLastLine(run(process.execPath, [migrateScript, resolve(join(process.cwd(), 'lib', 'schedule.mjs'))], {
+      env: { ...process.env, BD_CONSOLE_CONFIG_DIR: migrateDir },
+    })));
+    // The pre-existing row survives untouched, and the new columns arrive with
+    // usable defaults rather than as missing keys.
+    assert(migrateOut.before.prompt === 'legacy prompt', 'migration must preserve pre-existing job rows');
+    assert(migrateOut.before.error === 'tmux session not found', 'migration must preserve the stored error');
+    assert(migrateOut.before.retry_count === 0, `retry_count should default to 0 on a migrated row, got ${migrateOut.before.retry_count}`);
+    assert(migrateOut.before.last_error === null, `last_error should default to NULL on a migrated row, got ${JSON.stringify(migrateOut.before.last_error)}`);
+    // And a job that predates the feature is immediately retryable.
+    assert(migrateOut.retried.ok, `retrying a pre-migration job failed: ${JSON.stringify(migrateOut.retried)}`);
+    assert(migrateOut.retried.job.retry_count === 1, 'retry_count must increment on a migrated row');
+    assert(migrateOut.retried.job.last_error === 'tmux session not found', 'retry must move the migrated row\'s error into last_error');
+    assert(migrateOut.retried.job.status === 'pending' && migrateOut.retried.job.error === null, 'a retried migrated row must be pending with a cleared error');
+
+    console.log('smoke ok (schedule.db migration: additive ALTERs on a pre-existing db, legacy job retryable)');
   }
 
   // --- settings API ------------------------------------------------------------

@@ -20,6 +20,7 @@ import { renderMarkdown } from '../markdown.js';
 import {
   actClaim, actStart, actClose, actReopen, actPriority, actDefer,
   actAddLabel, actRemoveLabel, actSetParent, actAddBlocker, actRemoveBlocker,
+  actSetAssignee,
   delegateNow, delegateSchedule,
 } from './actions.js';
 import { TypeGlyph, Pip, PRI_LABEL, StatusGlyph, glyphStatus } from './ui.js';
@@ -150,6 +151,7 @@ function hasAnyRelationship(issue) {
 function Edit({ issue }) {
   const id = issue.id;
   const [label, setLabel] = useState('');
+  const [assignee, setAssignee] = useState(issue.assignee || '');
   const [parent, setParent] = useState(parentOf(issue) || '');
   const [blk, setBlk] = useState('');
   const [defer, setDefer] = useState(issue.defer_until || '');
@@ -170,6 +172,18 @@ function Edit({ issue }) {
       <div class="c2-edit-row">
         <span class="c2-edit-k">Priority</span>
         ${[0, 1, 2, 3, 4].map((p) => html`<button key=${p} class=${'c2-mini' + (issue.priority === p ? ' on' : '')} onClick=${run(() => actPriority(id, p))}>${PRI_LABEL[p]}</button>`)}
+      </div>
+
+      ${/* Claim sets the assignee to you and nothing here could change it
+            afterwards — reassigning or handing an issue back meant editing it
+            from a terminal. `clear` is its own control for the same reason
+            Parent's is: unassigning is an intent, not an empty save. */ ''}
+      <div class="c2-edit-row">
+        <span class="c2-edit-k">Assignee</span>
+        <input class="c2-edit-input" placeholder="unassigned" value=${assignee} onInput=${(e) => setAssignee(e.target.value)}
+          onKeyDown=${(e) => { if (e.key === 'Enter') run(() => actSetAssignee(id, assignee.trim()))(); }} />
+        <button class="c2-mini" disabled=${assignee.trim() === (issue.assignee || '')} onClick=${run(() => actSetAssignee(id, assignee.trim()))}>set</button>
+        <button class="c2-mini" disabled=${!issue.assignee} onClick=${run(() => { setAssignee(''); return actSetAssignee(id, ''); })}>clear</button>
       </div>
 
       <div class="c2-edit-row wrap">
