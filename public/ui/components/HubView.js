@@ -364,14 +364,41 @@ function summarizeUsage(data) {
 // QuotaSessionsRow effect below) and renders nothing at all when the tool
 // isn't installed, its info is missing, or the endpoint never came back —
 // exactly like a machine without Codex looks today.
+//
+// multipleBinaries (a shadowed second install of the same CLI on PATH) is
+// folded INTO the version chip rather than given a fourth sibling chip. At
+// this card's real width — ~350px, one 1fr column of .hub-qs-grid — the codex
+// row already runs name + version + update + plan edge to edge, and a
+// standalone "⚠️ multiple on PATH" chip pushed the head from one line to
+// three and became the widest, loudest thing on a card whose entire job is
+// quota (measured, not guessed). Folding it in also matches what the warning
+// actually says: it is a statement ABOUT which binary produced that version
+// string, not an independent fact. The glyph vocabulary from the ops strip is
+// preserved exactly — 🏷️ still means "version", ⚠️ still means "multiple on
+// PATH"; only the packaging changes, because there is no room for two chips.
+// The full binary list (active first) lives in the title, and the chip is
+// never emoji-alone: it carries the version text, a dashed border, and
+// cursor:help, the same "hover me, I'm not a button" language .hub-chip-warn
+// uses in the ops strip.
 function CliVersionChips({ name }) {
   const info = store.cliVersions.value[name];
   if (!info || !info.installed) return null;
   const behind = info.behind === true && info.latest;
+  const bins = info.binaries || [];
+  const multi = info.multipleBinaries === true && bins.length > 1;
   const checkTitle = `Installed — from \`${name} --version\`` + (info.checkedAt ? ' · checked ' + timeAgo(info.checkedAt) : '');
+  const multiTitle = multi
+    ? `⚠ ${bins.length} \`${name}\` binaries on PATH — the first one is what actually runs:\n`
+      + bins.map((b, i) => `${i + 1}. ${b}${i === 0 ? '  (active)' : '  (shadowed)'}`).join('\n')
+      + '\n\nThe version above is the active one. A shadowed install can update without anything here changing.'
+    : '';
   return html`
     <span class="usage-cli-chips">
-      <span class="usage-version-chip" title=${checkTitle}>🏷️ ${info.installed}</span>
+      ${/* No newline between the tag and the closing brace: htm would keep
+            the indentation as leading text inside the pill. */ ''}
+      <span class=${'usage-version-chip' + (multi ? ' has-multi' : '')}
+        title=${multi ? checkTitle + '\n\n' + multiTitle : checkTitle}
+      >🏷️ ${info.installed}${multi && html`<span class="usage-multi-mark" aria-hidden="true">⚠️</span>`}</span>
       ${behind && (info.updateHint
         ? html`<button type="button" class="usage-update-chip" title=${`Update available: ${info.latest} — copy: ${info.updateHint}`}
             onClick=${() => copyUpdateCommand(info.updateHint)}>⬆️ ${info.latest}</button>`

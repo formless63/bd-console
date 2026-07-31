@@ -112,9 +112,13 @@
   z-index: 20;
 }
 .c2-header-top { display: flex; align-items: center; gap: 20px; }
-.c2-hublink { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex: none;
+/* Icon-only "go somewhere" links: the hub link on the left of the header and
+   the settings gear on the right. Deliberately one rule, not two lookalikes —
+   they are the same affordance pointing at different destinations, and the
+   header reads as a system only while they stay pixel-identical. */
+.c2-hublink, .c2-setlink { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex: none;
   border: 1px solid var(--c2-line); border-radius: var(--radius-sm); color: var(--text-dim); text-decoration: none; font-size: 15px; }
-.c2-hublink:hover { color: var(--c2-neon); border-color: var(--c2-neon); }
+.c2-hublink:hover, .c2-setlink:hover { color: var(--c2-neon); border-color: var(--c2-neon); }
 .c2-brand { display: flex; align-items: center; gap: 10px; min-width: 190px; }
 .c2-brand-mark { color: var(--c2-neon); font-size: 20px; filter: drop-shadow(0 0 6px color-mix(in srgb, var(--c2-neon) 55%, transparent)); }
 .c2-brand-txt { display: flex; flex-direction: column; line-height: 1.1; }
@@ -748,7 +752,7 @@ select.c2-linktype { flex: 0 0 auto; max-width: 140px; }
   .c2-brand-name { max-width: 46vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .c2-brand-sub { display: none; }
   .c2-omni { order: 3; flex-basis: 100%; max-width: none; }
-  .c2-hublink { min-width: 44px; min-height: 44px; }
+  .c2-hublink, .c2-setlink { min-width: 44px; min-height: 44px; }
   .c2-header-right { gap: 6px; }
   .c2-classic { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; padding: 6px 10px; }
   .c2-classic .c2-btn-label { display: none; }
