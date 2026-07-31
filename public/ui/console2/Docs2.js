@@ -4,12 +4,21 @@
 // doc:<path>-labelled issue prefilled with the quoted selection.
 import { html } from 'htm/preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { store, openDoc, loadDocs } from '../store.js';
+import { store, openDoc, loadDocs, toast, requireToken } from '../store.js';
+import { AuthError } from '../api.js';
+import { createDoc, docFolders, newDocPath, newDocProblem, newDocTemplate } from '../docCreate.js';
 import { c2 } from './state.js';
 import { renderMarkdown } from '../markdown.js';
 import { saveDoc, capturePromoted } from './actions.js';
 import { LearnEmpty } from '../components/ConceptTip.js';
 import { docGroup, groupDocs, starterDocs } from './docsModel.js';
+
+// A one-shot baton, deliberately a plain module variable rather than a signal:
+// a doc that was JUST created should open straight into the editor, but the
+// reset-on-path-change effect below unconditionally leaves edit mode. Handing
+// the path over instead of racing that effect keeps the ordering decided
+// rather than lucky.
+let pendingEditPath = null;
 
 const RECENT_DOCS_KEY = 'bd_c2_recent_docs';
 function loadRecentDocs(projectId) {
@@ -25,7 +34,60 @@ function saveRecentDoc(projectId, path) {
   } catch { return [path]; }
 }
 
-function Tree({ pick }) {
+// "New doc" (bd-console-09n). The folder is chosen from folders that already
+// hold docs — that keeps the server's "parent directory must exist" rule
+// satisfied without this dialog ever creating directories, and it means the
+// normal path through the form cannot express a traversal at all. The server
+// re-validates regardless (resolveDocPath + `create: true`'s no-overwrite
+// rule); nothing here is load-bearing for safety.
+function NewDoc2({ onCancel, onCreated }) {
+  const docs = store.docs.value;
+  const folders = docFolders(docs, store.meta.value?.docRoots ?? null);
+  const [folder, setFolder] = useState(folders[0] ?? '');
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const path = newDocPath(folder, name);
+  const problem = name.trim() ? newDocProblem(folder, name, docs) : null;
+
+  const submit = async (e) => {
+    e.preventDefault();
+    const p = newDocProblem(folder, name, docs);
+    if (p) { setError(p); return; }
+    setBusy(true);
+    setError(null);
+    try {
+      await createDoc(path, newDocTemplate(name));
+      await loadDocs();
+      toast('Created ' + path);
+      onCreated(path);
+    } catch (err) {
+      if (err instanceof AuthError) requireToken('A write token is required to create a document.');
+      setError(err.message || 'Could not create the document.');
+      setBusy(false);
+    }
+  };
+
+  return html`
+    <form class="c2-newdoc" onSubmit=${submit}>
+      <span class="c2-hud-label">New document</span>
+      <div class="c2-edit-row wrap">
+        <select class="c2-edit-input c2-newdoc-folder" aria-label="Folder" value=${folder} onChange=${(e) => setFolder(e.target.value)}>
+          ${folders.map((f) => html`<option key=${f} value=${f}>${f === '' ? '(project root)' : f + '/'}</option>`)}
+        </select>
+        <input class="c2-edit-input" aria-label="File name" placeholder="new-doc.md" autofocus
+          value=${name} onInput=${(e) => { setName(e.target.value); setError(null); }} />
+      </div>
+      <div class="c2-newdoc-preview">${path ? 'Creates ' + path : 'Creates …'}</div>
+      ${(error || problem) && html`<div class="c2-newdoc-error" role="alert">${error || problem}</div>`}
+      <div class="c2-edit-row c2-newdoc-actions">
+        <button class="c2-mini" type="button" onClick=${onCancel}>Cancel</button>
+        <button class="c2-mini accent" type="submit" disabled=${busy || !name.trim()}>${busy ? 'Creating…' : '＋ Create document'}</button>
+      </div>
+    </form>`;
+}
+
+function Tree({ pick, openNew }) {
   const q = (store.docFilter.value || '').toLowerCase();
   const groups = useMemo(() => groupDocs(store.docs.value, q), [store.docs.value, q]);
   const matchCount = groups.reduce((n, group) => n + group.items.length, 0);
@@ -48,6 +110,7 @@ function Tree({ pick }) {
       <div class="c2-doctree-bar">
         <input class="c2-docfilter" type="search" aria-label="Search all project documents" placeholder="Search ${store.docs.value.length} docs…" value=${store.docFilter.value}
           onInput=${(e) => (store.docFilter.value = e.target.value)} />
+        <button class="c2-mini" title="Create a new document" onClick=${() => { c2.docTreeOpen.value = false; openNew(); }}>＋ new</button>
         <button class="c2-doctree-close" aria-label="Close doc list" title="Close" onClick=${() => (c2.docTreeOpen.value = false)}>✕</button>
       </div>
       <div class="c2-doctree-summary">${q ? `${matchCount} matches` : `${store.docs.value.length} documents · grouped by folder`}</div>
@@ -166,7 +229,7 @@ function Editor({ path }) {
     </div>`;
 }
 
-function DocsLanding({ pick, recentPaths }) {
+function DocsLanding({ pick, recentPaths, openNew }) {
   const docs = store.docs.value;
   const byPath = new Map(docs.map((d) => [d.path, d]));
   const recent = recentPaths.map((path) => byPath.get(path)).filter(Boolean).slice(0, 5);
@@ -184,7 +247,10 @@ function DocsLanding({ pick, recentPaths }) {
       <header class="c2-doc-home-head">
         <div><span class="c2-kicker">Project knowledge</span><h2>Documents</h2>
           <p>${docs.length} markdown files, grouped by folder so plans and reference material stay findable.</p></div>
-        <button class="c2-mini accent" onClick=${() => (c2.docTreeOpen.value = true)}>Browse all ${docs.length}</button>
+        <div class="c2-doc-home-actions">
+          <button class="c2-mini" onClick=${openNew}>＋ New document</button>
+          <button class="c2-mini accent" onClick=${() => (c2.docTreeOpen.value = true)}>Browse all ${docs.length}</button>
+        </div>
       </header>
       <div class="c2-doc-home-grid">
         ${recent.length ? html`<section class="c2-doc-home-section"><h3>Recently opened</h3><div>${recent.map(docButton)}</div></section>` : ''}
@@ -209,16 +275,25 @@ export function Docs2() {
   const hasDocs = store.docs.value.length > 0;
   const loadingDocs = store.docsLoading.value;
   const [recentPaths, setRecentPaths] = useState(() => loadRecentDocs(store.projectId.value));
+  const [newOpen, setNewOpen] = useState(false);
 
   useEffect(() => { setRecentPaths(loadRecentDocs(store.projectId.value)); }, [store.projectId.value]);
   const pick = (nextPath) => {
     setRecentPaths(saveRecentDoc(store.projectId.value, nextPath));
     openDoc(nextPath);
   };
+  const onCreated = (created) => {
+    // A doc you just made is a doc you want to write in, so it opens in the
+    // editor rather than as an empty read-only page — see pendingEditPath.
+    pendingEditPath = created;
+    setNewOpen(false);
+    pick(created);
+  };
 
   // reset editor state when switching docs
   useEffect(() => {
-    c2.docEditing.value = false;
+    c2.docEditing.value = pendingEditPath !== null && pendingEditPath === path;
+    pendingEditPath = null;
     c2.docDirty.value = false;
     c2.docPreview.value = false;
     c2.promoteOpen.value = false;
@@ -230,15 +305,21 @@ export function Docs2() {
 
   return html`
     <div class="c2-docs">
-      <${Tree} pick=${pick} />
+      <${Tree} pick=${pick} openNew=${() => setNewOpen(true)} />
       <section class="c2-doc-main">
+        ${newOpen && html`<${NewDoc2} onCancel=${() => setNewOpen(false)} onCreated=${onCreated} />`}
         ${!path ? (hasDocs
-          ? html`<${DocsLanding} pick=${pick} recentPaths=${recentPaths} />`
+          ? html`<${DocsLanding} pick=${pick} recentPaths=${recentPaths} openNew=${() => setNewOpen(true)} />`
           : html`
             <div class="c2-map-emptywrap">
+              <div class="c2-newdoc-empty">
               <${LearnEmpty} icon="❐" title="No documents here"
                 what=${'This project has no markdown files for bd-console to show' + (loadingDocs ? ' yet…' : '.')}
-                why="Add a README.md or a docs/ folder to the project and they will appear here — with the ability to turn any paragraph you select straight into an issue." />
+                why="Write one here, or add a README.md / docs/ folder to the project — either way they appear in this list, with the ability to turn any paragraph you select straight into an issue." />
+              ${!newOpen && html`<div class="c2-newdoc-cta">
+                <button class="c2-mini accent" onClick=${() => setNewOpen(true)}>＋ Write the first document</button>
+              </div>`}
+              </div>
             </div>`)
           : html`
             <div class="c2-doc-bar">

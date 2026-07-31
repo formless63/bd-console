@@ -19,6 +19,9 @@ import {
 // therefore importable here exactly like relationships.js above.
 import { buildGraph, mapScopeIssues } from '../public/ui/console2/graphModel.js';
 import { docGroup, groupDocs, starterDocs } from '../public/ui/console2/docsModel.js';
+// "New doc" derivations (bd-console-09n) — same import-free contract as
+// relationships.js above; docCreate.js's own header calls this out by name.
+import { newDocName, newDocPath, docFolders, newDocProblem, newDocTemplate } from '../public/ui/docCreate.js';
 // Pure formula derivations (docs/molecules-design.md) — same import-free
 // contract as relationships.js above.
 import {
@@ -1136,6 +1139,84 @@ console.log(JSON.stringify({ before, retried }));
   assert(docNonMd.status === 400, `doc non-.md path should 400, got ${docNonMd.status}`);
 
   console.log('smoke ok (doc editing: save/reread + new-file + traversal/non-md rejection)');
+
+  // --- bd-console-09n: "New doc" pure derivations (docCreate.js) ------------
+  // Signal-free like relationships.js/formulas.js above, so assertable here
+  // without a browser — see docCreate.js's own header for the contract.
+  assert(newDocName('plan') === 'plan.md' && newDocName('plan.md') === 'plan.md',
+    `newDocName must append .md exactly once; got ${JSON.stringify([newDocName('plan'), newDocName('plan.md')])}`);
+  assert(newDocName('  ') === '', 'a blank name must yield no filename');
+
+  assert(newDocPath('docs', 'plan') === 'docs/plan.md' && newDocPath('', 'plan') === 'plan.md',
+    `newDocPath must join folder + name, and omit a leading slash for the root; got ${JSON.stringify([newDocPath('docs', 'plan'), newDocPath('', 'plan')])}`);
+  assert(newDocPath('/docs/', 'plan') === 'docs/plan.md',
+    'newDocPath must strip stray leading/trailing slashes from the folder');
+
+  const newDocFixtureDocs = [{ path: 'README.md' }, { path: 'docs/plan.md' }, { path: 'notes/2026-07.md' }];
+  const autoFolders = docFolders(newDocFixtureDocs);
+  assert(autoFolders.includes('') && autoFolders.includes('docs') && autoFolders.includes('notes'),
+    `docFolders (auto-discovery) should offer the project root plus every existing ancestor folder; got ${JSON.stringify(autoFolders)}`);
+  const rootedFolders = docFolders(newDocFixtureDocs, ['docs']);
+  assert(rootedFolders.includes('docs') && !rootedFolders.includes('notes') && !rootedFolders.includes(''),
+    `THE BUG this guards: a configured docRoots must exclude folders outside it (and the bare root, unless it IS a root) — resolveDocPath() would reject a write there anyway; got ${JSON.stringify(rootedFolders)}`);
+
+  assert(newDocProblem('docs', '', newDocFixtureDocs) === 'Give the document a name.',
+    'an empty name must be refused with a name-specific reason');
+  assert(newDocProblem('docs', 'sub/evil', newDocFixtureDocs) !== null,
+    'a name containing a slash must be refused (the folder comes from the picker, not free text)');
+  assert(/letters, numbers/.test(newDocProblem('docs', '$$$', newDocFixtureDocs) || ''),
+    'a name with no usable characters must be refused');
+  assert(/cannot contain "\.\."/.test(newDocProblem('docs', 'a..b', newDocFixtureDocs) || ''),
+    'a name containing ".." must be refused even when it otherwise matches the character class');
+  assert(/already exists/.test(newDocProblem('docs', 'plan', newDocFixtureDocs) || ''),
+    'a name colliding with an existing doc must be refused, telling the author to open it instead');
+  assert(newDocProblem('docs', 'brand-new', newDocFixtureDocs) === null,
+    'a fresh, well-formed name must be accepted');
+
+  assert(newDocTemplate('new') === '# New\n\n', `newDocTemplate should title-case a simple stem; got ${JSON.stringify(newDocTemplate('new'))}`);
+  assert(newDocTemplate('release-notes.md') === '# Release notes\n\n',
+    `newDocTemplate should strip .md and humanize dashes/underscores; got ${JSON.stringify(newDocTemplate('release-notes.md'))}`);
+  assert(newDocTemplate('') === '# Untitled\n\n', 'newDocTemplate must fall back to Untitled for an empty stem');
+
+  console.log('smoke ok (docCreate.js derivations: name/path joining, folder offering, save-gate reasons, starter template)');
+
+  // --- bd-console-09n: create-only doc write route (`create: true`) --------
+  // Same POST /api/doc route the editor uses; `create: true` is what lets the
+  // "New doc" dialog land a file without ever risking an overwrite — see the
+  // /api/doc POST handler in lib/routes.mjs.
+  const docCreateNew = await fetch(p('/doc'), {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: 'docs/created-by-smoke.md', content: '# Created\n\n', create: true })
+  }).then((r) => r.json());
+  assert(docCreateNew.ok && docCreateNew.path === 'docs/created-by-smoke.md',
+    `create:true on a fresh path should succeed: ${JSON.stringify(docCreateNew)}`);
+  const docCreateReread = await fetch(p(`/doc?path=${encodeURIComponent('docs/created-by-smoke.md')}`)).then((r) => r.json());
+  assert(docCreateReread.content === '# Created\n\n', 'doc created with create:true did not persist');
+
+  // THE BUG this guards: `create: true` must refuse to land on a path that
+  // already has content, and must not have touched that content on the way
+  // to refusing.
+  const docCreateConflict = await fetch(p('/doc'), {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: 'docs/created-by-smoke.md', content: '# Overwritten\n', create: true })
+  });
+  assert(docCreateConflict.status === 409, `create:true against an existing path should 409, got ${docCreateConflict.status}`);
+  const docCreateConflictBody = await docCreateConflict.json();
+  assert(/already exists/i.test(docCreateConflictBody.error || ''), `409 body should explain the conflict: ${JSON.stringify(docCreateConflictBody)}`);
+  const docCreateUnchanged = await fetch(p(`/doc?path=${encodeURIComponent('docs/created-by-smoke.md')}`)).then((r) => r.json());
+  assert(docCreateUnchanged.content === '# Created\n\n', 'a 409 create:true attempt must not have touched the existing content');
+
+  // create:true does not bypass ordinary path validation — resolveDocPath()
+  // rejects a traversal before the create/409 check ever runs, so this must
+  // 400 like any other traversal attempt, not fall through as a "new" file.
+  const docCreateTraversal = await fetch(p('/doc'), {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: '../outside-create.md', content: 'nope', create: true })
+  });
+  assert(docCreateTraversal.status === 400, `create:true traversal escape should 400, got ${docCreateTraversal.status}`);
+  assert(!existsSync(join(tempRoot, 'outside-create.md')), 'create:true traversal must not have written outside the workspace');
+
+  console.log('smoke ok (create-only doc route: fresh-path success, existing-path 409 without overwrite, traversal still rejected)');
 
   // --- daemon lifecycle: `start` always supersedes (Feature 1) --------------
   // BD_CONSOLE_PERSIST=0 is mandatory here: it forces the plain-spawn path so

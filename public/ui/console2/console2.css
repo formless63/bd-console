@@ -623,6 +623,20 @@
 .c2-promote-form .c2-edit-row { justify-content: space-between; }
 .c2-doctree-close, .c2-doctree-toggle, .c2-promote-toggle { display: none; }
 
+/* New-doc form (bd-console-09n) — same inline-panel treatment as the promote
+   form above, in the accent hue rather than the synergy one because it
+   creates rather than extracts. Sits at the top of .c2-doc-main. */
+.c2-newdoc { display: flex; flex-direction: column; gap: 8px; margin: 0 0 14px; padding: 12px;
+  background: color-mix(in srgb, var(--c2-accent) 8%, var(--c2-glass-3)); backdrop-filter: var(--c2-blur);
+  border: 1px solid color-mix(in srgb, var(--c2-accent) 34%, var(--c2-line-2)); border-radius: var(--c2-r-card); }
+.c2-newdoc-folder { flex: 0 1 40%; }
+.c2-newdoc-preview { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
+.c2-newdoc-error { font-size: 12px; color: var(--red); }
+.c2-newdoc-actions { justify-content: flex-end; }
+.c2-newdoc-empty { display: flex; flex-direction: column; align-items: center; }
+.c2-newdoc-cta { display: flex; justify-content: center; margin-top: 14px; }
+.c2-doc-home-actions { display: flex; gap: 8px; align-items: center; }
+
 /* Markdown */
 .c2-md { font-family: var(--font-body); font-size: 14px; line-height: 1.65; color: var(--text); max-width: 72ch; }
 .c2-md h1, .c2-md h2, .c2-md h3 { font-family: var(--font-display); line-height: 1.25; margin: 1.1em 0 0.4em; }
