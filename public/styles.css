@@ -645,6 +645,16 @@ textarea.field { resize: vertical; }
 button.usage-update-chip { cursor: pointer; }
 button.usage-update-chip:hover { color: var(--amber); background: color-mix(in srgb, var(--amber) 20%, transparent); border-color: var(--amber); }
 span.usage-update-chip { cursor: help; }
+/* multipleBinaries (GET /api/cli-versions) folded into the version chip
+   instead of a fourth sibling chip — see the CliVersionChips comment in
+   HubView.js for why (this card is ~1/3 viewport wide; a standalone
+   "⚠️ multiple on PATH" chip broke the codex head onto three lines and
+   outweighed the gauges). Dashed border + cursor:help is the same
+   "hover me, I'm not a button" language as .hub-chip-warn in the ops strip,
+   and the chip still shows the version text, so the state is never signalled
+   by color or emoji alone. */
+.usage-version-chip.has-multi { border-style: dashed; border-color: var(--border-2); cursor: help; }
+.usage-multi-mark { margin-left: 5px; font-size: 9.5px; }
 .usage-gauges { display: flex; flex-direction: column; gap: 9px; }
 .usage-gauge-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .usage-gauge-label { font-family: var(--font-mono); font-size: 11.5px; font-weight: 600; color: var(--text-dim); width: 30px; flex-shrink: 0; }
