@@ -12,7 +12,9 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import {
   store, loadSchedule, loadTmux, scheduleCreate, scheduleCancel,
   loadPrompts, savePrompt, deletePrompt, markPromptUsed, loadUsage,
+  toast, requireToken,
 } from '../store.js';
+import { apiPostRaw, AuthError } from '../api.js';
 import { relTime, cwdTail } from './common.js';
 
 const POLL_MS = 5000;
@@ -284,32 +286,134 @@ function CreateForm() {
     </div>`;
 }
 
-function JobRow({ job, expanded, onToggle, onCancel }) {
+// ---------------------------------------------------------------------------
+// Requeue — POST /api/schedule/retry.
+//
+// Hub-level, so it goes through apiPostRaw: apiPost rewrites /api/… into
+// /api/p/<project>/… whenever a project is selected, and the scheduler routes
+// are matched on the unprefixed path.
+async function scheduleRetry(id, { runAt, session }) {
+  try {
+    const data = await apiPostRaw('/api/schedule/retry', { id, runAt, session });
+    await loadSchedule();
+    // The server tells us whether the target session exists RIGHT NOW. Saying
+    // so at requeue time is the whole difference between "queued" and "queued,
+    // and it is going to fail exactly the way it just did".
+    if (data.sessionLive === false) {
+      toast(`Requeued #${id} — but "${session}" isn't running right now`, 'warn', 6000);
+    } else {
+      toast('Requeued scheduled prompt #' + id);
+    }
+    return data;
+  } catch (e) {
+    if (e instanceof AuthError) requireToken('A write token is required for that.');
+    throw e;
+  }
+}
+
+// The inline requeue form on a failed/cancelled row.
+//
+// It always asks WHEN, and never reuses the job's original time: a failed
+// job's run_at is in the past, so re-arming it as-is would drop the prompt
+// into a live agent seconds later. "Send now" is offered as an explicit
+// button — immediate delivery is a fine thing to want, it just has to be
+// chosen rather than inherited.
+//
+// The session is editable and prefilled with the original, because the
+// dominant reason a scheduled prompt fails is that its session was gone by
+// the time it fired. Retargeting is the actual fix; nothing here creates a
+// session, and a target that isn't running is warned about, not blocked —
+// the list is a 5s poll, and a session scheduled for tomorrow morning has all
+// night to come back.
+function RequeueBox({ job, sessions, onDone }) {
+  const [session, setSession] = useState(job.session || '');
+  const [runAtLocal, setRunAtLocal] = useState(toLocalInputValue(new Date(Date.now() + 5 * 60 * 1000)));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const usage = store.usage.value;
+  const resetPresets = usageResetPresets(usage);
+
+  const gone = !!session.trim() && sessions.length > 0 && !sessions.some((s) => s.name === session.trim());
+
+  const fire = async (runAt) => {
+    if (!session.trim()) { setErr('Choose a target session'); return; }
+    setBusy(true); setErr('');
+    try {
+      await scheduleRetry(job.id, { runAt, session: session.trim() });
+      onDone();
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  };
+  const later = () => {
+    const ms = new Date(runAtLocal).getTime();
+    if (!Number.isFinite(ms)) { setErr('Pick a valid run time'); return; }
+    fire(ms);
+  };
+
+  return html`
+    <div class="sched-requeue">
+      <label class="dialog-field"><span>send to</span>
+        <${SessionCombobox} value=${session} onChange=${setSession} sessions=${sessions} />
+        ${gone && html`<span class="form-warn">Session "${session.trim()}" is not running right now — this will fail again unless it is back by then.</span>`}
+      </label>
+      <label class="dialog-field"><span>run at</span>
+        <input class="field" type="datetime-local" value=${runAtLocal} onInput=${(e) => setRunAtLocal(e.target.value)} />
+        <div class="preset-row">
+          ${RUN_AT_PRESETS.map((p) => html`
+            <button key=${p.label} type="button" class="btn btn-xs btn-ghost" onClick=${() => setRunAtLocal(toLocalInputValue(p.fn()))}>${p.label}</button>`)}
+          ${resetPresets.map((p) => html`
+            <button key=${p.label} type="button" class="btn btn-xs btn-ghost" onClick=${() => setRunAtLocal(toLocalInputValue(p.fn()))}>${p.label}</button>`)}
+        </div>
+      </label>
+      <div class="sched-requeue-actions">
+        ${err && html`<span class="form-err">${err}</span>`}
+        <button type="button" class="btn btn-xs btn-ghost" disabled=${busy} onClick=${onDone}>Cancel</button>
+        <button type="button" class="btn btn-xs" disabled=${busy || !session.trim()} onClick=${() => fire(Date.now())}>Send now</button>
+        <button type="button" class="btn btn-xs btn-accent" disabled=${busy || !session.trim()} onClick=${later}>Requeue</button>
+      </div>
+    </div>`;
+}
+
+function JobRow({ job, expanded, onToggle, onCancel, sessions, requeueOpen, onRequeue, onRequeueDone }) {
   const status = job.status;
   const long = (job.prompt || '').length > 140;
   const shown = expanded || !long ? job.prompt : job.prompt.slice(0, 140) + '…';
+  // A job that already went out is deliberately NOT requeueable — re-sending a
+  // delivered prompt duplicates work inside a session someone is watching.
+  // Cancelled is, because that outcome was the user's own choice to undo.
+  const retryable = status === 'failed' || status === 'cancelled';
+  const retries = job.retry_count || 0;
   return html`
     <div class="sched-row">
       <div class="sched-row-top">
         <span class=${'job-status ' + status}>${STATUS_LABEL[status] || status}</span>
         <span class="sched-session">${job.session}</span>
         <span class="sched-time" title=${new Date(job.run_at).toLocaleString()}>${new Date(job.run_at).toLocaleString()} · ${relTime(job.run_at)}</span>
+        ${retries > 0 && html`<span class="sched-retries muted small" title="Times this prompt has been requeued">↻ ${retries}</span>`}
         ${status === 'pending' && html`<button class="btn btn-xs btn-ghost sched-cancel" onClick=${() => onCancel(job.id)}>Cancel</button>`}
+        ${retryable && !requeueOpen && html`<button class="btn btn-xs btn-ghost sched-cancel" onClick=${() => onRequeue(job.id)}>Requeue…</button>`}
       </div>
       <div class=${'sched-prompt' + (long ? ' clickable' : '')} onClick=${long ? onToggle : undefined}>
         ${shown}
         ${long && html`<span class="sched-expand">${expanded ? ' (show less)' : ' (show more)'}</span>`}
       </div>
-      ${(job.fired_at || job.error) && html`
+      ${(job.fired_at || job.error || (status === 'pending' && job.last_error)) && html`
         <div class="sched-meta muted small">
           ${job.fired_at && html`<span>fired ${relTime(job.fired_at)}</span>`}
           ${job.error && html`<span class="sched-error">error: ${job.error}</span>`}
+          ${/* A re-armed job is an ordinary pending row; without this it gives
+                no hint that it is here for a second time, or why. */ ''}
+          ${status === 'pending' && job.last_error && html`<span class="sched-error">requeued after: ${job.last_error}</span>`}
         </div>`}
+      ${requeueOpen && html`<${RequeueBox} job=${job} sessions=${sessions} onDone=${onRequeueDone} />`}
     </div>`;
 }
 
 export function ScheduleView() {
   const [expandedIds, setExpandedIds] = useState(() => new Set());
+  // At most one requeue form open at a time — these rows are narrow and the
+  // form is a real decision ("where, and when"), not a toggle.
+  const [requeueId, setRequeueId] = useState(null);
 
   useEffect(() => {
     loadSchedule();
@@ -352,7 +456,11 @@ export function ScheduleView() {
               ${jobs.length === 0
                 ? html`<div class="pane-empty muted">No scheduled prompts yet.</div>`
                 : html`<div class="sched-list">
-                    ${jobs.map((j) => html`<${JobRow} key=${j.id} job=${j} expanded=${expandedIds.has(j.id)} onToggle=${() => toggle(j.id)} onCancel=${cancel} />`)}
+                    ${jobs.map((j) => html`<${JobRow} key=${j.id} job=${j} expanded=${expandedIds.has(j.id)}
+                      onToggle=${() => toggle(j.id)} onCancel=${cancel}
+                      sessions=${store.tmuxSessions.value}
+                      requeueOpen=${requeueId === j.id}
+                      onRequeue=${setRequeueId} onRequeueDone=${() => setRequeueId(null)} />`)}
                   </div>`}
             </section>
             <section class="sched-create-pane">

@@ -70,6 +70,19 @@ export async function actPriority(id, p) {
   await withErrorToast(() => editIssue({ id, op: 'set-priority', priority: String(p) }, `Set ${id} to P${p}`), `Failed to set priority on ${id}`);
   flashCli(`bd update ${id} -p ${p}`, 'priority');
 }
+// Reassign, or unassign with an empty string. The CLI echo shows `--assignee
+// ""` for the clear because that is the literal incantation (verified against
+// bd v1.1.0: it removes the field, it does not set it to an empty string) —
+// the whole point of the flash is that pasting it into a terminal does the
+// same thing that just happened here.
+export async function actSetAssignee(id, assignee) {
+  const who = String(assignee || '').trim();
+  await withErrorToast(
+    () => editIssue({ id, op: 'set-assignee', assignee: who }, who ? `Assigned ${id} to ${who}` : `Unassigned ${id}`),
+    who ? `Failed to assign ${id}` : `Failed to unassign ${id}`,
+  );
+  flashCli(`bd update ${id} --assignee ${who ? who : '""'}`, 'assignee');
+}
 export async function actDefer(id, when) {
   await withErrorToast(() => editIssue({ id, op: 'set-defer', defer: when }, `Deferred ${id}`), `Failed to defer ${id}`);
   flashCli(`bd update ${id} --defer ${q(when)}`, 'defer');

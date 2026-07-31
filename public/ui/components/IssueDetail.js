@@ -29,6 +29,7 @@ function EditTools({ issue }) {
   const id = issue.id;
   const [err, setErr] = useState('');
   const [priority, setPriority] = useState(String(issue.priority));
+  const [assignee, setAssignee] = useState(issue.assignee || '');
   const [labelAdd, setLabelAdd] = useState('');
   const [parent, setParent] = useState(parentOf(issue) || '');
   const [blocker, setBlocker] = useState('');
@@ -72,6 +73,24 @@ function EditTools({ issue }) {
             ${[0, 1, 2, 3, 4].map((p) => html`<option key=${p} value=${p}>${PRI_LABEL[p]}</option>`)}
           </select>
           <button class="btn" onClick=${() => run({ op: 'set-priority', priority }, 'Updated priority for ' + id)}>Apply</button>
+        </div>
+      </div>
+
+      ${/* Claim (above) sets the assignee to YOU and nothing else could ever
+            change it — an issue handed to the wrong person, or to someone who
+            has since moved on, was permanent. Same shape as Parent and Defer:
+            a free-text field plus an explicit Clear, because unassigning is
+            its own intent and should not require blanking a box first. */ ''}
+      <div class="edit-block">
+        <label class="edit-label">Assignee</label>
+        <div class="edit-row">
+          <input class="edit-input" placeholder="unassigned" value=${assignee}
+            onInput=${(e) => setAssignee(e.target.value)}
+            onKeyDown=${(e) => { if (e.key === 'Enter') run({ op: 'set-assignee', assignee: assignee.trim() }, 'Assigned ' + id + ' to ' + assignee.trim()); }} />
+          <button class="btn" disabled=${assignee.trim() === (issue.assignee || '')}
+            onClick=${() => run({ op: 'set-assignee', assignee: assignee.trim() }, assignee.trim() ? 'Assigned ' + id + ' to ' + assignee.trim() : 'Unassigned ' + id)}>Save</button>
+          <button class="btn btn-ghost" disabled=${!issue.assignee}
+            onClick=${() => { setAssignee(''); run({ op: 'set-assignee', assignee: '' }, 'Unassigned ' + id); }}>Clear</button>
         </div>
       </div>
 

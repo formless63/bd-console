@@ -1159,6 +1159,17 @@ select.edit-input.link-type { flex: 0 0 auto; min-width: 150px; }
 .sched-expand { color: var(--accent); font-size: 12px; font-weight: 500; }
 .sched-meta { display: flex; gap: 12px; flex-wrap: wrap; }
 .sched-error { color: var(--red); }
+.sched-retries { font-family: var(--font-mono); }
+
+/* Inline requeue form on a failed/cancelled row. Inset and tinted so it reads
+   as belonging to its row rather than as a second list item. */
+.sched-requeue {
+  display: flex; flex-direction: column; gap: 12px;
+  margin-top: 4px; padding: 12px; border: 1px solid var(--border);
+  border-radius: var(--radius); background: var(--surface-2);
+}
+.sched-requeue-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.sched-requeue-actions .form-err { margin-right: auto; }
 
 .job-status { display: inline-flex; align-items: center; padding: 2px 9px; border-radius: var(--radius-pill); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; border: 1px solid transparent; }
 .job-status.pending { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 25%, transparent); }
