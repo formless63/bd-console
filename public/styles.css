@@ -404,6 +404,18 @@ textarea.field { resize: vertical; }
    visual consistency; width-matched to .hub-grid below since it isn't
    wrapped in a full .hub-section itself. */
 .hub-projects-head { width: 100%; max-width: 1080px; }
+/* Register-a-project form (bd-console-uwq) — lives both in the hub's empty
+   state (where it replaces a dead-end "run bd-console add" instruction) and
+   behind the "+ Add project" toggle on the head above, so it is width-matched
+   to .hub-grid the same way .hub-projects-head is. */
+.hub-add { width: 100%; max-width: 520px; display: flex; flex-direction: column; gap: 6px; margin: 4px 0 2px; text-align: left; }
+.hub-add-wrap { width: 100%; max-width: 1080px; display: flex; margin-bottom: 1rem; }
+.hub-add-row { display: flex; gap: 8px; }
+.hub-add-input { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius-sm); padding: 8px 11px; font: inherit; font-size: 13px; outline: none; transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease); }
+.hub-add-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+.hub-add-hint { margin: 0; line-height: 1.5; }
+.hub-add-error { margin: 0; font-size: 12px; color: var(--red); }
+.hub-add-cli { max-width: 520px; margin-top: 2px; }
 .hub-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1.25rem; width: 100%; max-width: 1080px; animation: hub-grid-in 0.3s var(--ease); }
 @keyframes hub-grid-in { from { opacity: 0; transform: translateY(6px); } }
 .hub-card {
@@ -1023,6 +1035,17 @@ select.edit-input.link-type { flex: 0 0 auto; min-width: 150px; }
 
 /* ---- Docs ---------------------------------------------------------------- */
 .docs-filters { gap: 12px; }
+/* "New doc" head + form (bd-console-09n) — the docs tree was previously
+   read-only, so this is the one affordance that lets the list grow. */
+.doc-tree-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.doc-tree-head-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-faint); }
+.doc-new { display: flex; flex-direction: column; gap: 7px; padding: 10px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.doc-new-row { display: flex; gap: 6px; }
+.doc-new-folder, .doc-new-name { min-width: 0; flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: var(--radius-sm); padding: 6px 8px; font: inherit; font-size: 12px; outline: none; }
+.doc-new-folder:focus, .doc-new-name:focus { border-color: var(--accent); }
+.doc-new-preview { font-family: var(--font-mono); word-break: break-all; }
+.doc-new-error { font-size: 12px; color: var(--red); }
+.doc-new-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .doc-tree { display: flex; flex-direction: column; gap: 2px; }
 .tree-item { text-align: left; background: none; border: none; font: inherit; cursor: pointer; padding: 6px 9px; font-size: 13px; border-radius: var(--radius-sm); color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: all 0.13s var(--ease); }
 .tree-item:hover { color: var(--text); background: var(--bg); }

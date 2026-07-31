@@ -3,7 +3,8 @@
 // metrics and (optional) git insights.
 import { html } from 'htm/preact';
 import { useEffect, useState } from 'preact/hooks';
-import { store, navigate, loadProjectStats, loadTmux, loadSchedule, loadProjectsGit, loadUsage, loadUsageHistory, loadBdVersion, loadCliVersions, toggleHubSection, toast } from '../store.js';
+import { store, navigate, loadProjectStats, loadTmux, loadSchedule, loadProjectsGit, loadUsage, loadUsageHistory, loadBdVersion, loadCliVersions, toggleHubSection, toast, loadHub, requireToken } from '../store.js';
+import { apiPostRaw, AuthError } from '../api.js';
 import { timeAgo, copyToClipboard } from './common.js';
 import { SessionRowCompact, HubTmuxHead } from './TmuxView.js';
 import { ProviderAttribution, formatTokens } from './UsageCharts.js';
@@ -629,11 +630,63 @@ function QuotaSessionsRow() {
     </div>`;
 }
 
+// Register a project without a terminal (bd-console-uwq). The hub's empty
+// state used to say "run bd-console add" and stop there, which is a wall for
+// anyone reading this over the tunnel from a phone.
+//
+// Note how little this component believes: it does not pre-judge the path,
+// beyond refusing to submit an empty one. Every real answer — absolute?
+// exists? a beads project? already registered? — comes from POST /api/register
+// (see registerProjectPath in lib/registry.mjs), because the browser has no
+// view of the daemon's filesystem and a guess rendered as an error would just
+// be a lie with a red border.
+function AddProjectForm({ onAdded }) {
+  const [path, setPath] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    const value = path.trim();
+    if (!value) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const data = await apiPostRaw('/api/register', { path: value });
+      await loadHub();
+      toast(`Registered ${data.id}`);
+      setPath('');
+      if (onAdded) onAdded(data.id);
+    } catch (err) {
+      if (err instanceof AuthError) requireToken('A write token is required to register a project.');
+      setError(err.message || 'Could not register that project.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return html`
+    <form class="hub-add" onSubmit=${submit}>
+      <div class="hub-add-row">
+        <input class="hub-add-input" type="text" spellcheck="false" autocapitalize="off" autocorrect="off"
+          aria-label="Project folder on the machine running bd-console"
+          placeholder="/home/you/code/my-project"
+          value=${path} onInput=${(e) => { setPath(e.target.value); setError(null); }} />
+        <button class="btn" type="submit" disabled=${busy || !path.trim()}>${busy ? 'Adding…' : 'Add project'}</button>
+      </div>
+      <p class="muted small hub-add-hint">
+        The folder as it exists on the machine running bd-console — it must already contain a <code>.beads/</code> directory (run <code>bd init</code> there first). <code>~</code> works.
+      </p>
+      ${error && html`<p class="hub-add-error" role="alert">${error}</p>`}
+    </form>`;
+}
+
 export function HubView() {
   const projects = store.projects.value;
   const entries = Object.entries(projects);
   const [statsById, setStatsById] = useState({});
   const [statErrors, setStatErrors] = useState(new Set());
+  const [addOpen, setAddOpen] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -665,13 +718,21 @@ export function HubView() {
       ${AttributionBand()}
 
       ${entries.length === 0
-        ? html`<div class="empty-state">
+        ? html`<div class="empty-state hub-empty-state">
             <div class="empty-icon">◇</div>
             <p>No projects registered.</p>
-            <p class="muted small">Run <code>bd-console add</code> inside a project to register it.</p>
+            <p class="muted small">Add the first one here — no terminal required.</p>
+            <${AddProjectForm} />
+            <p class="muted small hub-add-cli">
+              Or, from a shell on that machine: <code>bd-console add</code> inside the project (or <code>bd-console add /path/to/project</code> from anywhere).
+            </p>
           </div>`
         : html`
-          <div class="hub-section-head hub-projects-head"><h2>Tracked Projects</h2></div>
+          <div class="hub-section-head hub-projects-head">
+            <h2>Tracked Projects</h2>
+            <button class="btn btn-ghost btn-xs" onClick=${() => setAddOpen(!addOpen)}>${addOpen ? 'Cancel' : '+ Add project'}</button>
+          </div>
+          ${addOpen && html`<div class="hub-add-wrap"><${AddProjectForm} onAdded=${() => setAddOpen(false)} /></div>`}
           <div class="hub-grid">
             ${entries.map(([id, project]) => html`<${ProjectCard} key=${id} id=${id} project=${project}
               stats=${statsById[id]} err=${statErrors.has(id)} />`)}
