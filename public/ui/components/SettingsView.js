@@ -9,8 +9,9 @@ import { useEffect, useState } from 'preact/hooks';
 import {
   store, loadSettings, saveServerToken, toast, loadHub, loadBdVersion,
   loadEpicsForProject, saveDefaultEpics, createStandardEpics, DEFAULT_EPIC_INTENTS,
+  requireToken,
 } from '../store.js';
-import { getToken, setToken } from '../api.js';
+import { getToken, setToken, apiPostRaw, AuthError } from '../api.js';
 import { THEME_PRESETS, SCHEMES, setPreset, setScheme } from '../theme.js';
 import { EpicCombobox, timeAgo, copyToClipboard, CopyIcon } from './common.js';
 import { useLearn } from './ConceptTip.js';
@@ -310,6 +311,101 @@ function ServerTokenPanel() {
     </section>`;
 }
 
+// Termix (self-hosted web SSH/terminal manager) — address + credential only.
+// This card is deliberately inert: it stores two strings so that a later
+// feature can turn a tmux session row into a link into Termix. It does NOT
+// contact the server, and there is no "Test connection" button on purpose —
+// the install this points at typically lives on another machine, and a
+// settings page that silently dials out to a URL you just typed is a
+// different (and unrequested) thing from a settings page that remembers it.
+function TermixPanel() {
+  const settings = store.settings.value;
+  const termix = settings?.termix;
+  const available = store.settingsAvailable.value && !!termix;
+
+  const [baseUrl, setBaseUrl] = useState('');
+  const [token, setTermixToken] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [notice, setNotice] = useState('');
+
+  const dirty = !!baseUrl.trim() || !!token.trim();
+  const configured = !!termix?.baseUrl?.value || !!termix?.token?.set;
+
+  const submit = async (patch, okMessage) => {
+    setBusy(true); setErr(''); setNotice('');
+    try {
+      await apiPostRaw('/api/settings', { termix: patch });
+      await loadSettings();
+      setBaseUrl(''); setTermixToken('');
+      setNotice(okMessage);
+      toast(okMessage);
+    } catch (e) {
+      if (e instanceof AuthError) requireToken('A write token is required.');
+      setErr(e.message);
+    } finally { setBusy(false); }
+  };
+
+  const save = () => {
+    const patch = {};
+    if (baseUrl.trim()) patch.baseUrl = baseUrl.trim();
+    if (token.trim()) patch.token = token.trim();
+    if (!Object.keys(patch).length) return;
+    submit(patch, 'Termix settings saved');
+  };
+
+  return html`
+    <section class="settings-card">
+      <h2 class="settings-card-title">Termix</h2>
+      <p class="muted small">
+        Where your <a href="https://github.com/LukeGus/Termix" target="_blank" rel="noopener noreferrer">Termix</a>
+        install lives, and the API credential for it. Stored for a future feature that will open a tmux session
+        directly in Termix — <strong>nothing here is contacted yet</strong>: bd-console never fetches this URL,
+        never verifies the credential, and sends neither anywhere.
+      </p>
+      ${!available && html`<p class="form-warn">This server doesn't expose Termix settings yet (<code>GET /api/settings</code> has no <code>termix</code> block).</p>`}
+      <div class="settings-kv">
+        <div class="settings-row">
+          <span class="settings-k">Base URL</span>
+          <span class="settings-v">${termix?.baseUrl?.value
+            ? html`<code>${termix.baseUrl.value}</code>`
+            : html`<span class="muted">not set</span>`}</span>
+          <${SourceChip} source=${termix?.baseUrl?.source} />
+        </div>
+        <div class="settings-row">
+          <span class="settings-k">API token</span>
+          <span class="settings-v">${termix?.token?.set
+            ? html`<code>${termix.token.masked || 'set'}</code>`
+            : html`<span class="muted">not set</span>`}</span>
+          <${SourceChip} source=${termix?.token?.source} />
+        </div>
+      </div>
+      <div class="settings-form-row">
+        <input class="field" type="url" inputmode="url" placeholder="https://termix.example.com" value=${baseUrl}
+          aria-label="Termix base URL" disabled=${!available || busy}
+          onInput=${(e) => setBaseUrl(e.target.value)}
+          onKeyDown=${(e) => { if (e.key === 'Enter' && dirty) save(); }} />
+      </div>
+      <div class="settings-form-row">
+        <input class="field" type="password" placeholder="Termix API token…" value=${token}
+          aria-label="Termix API token" autocomplete="off" disabled=${!available || busy}
+          onInput=${(e) => setTermixToken(e.target.value)}
+          onKeyDown=${(e) => { if (e.key === 'Enter' && dirty) save(); }} />
+        <button class="btn btn-ghost" disabled=${!available || busy || !configured}
+          onClick=${() => submit({ baseUrl: null, token: null }, 'Termix settings cleared')}>Clear</button>
+        <button class="btn btn-accent" disabled=${!available || busy || !dirty} onClick=${save}>Save</button>
+      </div>
+      ${err && html`<span class="form-err">${err}</span>`}
+      ${notice && html`<p class="muted small settings-notice">${notice}</p>`}
+      <p class="muted small settings-hint">
+        Blank fields are left as-is; Clear removes both. The token is stored in plaintext in the config file
+        above, like the server write token — set <code>BD_CONSOLE_TERMIX_TOKEN</code> (and
+        <code>BD_CONSOLE_TERMIX_URL</code>) in the server's environment instead if you'd rather it never
+        touched disk.
+      </p>
+    </section>`;
+}
+
 // Opt-in per-project default epics: for each of the create dialog's five
 // non-epic intents, an optional epic bead this project's stored mapping
 // preselects in CreateIssueDialog (see its `defaultEpics` preselect effect).
@@ -444,6 +540,7 @@ export function SettingsView() {
         <${BdVersionPanel} />
         <${BrowserTokenPanel} />
         <${ServerTokenPanel} />
+        <${TermixPanel} />
         <${DefaultEpicsPanel} />
       </div>
     </main>`;

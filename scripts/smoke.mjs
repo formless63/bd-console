@@ -716,6 +716,73 @@ try {
 
   console.log('smoke ok (settings API: defaultEpics round-trip + merge + validation rejection)');
 
+  // --- settings API: Termix linkage (address + credential storage only) ------
+  // Scaffolding for a later "open this tmux session in Termix" link. The whole
+  // point of these assertions is that it stays inert storage: the credential
+  // round-trips to config.json but the GET must never hand it back in the
+  // clear, the same contract /api/usage is held to above.
+  const termixSecret = 'termix-api-secret-value';
+  const termixGet0 = await fetch(`http://127.0.0.1:${port}/api/settings`).then((r) => r.json());
+  assert(termixGet0.termix, '/api/settings GET missing termix block');
+  assert(termixGet0.termix.baseUrl.value === null && termixGet0.termix.baseUrl.source === 'default',
+    `termix baseUrl should start unset: ${JSON.stringify(termixGet0.termix.baseUrl)}`);
+  assert(termixGet0.termix.token.set === false && termixGet0.termix.token.masked === null,
+    `termix token should start unset: ${JSON.stringify(termixGet0.termix.token)}`);
+
+  const termixSet = await fetch(`http://127.0.0.1:${port}/api/settings`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ termix: { baseUrl: 'https://termix.example.com/', token: termixSecret } })
+  }).then((r) => r.json());
+  assert(termixSet.ok, `termix save failed: ${JSON.stringify(termixSet)}`);
+
+  const termixConfigAfterSet = JSON.parse(readFileSync(join(configDir, 'config.json'), 'utf8'));
+  assert(termixConfigAfterSet.termix.baseUrl === 'https://termix.example.com',
+    `termix baseUrl should persist normalized (no trailing slash): ${termixConfigAfterSet.termix.baseUrl}`);
+  assert(termixConfigAfterSet.termix.token === termixSecret, 'termix token did not persist to config.json');
+
+  const termixGet1Res = await fetch(`http://127.0.0.1:${port}/api/settings`);
+  const termixGet1Text = await termixGet1Res.text();
+  assert(!termixGet1Text.includes(termixSecret), '/api/settings response must never contain termix token material');
+  const termixGet1 = JSON.parse(termixGet1Text);
+  assert(termixGet1.termix.baseUrl.value === 'https://termix.example.com' && termixGet1.termix.baseUrl.source === 'config',
+    `termix baseUrl round-trip mismatch: ${JSON.stringify(termixGet1.termix.baseUrl)}`);
+  assert(termixGet1.termix.token.set === true && termixGet1.termix.token.masked === 'term…',
+    `termix token should read back set + masked only: ${JSON.stringify(termixGet1.termix.token)}`);
+
+  // A partial patch leaves the other key alone.
+  await fetch(`http://127.0.0.1:${port}/api/settings`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ termix: { baseUrl: 'http://10.9.9.9:8080' } })
+  }).then((r) => r.json());
+  const termixConfigPartial = JSON.parse(readFileSync(join(configDir, 'config.json'), 'utf8'));
+  assert(termixConfigPartial.termix.baseUrl === 'http://10.9.9.9:8080', 'termix partial patch did not update baseUrl');
+  assert(termixConfigPartial.termix.token === termixSecret, 'termix partial patch should not disturb the token');
+
+  for (const [label, badBody] of [
+    ['non-http scheme', { termix: { baseUrl: 'javascript:alert(1)' } }],
+    ['bare hostname', { termix: { baseUrl: 'termix.example.com' } }],
+    ['url with a query string', { termix: { baseUrl: 'https://termix.example.com/?a=1' } }],
+    ['unknown sub-key', { termix: { apiKey: 'x' } }],
+    ['empty object', { termix: {} }],
+    ['non-object', { termix: 'https://termix.example.com' }],
+  ]) {
+    const bad = await fetch(`http://127.0.0.1:${port}/api/settings`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(badBody)
+    });
+    assert(bad.status === 400, `termix POST with ${label} should 400, got ${bad.status}`);
+  }
+
+  const termixClear = await fetch(`http://127.0.0.1:${port}/api/settings`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ termix: { baseUrl: null, token: null } })
+  }).then((r) => r.json());
+  assert(termixClear.ok, `termix clear failed: ${JSON.stringify(termixClear)}`);
+  const termixConfigAfterClear = JSON.parse(readFileSync(join(configDir, 'config.json'), 'utf8'));
+  assert(!('termix' in termixConfigAfterClear), 'clearing both termix keys should drop the whole termix object');
+  assert(termixConfigAfterClear.defaultEpics, 'termix clear should not disturb the rest of config.json');
+
+  console.log('smoke ok (settings API: termix baseUrl/token round-trip, partial patch, URL validation, credential never echoed)');
+
   // --- saved prompts API ---------------------------------------------------------
   const promptsGet0 = await fetch(`http://127.0.0.1:${port}/api/prompts`);
   assert(promptsGet0.status === 200 || promptsGet0.status === 501, `/api/prompts GET unexpected status ${promptsGet0.status}`);
@@ -1024,7 +1091,33 @@ try {
   }
   assert(badSetFailed, 'settings set with an out-of-range port should fail');
 
-  console.log('smoke ok (settings set/list/unset round-trip)');
+  // termix.* takes the same CLI path, nested one level down in config.json,
+  // and its credential is masked in `list` exactly like the write token's.
+  runSettings(['set', 'termix.baseUrl', 'https://termix.example.com/']);
+  runSettings(['set', 'termix.token', 'termix-cli-secret']);
+  const settingsConfig3 = JSON.parse(readFileSync(settingsConfigPath, 'utf8'));
+  assert(settingsConfig3.termix.baseUrl === 'https://termix.example.com', 'settings set termix.baseUrl did not persist normalized');
+  assert(settingsConfig3.termix.token === 'termix-cli-secret', 'settings set termix.token did not persist to config.json');
+
+  const settingsListOut2 = runSettings(['list']);
+  assert(settingsListOut2.includes('https://termix.example.com'), `settings list missing termix.baseUrl:\n${settingsListOut2}`);
+  assert(/termix\.token\s+set \(term\.\.\.\)/.test(settingsListOut2), `settings list did not mask termix.token:\n${settingsListOut2}`);
+  assert(!settingsListOut2.includes('termix-cli-secret'), 'settings list leaked the full termix token value');
+
+  runSettings(['unset', 'termix.token']);
+  const settingsConfig4 = JSON.parse(readFileSync(settingsConfigPath, 'utf8'));
+  assert(!('token' in settingsConfig4.termix), 'settings unset termix.token did not remove the key');
+  assert(settingsConfig4.termix.baseUrl === 'https://termix.example.com', 'settings unset termix.token should not disturb termix.baseUrl');
+
+  let badTermixSetFailed = false;
+  try {
+    runSettings(['set', 'termix.baseUrl', 'not-a-url']);
+  } catch {
+    badTermixSetFailed = true;
+  }
+  assert(badTermixSetFailed, 'settings set with a non-URL termix.baseUrl should fail');
+
+  console.log('smoke ok (settings set/list/unset round-trip, incl. nested termix.* + masked credential)');
 
   // --- non-TTY first run applies 0.0.0.0:4180 defaults (Feature 1) -----------
   // isFirstRun requires no --host/--port flags and no BD_CONSOLE_HOST/PORT env,
