@@ -11,7 +11,7 @@ import {
   loadEpicsForProject, saveDefaultEpics, createStandardEpics, DEFAULT_EPIC_INTENTS,
   requireToken,
 } from '../store.js';
-import { getToken, setToken, apiPostRaw, AuthError } from '../api.js';
+import { getToken, setToken, apiGetRaw, apiPostRaw, AuthError } from '../api.js';
 import { THEME_PRESETS, SCHEMES, setPreset, setScheme } from '../theme.js';
 import { EpicCombobox, timeAgo, copyToClipboard, CopyIcon } from './common.js';
 import { useLearn } from './ConceptTip.js';
@@ -311,33 +311,56 @@ function ServerTokenPanel() {
     </section>`;
 }
 
-// Termix (self-hosted web SSH/terminal manager) — address + credential only.
-// This card is deliberately inert: it stores two strings so that a later
-// feature can turn a tmux session row into a link into Termix. It does NOT
-// contact the server, and there is no "Test connection" button on purpose —
-// the install this points at typically lives on another machine, and a
-// settings page that silently dials out to a URL you just typed is a
-// different (and unrequested) thing from a settings page that remembers it.
+// Termix (self-hosted web SSH/terminal manager) — the three values behind the
+// one-click "Termix" link on every tmux session row (bd-console-4w7):
+//
+//   Base URL   the address your BROWSER opens. Deep links are composed from
+//              it server-side and handed to the browser; bd-console itself
+//              does not fetch it.
+//   Host id    which Termix host entry is THIS machine. bd-console cannot
+//              infer it — without it the session links degrade to "open
+//              Termix" instead of attaching.
+//   API token  used by exactly one thing: the "Look up hosts" button below,
+//              and only when you press it. It is never sent to the browser
+//              and never rides in a link.
+//
+// There is still no "Test connection" button, on purpose. The lookup is not a
+// health check — it exists because the host id is otherwise a number you have
+// to go dig out of Termix's own URL bar, and a setting nobody can find is a
+// feature nobody uses. It says plainly, before you click, that it is the one
+// outbound request in the feature.
 function TermixPanel() {
   const settings = store.settings.value;
   const termix = settings?.termix;
   const available = store.settingsAvailable.value && !!termix;
+  // Host id landed with the deep-link feature; a server that predates it has
+  // a `termix` block with no `hostId` key at all. Hide the control rather
+  // than offer one whose POST would be rejected as an unknown key.
+  const hostIdSupported = !!termix && 'hostId' in termix;
 
   const [baseUrl, setBaseUrl] = useState('');
   const [token, setTermixToken] = useState('');
+  const [hostId, setHostId] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [notice, setNotice] = useState('');
+  // Host lookup state. `hosts === null` means "never looked" — distinct from
+  // an empty array, which means Termix answered and has no hosts yet.
+  const [hosts, setHosts] = useState(null);
+  const [lookupBusy, setLookupBusy] = useState(false);
+  const [lookupErr, setLookupErr] = useState('');
 
-  const dirty = !!baseUrl.trim() || !!token.trim();
-  const configured = !!termix?.baseUrl?.value || !!termix?.token?.set;
+  const dirty = !!baseUrl.trim() || !!token.trim() || !!hostId.trim();
+  const configured = !!termix?.baseUrl?.value || !!termix?.token?.set || termix?.hostId?.value != null;
+  const canLookup = !!termix?.baseUrl?.value && !!termix?.token?.set;
+  const tokenShapeWarning = termix?.token?.set && termix?.token?.apiKeyShaped === false;
 
   const submit = async (patch, okMessage) => {
     setBusy(true); setErr(''); setNotice('');
     try {
       await apiPostRaw('/api/settings', { termix: patch });
       await loadSettings();
-      setBaseUrl(''); setTermixToken('');
+      setBaseUrl(''); setTermixToken(''); setHostId('');
       setNotice(okMessage);
       toast(okMessage);
     } catch (e) {
@@ -350,18 +373,36 @@ function TermixPanel() {
     const patch = {};
     if (baseUrl.trim()) patch.baseUrl = baseUrl.trim();
     if (token.trim()) patch.token = token.trim();
+    if (hostId.trim()) patch.hostId = hostId.trim();
     if (!Object.keys(patch).length) return;
     submit(patch, 'Termix settings saved');
+  };
+
+  // The one outbound request in the whole feature, and it only ever happens
+  // from this click. A failure is reported verbatim (the server turns 401/404
+  // into the actual remedy) rather than swallowed — "couldn't reach it" is a
+  // normal answer for a box that may be off, moved, or behind a VPN.
+  const lookupHosts = async () => {
+    setLookupBusy(true); setLookupErr(''); setNotice('');
+    try {
+      const data = await apiGetRaw('/api/termix/hosts');
+      setHosts(data.hosts || []);
+    } catch (e) {
+      if (e instanceof AuthError) requireToken('A write token is required to use the stored Termix credential.');
+      setHosts(null);
+      setLookupErr(e.message);
+    } finally { setLookupBusy(false); }
   };
 
   return html`
     <section class="settings-card">
       <h2 class="settings-card-title">Termix</h2>
       <p class="muted small">
-        Where your <a href="https://github.com/LukeGus/Termix" target="_blank" rel="noopener noreferrer">Termix</a>
-        install lives, and the API credential for it. Stored for a future feature that will open a tmux session
-        directly in Termix — <strong>nothing here is contacted yet</strong>: bd-console never fetches this URL,
-        never verifies the credential, and sends neither anywhere.
+        Where your <a href="https://github.com/Termix-SSH/Termix" target="_blank" rel="noopener noreferrer">Termix</a>
+        install lives, which of its hosts this machine is, and the API credential. With all three set, every
+        tmux session row here gains a <strong>Termix</strong> link that opens that session in Termix's web
+        terminal. bd-console composes the link and never sends the credential to your browser; the only
+        request it makes to Termix is the host lookup below, when you click it.
       </p>
       ${!available && html`<p class="form-warn">This server doesn't expose Termix settings yet (<code>GET /api/settings</code> has no <code>termix</code> block).</p>`}
       <div class="settings-kv">
@@ -373,6 +414,13 @@ function TermixPanel() {
           <${SourceChip} source=${termix?.baseUrl?.source} />
         </div>
         <div class="settings-row">
+          <span class="settings-k">Host id</span>
+          <span class="settings-v">${termix?.hostId?.value != null
+            ? html`<code>${termix.hostId.value}</code>`
+            : html`<span class="muted">not set — links open Termix but can't attach</span>`}</span>
+          <${SourceChip} source=${termix?.hostId?.source} />
+        </div>
+        <div class="settings-row">
           <span class="settings-k">API token</span>
           <span class="settings-v">${termix?.token?.set
             ? html`<code>${termix.token.masked || 'set'}</code>`
@@ -380,28 +428,69 @@ function TermixPanel() {
           <${SourceChip} source=${termix?.token?.source} />
         </div>
       </div>
+      ${tokenShapeWarning && html`<p class="form-warn">
+        The stored credential doesn't look like a Termix API key (<code>tmx_</code> + 64 hex characters).
+        Termix also accepts a login JWT, but those expire — create an API key under
+        <strong>Admin Settings → API Keys</strong> instead.
+      </p>`}
       <div class="settings-form-row">
         <input class="field" type="url" inputmode="url" placeholder="https://termix.example.com" value=${baseUrl}
           aria-label="Termix base URL" disabled=${!available || busy}
           onInput=${(e) => setBaseUrl(e.target.value)}
           onKeyDown=${(e) => { if (e.key === 'Enter' && dirty) save(); }} />
       </div>
+      ${hostIdSupported && html`
+        <div class="settings-form-row">
+          <input class="field" type="text" inputmode="numeric" placeholder="Termix host id for this machine (e.g. 3)"
+            value=${hostId} aria-label="Termix host id" disabled=${!available || busy}
+            onInput=${(e) => setHostId(e.target.value)}
+            onKeyDown=${(e) => { if (e.key === 'Enter' && dirty) save(); }} />
+          <button class="btn btn-ghost" disabled=${!available || busy || lookupBusy || !canLookup}
+            title=${canLookup
+              ? 'Asks your Termix for its host list using the stored API token — the only request bd-console makes to Termix.'
+              : 'Save a base URL and an API token first — the lookup needs both.'}
+            onClick=${lookupHosts}>${lookupBusy ? 'Looking up…' : 'Look up hosts'}</button>
+        </div>`}
+      ${lookupErr && html`<span class="form-err">${lookupErr}</span>`}
+      ${hosts !== null && html`
+        <div class="termix-hosts">
+          ${hosts.length === 0
+            ? html`<p class="muted small">Termix answered, but has no hosts configured yet. Add this machine in Termix first.</p>`
+            : html`
+              <p class="muted small">Pick the entry that is this machine — it becomes the host id above.</p>
+              <ul class="termix-host-list">
+                ${hosts.map((h) => html`
+                  <li key=${h.id} class="termix-host-row">
+                    <code class="termix-host-id">#${h.id}</code>
+                    <span class="termix-host-name">${h.name || '(unnamed)'}</span>
+                    <span class="muted small termix-host-addr">${h.username ? h.username + '@' : ''}${h.ip || '?'}${h.port ? ':' + h.port : ''}</span>
+                    ${h.enableTerminal === false
+                      ? html`<span class="badge server-mode" title="Terminal access is disabled for this host in Termix, so an attach link would open to nothing.">no terminal</span>`
+                      : null}
+                    <button class="btn btn-xs" disabled=${busy}
+                      onClick=${() => submit({ hostId: String(h.id) }, `Termix host id set to ${h.id}`)}>Use this</button>
+                  </li>`)}
+              </ul>`}
+        </div>`}
       <div class="settings-form-row">
-        <input class="field" type="password" placeholder="Termix API token…" value=${token}
+        <input class="field" type="password" placeholder="Termix API token (tmx_…)" value=${token}
           aria-label="Termix API token" autocomplete="off" disabled=${!available || busy}
           onInput=${(e) => setTermixToken(e.target.value)}
           onKeyDown=${(e) => { if (e.key === 'Enter' && dirty) save(); }} />
         <button class="btn btn-ghost" disabled=${!available || busy || !configured}
-          onClick=${() => submit({ baseUrl: null, token: null }, 'Termix settings cleared')}>Clear</button>
+          onClick=${() => { setHosts(null); setLookupErr(''); submit({ baseUrl: null, token: null, hostId: null }, 'Termix settings cleared'); }}>Clear</button>
         <button class="btn btn-accent" disabled=${!available || busy || !dirty} onClick=${save}>Save</button>
       </div>
       ${err && html`<span class="form-err">${err}</span>`}
       ${notice && html`<p class="muted small settings-notice">${notice}</p>`}
       <p class="muted small settings-hint">
-        Blank fields are left as-is; Clear removes both. The token is stored in plaintext in the config file
-        above, like the server write token — set <code>BD_CONSOLE_TERMIX_TOKEN</code> (and
-        <code>BD_CONSOLE_TERMIX_URL</code>) in the server's environment instead if you'd rather it never
-        touched disk.
+        Blank fields are left as-is; Clear removes all three. Point the base URL at the single port your Termix
+        publishes (the one you browse to — not the internal <code>3000x</code> service ports). The token is
+        stored in plaintext in the config file above, like the server write token — set
+        <code>BD_CONSOLE_TERMIX_TOKEN</code>, <code>BD_CONSOLE_TERMIX_URL</code> and
+        <code>BD_CONSOLE_TERMIX_HOST_ID</code> in the server's environment instead if you'd rather none of it
+        touched disk. Following a session link opens Termix in a new tab; if you aren't signed in to Termix
+        there, it will ask before showing the terminal.
       </p>
     </section>`;
 }

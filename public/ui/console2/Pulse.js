@@ -12,7 +12,7 @@ import { store, selectIssue, toast } from '../store.js';
 import { c2, setPulseBarCollapsed } from './state.js';
 import { pulse, AGE_AMBER_H, AGE_RED_H, ageMs } from './derive.js';
 import { Corners, PRI_LABEL, StatusGlyph } from './ui.js';
-import { matchProject, cwdTail, agentName, agentTip, isServerMode, promptTip } from '../components/common.js';
+import { matchProject, cwdTail, agentName, agentTip, isServerMode, promptTip, TermixLink } from '../components/common.js';
 import { ThemeSwitch } from './ThemeSwitch.js';
 
 function focus(lane) { c2.canvasMode.value = 'flow'; c2.laneFocus.value = lane; }
@@ -175,6 +175,12 @@ function SessionsBlock() {
           // stay listed — they're real work in this repo — but "delegate
           // here" is disabled with the reason, since send-keys would type
           // into a process with no prompt. See components/common.js.
+          //
+          // The Termix link beside it is the same server-composed deep link
+          // the hub grid renders (also components/common.js), and it is NOT
+          // gated on server mode: attaching a terminal to a `claude rc` host
+          // to watch it is perfectly reasonable — it's only *typing* at one
+          // that would go nowhere. Renders nothing when Termix is unset.
           const server = isServerMode(s);
           return html`
             <div key=${s.name} class=${'c2-session-row' + (server ? ' server-mode' : '')}>
@@ -183,6 +189,7 @@ function SessionsBlock() {
               <span class=${'badge tmux-attach' + (s.attached ? ' on' : '')}>${s.attached ? 'attached' : 'detached'}</span>
               ${server ? html`<span class="badge server-mode" title=${promptTip(s)}>server mode</span>` : null}
               <span class="c2-session-cmd">${first?.command || '—'}</span>
+              <${TermixLink} session=${s} />
               <button class="c2-mini" disabled=${server} title=${server ? promptTip(s) : 'Delegate here'}
                 onClick=${() => delegateHere(s.name)}>delegate here</button>
             </div>`;

@@ -565,7 +565,12 @@ textarea.field { resize: vertical; }
      attached/detached text badge (replaced a 7px status dot — see
      .tmux-attach-badge below) alongside the session name without either
      one crowding the other. */
-  grid-template-columns: minmax(150px, 1.3fr) minmax(70px, 0.85fr) minmax(70px, 1.3fr) 58px 78px 34px;
+  /* Last track is minmax(34px, auto), not a flat 34px: the actions cell holds
+     just the copy-attach icon button normally, but gains a Termix deep link
+     (bd-console-4w7) once a Termix base URL is configured. `auto` lets the
+     column grow to fit that for everyone who has it, and collapse back to the
+     icon's width for everyone who doesn't, without a second layout. */
+  grid-template-columns: minmax(150px, 1.3fr) minmax(70px, 0.85fr) minmax(70px, 1.3fr) 58px 78px minmax(34px, auto);
   align-items: center;
   column-gap: 12px;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
@@ -591,7 +596,48 @@ textarea.field { resize: vertical; }
 .tmux-cell-empty { color: var(--text-faint); font-size: 12px; }
 .tmux-cell-cmd { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); }
 .tmux-cell-age, .tmux-cell-activity { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-faint); }
-.tmux-cell-actions { display: flex; justify-content: flex-end; }
+.tmux-cell-actions { display: flex; justify-content: flex-end; align-items: center; gap: 6px; }
+
+/* ---- Termix deep link (bd-console-4w7) ------------------------------------
+   Rendered on tmux session rows in the hub grid, TmuxView's cards and Console
+   2.0's sessions rail, only when a Termix base URL is configured. Styled as a
+   quiet chip-link rather than a button because it leaves the app: it opens the
+   user's own Termix install in a new tab.
+
+   .termix-link-partial is the degraded state — Termix's address is known but
+   not which of its hosts this machine is, so the link can only open Termix,
+   not attach. Amber and marked with a warning glyph for the same reason
+   .server-mode is amber: nothing is broken, one setting is just missing, and
+   the tooltip names it. */
+.termix-link {
+  flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px;
+  padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border-2);
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.01em;
+  color: var(--text-dim); text-decoration: none; white-space: nowrap;
+  transition: color 0.14s var(--ease), border-color 0.14s var(--ease), background 0.14s var(--ease);
+}
+.termix-link:hover, .termix-link:focus-visible {
+  color: var(--accent); border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.termix-link-partial { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 45%, var(--border-2)); }
+.termix-link-partial:hover, .termix-link-partial:focus-visible {
+  color: var(--amber); border-color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 12%, transparent);
+}
+
+/* Settings' host picker — the result of the opt-in "Look up hosts" call.
+   Scrolls rather than growing without bound: a Termix install can hold
+   dozens of machines, and this list sits inside a settings card. */
+.termix-hosts { margin: 2px 0 10px; }
+.termix-host-list { list-style: none; margin: 6px 0 0; padding: 0; max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.termix-host-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg);
+}
+.termix-host-id { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); flex-shrink: 0; }
+.termix-host-name { font-weight: 600; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.termix-host-addr { flex: 1 1 auto; min-width: 0; font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .hub-tmux-repo { margin-left: 0; flex-shrink: 0; max-width: 100%; }
 

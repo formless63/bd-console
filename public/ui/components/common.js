@@ -132,6 +132,46 @@ export const ServerModeBadge = (x) => (isServerMode(x)
   ? html`<span class="badge server-mode" title=${promptTip(x)}>server mode</span>`
   : null);
 
+// ---------------------------------------------------------------------------
+// Termix one-click attach (bd-console-4w7).
+//
+// GET /api/tmux decorates each session with a `termix` object — {url, mode,
+// hint} — whenever the hub has a Termix base URL configured. The URL is
+// composed SERVER-side (lib/termix.mjs) precisely so the Termix API key never
+// has to reach the browser: what arrives here is an address and a session
+// name, nothing secret.
+//
+// Two modes, and the difference is not cosmetic:
+//   'attach'  baseUrl + host id known — the link lands inside that tmux
+//             session in Termix's web terminal.
+//   'open'    baseUrl only — bd-console can't know which Termix host entry
+//             this machine is, so the link only opens Termix. Marked, and the
+//             tooltip says what to set instead of implying it attached.
+//
+// Either way the click may land on Termix's own login screen: the deep link
+// goes through Termix's fullscreen gate, which wants its session cookie, and
+// bd-console has no way to establish one. The hint text says so rather than
+// promising seamlessness we can't deliver.
+//
+// Absent field -> renders nothing, so an unconfigured hub (and any server
+// predating this feature) looks exactly as it did before.
+// ---------------------------------------------------------------------------
+export function TermixLink({ session }) {
+  const link = session && session.termix;
+  if (!link || !link.url) return null;
+  const degraded = link.mode !== 'attach';
+  return html`
+    <a
+      class=${'termix-link' + (degraded ? ' termix-link-partial' : '')}
+      href=${link.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      title=${link.hint}
+      aria-label=${link.hint}
+      onClick=${(e) => e.stopPropagation()}
+    >Termix${degraded ? ' ⚠' : ''}</a>`;
+}
+
 export const PriBadge = (p) => html`<span class=${'badge pri pri-' + p}>${PRI_LABEL[p] ?? p}</span>`;
 export const StatusBadge = (issue) => {
   const s = effStatus(issue);

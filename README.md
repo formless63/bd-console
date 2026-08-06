@@ -240,7 +240,52 @@ BD_CONSOLE_TOKEN            # overrides token
 BD_CONSOLE_PERSIST=0|1      # overrides persist
 BD_CONSOLE_CONFIG_DIR       # relocates ~/.config/bd-console entirely
 BD_CONSOLE_SCHED_INTERVAL   # scheduler poll interval in ms (default 15000)
+BD_CONSOLE_TERMIX_URL       # overrides termix.baseUrl (see below)
+BD_CONSOLE_TERMIX_TOKEN     # overrides termix.token
+BD_CONSOLE_TERMIX_HOST_ID   # overrides termix.hostId
 ```
+
+### Termix: open a tmux session in the browser
+
+If you run [Termix](https://github.com/Termix-SSH/Termix) (a self-hosted web
+SSH / terminal manager), every tmux session row in the hub, the Terminal
+sessions view and Console 2.0 can carry a **Termix** link that opens *that
+session* in Termix's web terminal. Optional; nothing appears until you
+configure it.
+
+Three settings, all under `termix` in `config.json`:
+
+```bash
+bd-console settings set termix.baseUrl https://termix.example.com
+bd-console settings set termix.token   tmx_<64 hex chars>
+bd-console settings set termix.hostId  3
+```
+
+- **`termix.baseUrl`** — the address *you* browse Termix at. The Docker image
+  fronts all of its internal services with one nginx on a single published
+  port (8080 by default), so this is that one origin — never the internal
+  `3000x` service ports.
+- **`termix.token`** — a Termix **API key**, created inside Termix under
+  *Admin Settings → API Keys* (format `tmx_` + 64 hex characters). It is used
+  by exactly one thing: the **Look up hosts** button on bd-console's Settings
+  page, which lists your Termix hosts so you can pick the right `hostId`
+  without hunting for it. It is never sent to your browser and never appears
+  in a link, and bd-console makes no other request to Termix — not on
+  startup, not on save, not on a poll.
+- **`termix.hostId`** — which Termix host entry *is this machine*. bd-console
+  cannot infer this. Without it the session links still work but only open
+  Termix; with it they attach the session directly.
+
+The link is an ordinary URL
+(`…/?view=terminal&hostId=<id>&tmuxSession=<name>`) that your browser opens
+in a new tab. Termix requires its own login session for it, so the first
+click of a browsing session may land on Termix's sign-in page — the link's
+tooltip says so.
+
+> Deep links are an internal Termix contract, not a documented API. They work
+> as of Termix's current `main`; a future Termix release could change them.
+> The `bd-console` side is one function (`lib/termix.mjs`) if it ever needs
+> updating.
 
 ### Per-project `bd-console.json`
 
