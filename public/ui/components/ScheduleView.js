@@ -15,9 +15,20 @@ import {
   toast, requireToken,
 } from '../store.js';
 import { apiPostRaw, AuthError } from '../api.js';
+import { useVisiblePoll } from '../poll.js';
 import { relTime, cwdTail } from './common.js';
 
+// The scheduler's own state is genuinely live — a pending job flips to
+// sent/failed on the server's tick, and the session list behind the create
+// form changes as terminals come and go — so those stay on a short poll.
 const POLL_MS = 5000;
+// Provider quota does NOT. It backs the "next Claude reset" / "next Codex
+// reset" presets, which move on a 5h/7d horizon; polling it at POLL_MS meant
+// 12 requests/minute for values that cannot have changed, and before the
+// server grew its 5-minute OK-cache (CLAUDE_OK_TTL_MS in lib/usage.mjs) each
+// of those was a live OAuth call. Match the hub's cadence instead — same
+// number, same reason (see USAGE_POLL_MS in HubView.js).
+const USAGE_POLL_MS = 5 * 60000;
 const STATUS_LABEL = { pending: 'pending', sent: 'sent', failed: 'failed', cancelled: 'cancelled' };
 
 function pad(n) { return String(n).padStart(2, '0'); }
@@ -415,13 +426,14 @@ export function ScheduleView() {
   // form is a real decision ("where, and when"), not a toggle.
   const [requeueId, setRequeueId] = useState(null);
 
+  // Everything is loaded once on entry; after that the two cadences diverge.
   useEffect(() => {
     loadSchedule();
     loadTmux();
     loadUsage();
-    const t = setInterval(() => { loadSchedule(); loadTmux(); loadUsage(); }, POLL_MS);
-    return () => clearInterval(t);
   }, []);
+  useVisiblePoll(() => { loadSchedule(); loadTmux(); }, POLL_MS);
+  useVisiblePoll(() => loadUsage(), USAGE_POLL_MS);
 
   const toggle = (id) => {
     const set = new Set(expandedIds);

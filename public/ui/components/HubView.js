@@ -5,6 +5,7 @@ import { html } from 'htm/preact';
 import { useEffect, useState } from 'preact/hooks';
 import { store, navigate, loadProjectStats, loadTmux, loadSchedule, loadProjectsGit, loadUsage, loadUsageHistory, loadBdVersion, loadCliVersions, toggleHubSection, toast, loadHub, requireToken } from '../store.js';
 import { apiPostRaw, AuthError } from '../api.js';
+import { useVisiblePoll } from '../poll.js';
 import { timeAgo, copyToClipboard } from './common.js';
 import { SessionRowCompact, HubTmuxHead } from './TmuxView.js';
 import { ProviderAttribution, formatTokens } from './UsageCharts.js';
@@ -733,24 +734,11 @@ function QuotaSessionsRow() {
     // OpsStrip), so polling it on USAGE_POLL_MS would just re-read the same
     // cached value for no benefit.
     loadCliVersions();
-    // A hidden tab is a tab nobody is reading, so its poll is pure waste —
-    // skip the tick while hidden and catch up when the tab comes back (only
-    // if a full interval has actually elapsed, so alt-tabbing rapidly doesn't
-    // become its own poll loop).
-    let lastAt = Date.now();
-    const tick = () => {
-      if (document.hidden) return;
-      lastAt = Date.now();
-      loadUsage();
-    };
-    const t = setInterval(tick, USAGE_POLL_MS);
-    const onVisible = () => { if (!document.hidden && (Date.now() - lastAt) >= USAGE_POLL_MS) tick(); };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => {
-      clearInterval(t);
-      document.removeEventListener('visibilitychange', onVisible);
-    };
   }, []);
+  // Skips ticks while the tab is hidden and catches up on return — see
+  // public/ui/poll.js, which is where this behavior now lives so that
+  // ScheduleView's usage poll gets it too instead of a copy.
+  useVisiblePoll(() => loadUsage(), USAGE_POLL_MS);
 
   const projects = store.projects.value;
   const hasProjects = Object.keys(projects).length > 0;
