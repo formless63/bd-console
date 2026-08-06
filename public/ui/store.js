@@ -139,8 +139,10 @@ export const store = {
   projectsGit: signal({}),
   projectsGitAvailable: signal(true),
 
-  // provider usage (hub-level; GET /api/usage — Claude Code + Codex quotas)
-  usage: signal({ claude: null, codex: null }),
+  // provider usage (hub-level; GET /api/usage — Claude Code + Codex quotas,
+  // plus Kimi Code stack info: server up/down, version, sessions, tokens —
+  // Kimi publishes no quota, so its entry carries no gauges)
+  usage: signal({ claude: null, codex: null, kimi: null }),
   usageAvailable: signal(true),
 
   // provider usage HISTORY (hub-level; GET /api/usage/history?days=N — token
@@ -666,7 +668,7 @@ export async function markPromptUsed(id) {
 export async function loadUsage({ fresh = false } = {}) {
   try {
     const data = await apiGetRaw('/api/usage' + (fresh ? '?fresh=1' : ''));
-    store.usage.value = data.providers || { claude: null, codex: null };
+    store.usage.value = data.providers || { claude: null, codex: null, kimi: null };
     store.usageAvailable.value = true;
     return store.usage.value;
   } catch (e) {

@@ -293,7 +293,7 @@ const USAGE_POLL_MS = 5 * 60000;
 // provider's rate limit; it lands on the same 5 min as the quota poll purely
 // because that is the right cadence for both, not because they share a timer.
 const USAGE_HISTORY_POLL_MS = 5 * 60000;
-const PROVIDER_LABEL = { claude: 'Claude Code', codex: 'Codex' };
+const PROVIDER_LABEL = { claude: 'Claude Code', codex: 'Codex', kimi: 'Kimi Code' };
 const HISTORY_RANGE_OPTIONS = [7, 30, 90];
 
 // "resets in Xh Ym" / "resets in Ym" — deliberately not timeAgo/relTime
@@ -365,6 +365,16 @@ function summarizeUsage(data) {
   }
   if (data.status === 'token-expired') return 'expired';
   return 'not detected';
+}
+
+// Kimi's contribution to the collapsed-section summary — a server state, not a
+// percentage, because there is no quota to summarize. Returns null when Kimi
+// isn't installed so the summary string stays untouched on machines without it.
+function summarizeKimi(data) {
+  if (!data || data.status === 'not-installed') return null;
+  if (data.status === 'error') return 'unavailable';
+  if (!data.server) return 'not running';
+  return KIMI_STATE_LABEL[data.server.state] || data.server.state || 'unknown';
 }
 
 // Version + "update available" chips for the Claude Code / Codex CLIs,
@@ -481,6 +491,98 @@ function ProviderUsageRow({ name, data }) {
             ${data.scopedLimits.map((lim) => html`<${ScopedLimitRow} key=${lim.model} lim=${lim} />`)}
           </div>`}
       </div>
+    </div>`;
+}
+
+// Kimi Code (`kimi web`) — GET /api/usage's `kimi` block. Deliberately NOT
+// rendered through ProviderUsageRow: Kimi publishes no quota anywhere (see the
+// Kimi section in lib/usage.mjs), so a gauge here would be invented. What it
+// does have is stack info — is the server beating, which version, where it
+// listens, how many sessions/workspaces, and what the newest session spent —
+// so this row carries chips + facts instead of bars, in the same card language.
+//
+// Renders NOTHING when Kimi isn't installed (status 'not-installed', or the
+// block missing entirely on an older server), exactly like a machine without
+// Codex looks in the rows above.
+const KIMI_STATE_LABEL = { running: 'running', stale: 'stale', stopped: 'stopped' };
+
+// Last "/"-separated segment — "kimi-code/k3" -> "k3" for model ids (the
+// provider prefix is identical on every Kimi model and just eats width in a
+// ~350px card), and "/home/me/code/thing" -> "thing" for the fallback
+// workspace name when workspaces.json didn't name it.
+function lastSegment(value) {
+  if (!value) return null;
+  const trimmed = value.replace(/\/+$/, '');
+  const i = trimmed.lastIndexOf('/');
+  return i >= 0 ? trimmed.slice(i + 1) : trimmed;
+}
+
+function KimiServerChip({ server }) {
+  if (!server) {
+    return html`<span class="usage-state-chip state-stopped"
+      title=${'No `kimi web` server record in ~/.kimi-code/server/instances'}>○ not running</span>`;
+  }
+  const state = KIMI_STATE_LABEL[server.state] || server.state || 'unknown';
+  const age = typeof server.heartbeatAgeMs === 'number' ? Math.max(0, Math.round(server.heartbeatAgeMs / 1000)) : null;
+  const staleAfter = typeof server.staleAfterMs === 'number' ? Math.round(server.staleAfterMs / 1000) : null;
+  // Never state-by-color-alone: the glyph and the word both change with state.
+  const glyph = server.state === 'running' ? '●' : server.state === 'stale' ? '◐' : '○';
+  const title = [
+    age != null ? `Heartbeat ${age}s ago` : 'No heartbeat recorded',
+    staleAfter != null ? `the server rewrites it every 15s; treated as stale after ${staleAfter}s` : null,
+    server.state === 'stale' ? 'the process still exists but stopped beating' : null,
+    server.instances > 1 ? `${server.instances} instance records on disk (newest shown)` : null
+  ].filter(Boolean).join(' — ');
+  return html`<span class=${'usage-state-chip state-' + (server.state || 'stopped')} title=${title}>${glyph} ${state}</span>`;
+}
+
+function KimiUsageRow({ data }) {
+  if (!data || data.status === 'not-installed') return null;
+
+  const label = PROVIDER_LABEL.kimi;
+  if (data.status === 'error' || data.status === 'no-data') {
+    return html`
+      <div class="usage-row usage-row-quiet">
+        <span class="usage-row-quiet-name"><span class="usage-provider-name">${label}</span></span>
+        <span class="muted small">${data.status === 'no-data' ? 'installed · no sessions yet' : 'stack info unavailable'}</span>
+      </div>`;
+  }
+
+  const server = data.server;
+  const sessions = data.sessions || { total: 0, workspaces: [] };
+  const workspaces = sessions.workspaces || [];
+  const latest = data.latestSession;
+  const endpoint = server && server.port ? `${server.host || '127.0.0.1'}:${server.port}` : null;
+  const tokens = latest && latest.tokens ? latest.tokens : null;
+
+  return html`
+    <div class="usage-row">
+      <div class="usage-row-head">
+        <span class="usage-provider-name">${label}</span>
+        ${server && server.version && html`<span class="usage-version-chip"
+          title=${'`kimi web` host version, as recorded by the server itself'}>🏷️ ${server.version}</span>`}
+        <${KimiServerChip} server=${server} />
+        ${data.asOf && html`<span class="muted small usage-asof">as of ${timeAgo(data.asOf)}</span>`}
+      </div>
+      <div class="usage-kimi-facts">
+        ${endpoint && html`<span class="usage-kimi-endpoint" title="Address the kimi web server recorded for itself">${endpoint}</span>`}
+        <span>${sessions.total} session${sessions.total === 1 ? '' : 's'}${workspaces.length
+          ? ` · ${workspaces.length} workspace${workspaces.length === 1 ? '' : 's'}`
+          : ''}</span>
+      </div>
+      ${latest && html`
+        <div class="usage-kimi-latest" title=${[
+          latest.title || null,
+          latest.workDir || null,
+          tokens ? `${tokens.input.toLocaleString()} in · ${tokens.output.toLocaleString()} out · ${tokens.cacheRead.toLocaleString()} cache read` : null,
+          tokens && tokens.truncated ? 'token totals partial — session logs exceeded the read budget' : null
+        ].filter(Boolean).join('\n')}>
+          <span class="usage-kimi-latest-label">latest</span>
+          <span class="usage-kimi-latest-name">${latest.workspaceName || lastSegment(latest.workDir) || latest.title || latest.id}</span>
+          ${latest.model && html`<span class="usage-kimi-model">${lastSegment(latest.model)}</span>`}
+          ${tokens && tokens.total > 0 && html`<span class="muted small">${formatTokens(tokens.total)} tokens${tokens.truncated ? '+' : ''}</span>`}
+          ${tokens && tokens.turns > 0 && html`<span class="muted small">· ${tokens.turns} turn${tokens.turns === 1 ? '' : 's'}</span>`}
+        </div>`}
     </div>`;
 }
 
@@ -660,7 +762,10 @@ function QuotaSessionsRow() {
 
   const usage = store.usage.value || {};
   const usageCollapsed = store.collapsedHubSections.value.has('usage');
-  const usageSummary = `Claude ${summarizeUsage(usage.claude)} · Codex ${summarizeUsage(usage.codex)}`;
+  // Kimi joins the collapsed-state summary only when it's actually installed —
+  // on a machine without it the summary reads exactly as it did before.
+  const usageSummary = `Claude ${summarizeUsage(usage.claude)} · Codex ${summarizeUsage(usage.codex)}`
+    + (summarizeKimi(usage.kimi) ? ` · Kimi ${summarizeKimi(usage.kimi)}` : '');
 
   const sessions = store.tmuxSessions.value;
   const tmuxCollapsed = store.collapsedHubSections.value.has('tmux');
@@ -687,6 +792,7 @@ function QuotaSessionsRow() {
             <div class="usage-rows">
               <${ProviderUsageRow} name="claude" data=${usage.claude} />
               <${ProviderUsageRow} name="codex" data=${usage.codex} />
+              <${KimiUsageRow} data=${usage.kimi} />
             </div>
           </div>
         </section>`}

@@ -73,7 +73,13 @@ Top to bottom, `public/ui/components/HubView.js`:
     (`GET /api/usage?fresh=1`), which the server still refuses during a 429
     backoff (15 min) or within ~20s of the previous manual refresh — those
     answers come back marked as cached and say so in the UI. Degrades to
-    "not detected" per provider rather than erroring the whole hub.
+    "not detected" per provider rather than erroring the whole hub. Kimi Code
+    joins this band as a third row when `~/.kimi-code` exists (and renders
+    nothing at all when it doesn't): stack info, not quota — server state from
+    the `kimi web` heartbeat (`running`/`stale`/`stopped`, stale after 90s of
+    silence), host version, host:port, session/workspace counts, and the
+    newest session's model + token total. Kimi publishes no rate-limit data
+    anywhere, so it deliberately gets no gauge.
   - **Usage attribution**: a separate, explicitly-labeled "estimated from
     local session logs, not quota" band — a 7/30/90-day range picker and a
     manual refresh. This is parsed from local session logs on the hub host,
