@@ -115,7 +115,16 @@ docs/upgrading.md        upgrade + single-repo-era migration guide
     add-remove-label/set-parent/add-remove-blocker/set-defer, dispatched in
     `lib/bd.mjs` `runIssueEdit`.
   - `GET /api/tmux`, `GET /api/tmux/preview?session=&lines=` (token-gated —
-    pane contents can hold secrets) → `lib/tmux.mjs`.
+    pane contents can hold secrets) → `lib/tmux.mjs`. `/api/tmux` sessions are
+    decorated with a Termix deep link by `lib/termix.mjs` when Termix is
+    configured; the link is composed server-side so the Termix credential
+    never reaches the browser.
+  - `GET /api/termix/hosts` (token-gated) → `lib/termix.mjs`
+    `fetchTermixHosts`. **The only outbound HTTP request bd-console makes to a
+    user-supplied address.** It exists solely so the Settings page can offer a
+    host picker instead of demanding the user find Termix's integer host id by
+    hand; nothing polls it, and no other code path may call it without that
+    being a deliberate decision. Failures come back as a 502 + prose.
   - `GET /api/schedule`, `POST /api/schedule {prompt,session,runAt}`, `POST
     /api/schedule/cancel {id}` → `lib/schedule.mjs`; 501 when `node:sqlite`
     is unavailable.

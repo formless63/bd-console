@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { store, navigate, loadTmux, loadTmuxPreview, toast } from '../store.js';
 import {
   timeAgo, cwdTail, stripAnsi, matchProject, ageText, copyToClipboard, CopyIcon,
-  agentName, agentTip, isServerMode, promptTip, ServerModeBadge
+  agentName, agentTip, isServerMode, promptTip, ServerModeBadge, TermixLink
 } from './common.js';
 
 const SESSION_POLL_MS = 8000;
@@ -89,7 +89,10 @@ export function SessionRowCompact({ session, projects, onClick }) {
       </span>
       <span class="tmux-cell-age" title="Session age">${ageText(session.created)}</span>
       <span class="tmux-cell-activity" title="Last activity">${session.activity ? timeAgo(session.activity * 1000) : '—'}</span>
-      <span class="tmux-cell-actions"><${CopyAttachButton} name=${session.name} /></span>
+      <span class="tmux-cell-actions">
+        <${TermixLink} session=${session} />
+        <${CopyAttachButton} name=${session.name} />
+      </span>
     </div>`;
 }
 
@@ -139,6 +142,7 @@ function SessionCard({ session, projects, onPreview, onSchedule }) {
       <div class="tmux-card-actions">
         <button class="btn btn-xs" onClick=${onPreview}>Preview</button>
         <button class="btn btn-xs btn-ghost" onClick=${() => copyAttach(session.name)}>Copy attach</button>
+        <${TermixLink} session=${session} />
         ${serverMode
           ? html`<sl-tooltip content=${promptTip(session)}>
               <button class="btn btn-xs btn-ghost" disabled>Schedule a prompt here</button>

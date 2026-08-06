@@ -28,6 +28,7 @@ export const HUB_PATHS = new Set([
   '/api/tmux',
   '/api/tmux/preview',
   '/api/tmux/send',
+  '/api/termix/hosts',
   '/api/usage',
   '/api/usage/history',
   '/api/bd-version',
@@ -94,8 +95,16 @@ export async function apiGet(path) {
 }
 
 // Raw GET without project prefixing (hub-root endpoints).
+//
+// Carries x-bd-token exactly like the POST helpers below, because not every
+// hub-level GET is ungated: /api/tmux/preview (pane contents can hold
+// secrets), /api/usage and /api/termix/hosts (spends the stored Termix
+// credential) all go through authed(). Sending the header on the ungated ones
+// too is inert — the server only ever compares it when a token is configured.
 export async function apiGetRaw(path) {
-  const r = await fetch(path, { headers: { accept: 'application/json' } });
+  const headers = { accept: 'application/json' };
+  if (store.meta.value?.tokenRequired) headers['x-bd-token'] = getToken();
+  const r = await fetch(path, { headers });
   return parse(r);
 }
 
