@@ -61,6 +61,21 @@ npm run smoke
 npm_config_cache=/tmp/bd-console-npm-cache npm pack --dry-run
 ```
 
+The smoke suite is split by domain under `scripts/smoke/` (issues, tmux,
+scheduler, settings, registry, docs, cli, usage, versions, routing, formulas)
+behind the single `scripts/smoke.mjs` entry point. `npm run smoke` runs all of
+them; while iterating on one area, run just that domain:
+
+```bash
+npm run smoke -- usage          # or: node scripts/smoke.mjs usage
+node scripts/smoke.mjs --list   # the domain names
+```
+
+Add new coverage to the domain module it belongs to, not to a new tail on one
+file. Shared fixtures, the scratch-port server, and the `BD_CONSOLE_*_DIR`
+isolation live in `scripts/smoke/harness.mjs` — use `ctx`, never the real
+`~/.config/bd-console` or a real provider directory.
+
 For beginner setup work, also verify the guided init path:
 
 ```bash
