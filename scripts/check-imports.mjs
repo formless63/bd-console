@@ -361,14 +361,18 @@ function resolveExportExists(absPath, name, visited = new Set()) {
 // ---------------------------------------------------------------------
 // 4. File discovery + specifier resolution.
 
-function walk(dir, out = []) {
+// Recursive on purpose for lib/ and scripts/ too, not just public/: a module
+// that grows into a directory (lib/usage.mjs -> lib/usage/*.mjs) would silently
+// drop out of a flat readdir, quietly shrinking coverage at exactly the moment
+// a large refactor lands — the moment this check is worth the most.
+function walk(dir, ext = '.js', out = []) {
   let entries;
   try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return out; }
   for (const e of entries) {
     if (e.name === 'vendor') continue;
     const full = join(dir, e.name);
-    if (e.isDirectory()) walk(full, out);
-    else if (e.isFile() && e.name.endsWith('.js')) out.push(full);
+    if (e.isDirectory()) walk(full, ext, out);
+    else if (e.isFile() && e.name.endsWith(ext)) out.push(full);
   }
   return out;
 }
@@ -402,8 +406,8 @@ function loadImportMapKeys() {
 
 const entryFiles = [
   ...walk(PUBLIC_ROOT),
-  ...readdirSync(join(ROOT, 'lib')).filter((f) => f.endsWith('.mjs')).map((f) => join(ROOT, 'lib', f)),
-  ...readdirSync(join(ROOT, 'scripts')).filter((f) => f.endsWith('.mjs')).map((f) => join(ROOT, 'scripts', f)),
+  ...walk(join(ROOT, 'lib'), '.mjs'),
+  ...walk(join(ROOT, 'scripts'), '.mjs'),
   join(ROOT, 'serve.mjs'),
 ];
 
