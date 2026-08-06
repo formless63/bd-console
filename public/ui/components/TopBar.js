@@ -1,9 +1,14 @@
-// TopBar.js — sticky application header: brand, hub link, live health/export
-// indicator, theme picker, token settings, refresh and quick-capture.
+// TopBar.js — sticky application header for the HUB-LEVEL views: the hub
+// itself (#/), #/tmux, #/schedule, #/settings and #/learn. Brand, nav, theme
+// picker, settings and refresh.
+//
+// Per-project chrome used to live here too (project name, export/health pill,
+// "New issue", "Back to hub"), for the retired classic view. Console 2.0
+// (#/p2/<id>) renders full-viewport with its own header — it never mounts this
+// component — so everything project-scoped is gone from here.
 import { html } from 'htm/preact';
-import { store, navigate, loadIssues, loadDocs, loadHub, tally } from '../store.js';
+import { store, navigate, loadHub } from '../store.js';
 import { THEME_PRESETS, SCHEMES, setPreset, setScheme } from '../theme.js';
-import { syncLabel, syncState } from './common.js';
 import { ThemeSwitch } from './ThemeSwitch.js';
 
 // Desktop-width theme controls — the two Shoelace selects. Hidden at
@@ -56,55 +61,22 @@ function BrandLink({ name }) {
     </button>`;
 }
 
-function HealthPill() {
-  const route = store.route.value;
-  if (route.view !== 'project') return null;
-  const meta = store.meta.value || {};
-  const exp = meta.export;
-  const t = tally.value;
-  const state = syncState(exp);
-  return html`
-    <sl-tooltip content=${'Export ' + syncLabel(exp) + '. bd ' + (meta.health?.bdVersion || '?')}>
-      <div class=${'health-pill state-' + state}>
-        <span class="hp-dot"></span>
-        <span class="hp-count">${store.issues.value.length}</span>
-        <span class="hp-sep">·</span>
-        <span class="hp-open">${t.open} open</span>
-        <span class="hp-blocked">${t.blocked} blocked</span>
-      </div>
-    </sl-tooltip>`;
-}
-
 export function TopBar() {
   const route = store.route.value;
-  const inProject = route.view === 'project';
-  const name = inProject ? (store.meta.value?.name || route.projectId) : 'bd-console';
 
-  const refresh = async () => {
-    if (route.view === 'hub') { loadHub(); return; }
-    await loadIssues({ force: true });
-    if (store.docs.value.length) loadDocs();
-  };
+  // Every view that mounts this bar is hub-level, so there is only one thing
+  // left to reload.
+  const refresh = () => loadHub();
 
   return html`
     <header class="topbar">
       <div class="brand">
-        ${inProject
-          ? html`<button class="icon-btn ghost hub-back" title="Back to hub" onClick=${() => navigate('#/')}>
-              <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M10 12L6 8l4-4v8z"/></svg>
-              <span>Hub</span>
-            </button>`
-          : html`<span class="brand-dot"></span>`}
-        <${BrandLink} name=${name} />
+        <span class="brand-dot"></span>
+        <${BrandLink} name="bd-console" />
       </div>
 
       <div class="topbar-right">
         ${HubNav()}
-        ${HealthPill()}
-        ${inProject && html`<button class="btn btn-accent new-issue-trigger" onClick=${() => (store.createOpen.value = true)} title="New issue (i)">
-          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M8 1v6H2v2h6v6h2V9h6V7h-6V1z"/></svg>
-          <span class="hide-sm">New issue</span>
-        </button>`}
         ${ThemePicker()}
         <${ThemeSwitch} className="theme-switch-mobile" />
         <button class=${'icon-btn settings-trigger' + (route.view === 'settings' ? ' active' : '')} title="Settings" onClick=${() => navigate('#/settings')}>

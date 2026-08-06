@@ -1,5 +1,5 @@
-/* Hub card: lay out the classic "Open project" CTA next to the new Console 2.0
-   entry point (this stylesheet loads globally, so it can restyle the hub card). */
+/* Hub card: lay out the project-card CTA row (this stylesheet loads globally,
+   so it can restyle the hub card). */
 .hub-card-cta { display: flex; align-items: center; gap: 10px; }
 .hub-c2-open { margin-left: auto; color: var(--purple); border-color: color-mix(in srgb, var(--purple) 40%, var(--border)); }
 .hub-c2-open:hover { border-color: var(--purple); background: color-mix(in srgb, var(--purple) 12%, transparent); }
@@ -135,8 +135,6 @@
   font-weight: 600; padding: 6px 12px; border-radius: var(--radius-sm); cursor: pointer;
   color: var(--accent-ink); background: var(--c2-neon); border: 1px solid var(--c2-neon); }
 .c2-new:hover { filter: brightness(1.08); }
-.c2-classic { font-size: 12px; color: var(--text-dim); text-decoration: none; padding: 5px 9px; border: 1px solid var(--c2-line); border-radius: var(--radius-sm); }
-.c2-classic:hover { color: var(--text); border-color: var(--c2-line-2); }
 .c2-pulse-toggle { display: none; }
 
 .c2-header-echo { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-dim); min-height: 22px; }
@@ -775,8 +773,6 @@ select.c2-linktype { flex: 0 0 auto; max-width: 140px; }
   .c2-omni { order: 3; flex-basis: 100%; max-width: none; }
   .c2-hublink, .c2-setlink { min-width: 44px; min-height: 44px; }
   .c2-header-right { gap: 6px; }
-  .c2-classic { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; padding: 6px 10px; }
-  .c2-classic .c2-btn-label { display: none; }
   .c2-pulse-toggle { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 6px 12px; }
   .c2-sync { display: inline-flex; align-items: center; min-height: 44px; padding: 6px 8px; }
   .c2-header-echo { flex-wrap: wrap; row-gap: 4px; }
@@ -1212,8 +1208,8 @@ select.c2-linktype { flex: 0 0 auto; max-width: 140px; }
 .c2-workflow.collapsed .c2-workflow-summary { display: flex; }
 
 @media (max-width: 768px) {
-  /* Two more header controls have to fit next to +New / sync / classic on a
-     phone: condense both to icons, give them real touch targets, and let the
+  /* Two more header controls have to fit next to +New / sync on a phone:
+     condense both to icons, give them real touch targets, and let the
      right-hand cluster wrap rather than push the row into a scroll. */
   .c2-molbtn .c2-btn-label { display: none; }
   .c2-learnlink .c2-btn-label { display: none; }

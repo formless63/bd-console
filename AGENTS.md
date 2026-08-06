@@ -69,9 +69,12 @@ lib/
 public/
   index.html           shell, import map, theme-before-paint <head> script
   app.js               entry point: boots theme + Shoelace, routing, global keyboard shortcuts
-  ui/                  store.js (signals-based state + routing), theme.js, api.js, markdown.js,
-                        components/ (App, HubView, ProjectView, IssueList, IssueDetail,
-                        FiltersPane, DocsView, CreateIssueDialog, TmuxView, ScheduleView, TopBar, TokenDialog, Toasts, ...)
+  ui/                  store.js (signals-based state), routing.js (pure hash router),
+                        theme.js, api.js, markdown.js, learn.js,
+                        components/ (App, HubView, TopBar, CreateIssueDialog, TmuxView,
+                        ScheduleView, SettingsView, LearnView, Toasts, ...)
+                        console2/ (Console2, Pulse, Flow, MapView, Docs2, Detail, Omnibar, ...)
+                                  — the per-project view
   vendor/               self-hosted Preact, htm, @preact/signals, preact-iso, Open Props, Shoelace
   styles.css            CSS custom-property theme tokens + components
 package.json            bin: bd-console -> serve.mjs, bd-console-init -> scripts/init.mjs
@@ -154,13 +157,18 @@ docs/upgrading.md        upgrade + single-repo-era migration guide
   (`ui/theme.js`), wires hash-based routing and global keyboard shortcuts,
   then renders `<App/>`. `ui/store.js` holds all state as signals
   (`store.*`) plus `parseHash`/`navigate` for routing.
-- **Routing:** hash-based (`#/`, `#/p/<projectId>`, `#/p/<projectId>/docs`,
-  plus tmux and scheduler views), parsed by `parseHash()` in `ui/store.js` —
-  deep links work even served as static files.
-- Renders the **Hub** view (`HubView.js`, project switcher) and, per
-  project, the **Beads** view (`ProjectView.js`/`IssueList.js`/`IssueDetail.js`,
-  filter/sort by status/priority/type/label, search, group-by-epic,
-  ready-only, plus inline edit ops) and **Docs** view (`DocsView.js`).
+- **Routing:** hash-based (`#/`, `#/p2/<projectId>`, plus `#/tmux`,
+  `#/schedule`, `#/settings`, `#/learn`), parsed by `parseRoute()` in
+  `ui/routing.js` (pure and import-free, so smoke asserts it in Node) and
+  wrapped by `parseHash()` in `ui/store.js` — deep links work even served as
+  static files. The retired classic route `#/p/<id>` (and `#/p/<id>/docs`)
+  redirects in place to `#/p2/<id>`; keep it that way, those URLs are out in
+  the wild.
+- Renders the **Hub** view (`HubView.js`, project switcher) and, per project,
+  **Console 2.0** (`ui/console2/`) — the one per-project view: omnibar, Pulse
+  bar, Flow/Map/Docs canvas and the Detail slide-over with the inline edit
+  ops. The classic three-pane view was retired in bd-console-0nd; don't
+  reintroduce a second per-project surface.
 - **Derived issue state** is computed client-side from `dependencies[]`:
   `parent-child` → parent/children; other types → blocked-by/blocks; an open issue
   with unresolved blockers shows as **blocked**; open + none = **ready**.

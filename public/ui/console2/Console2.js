@@ -9,12 +9,12 @@ import {
   store, navigate, loadProjectMeta, loadIssues, loadDocs, loadTmux, selectIssue,
 } from '../store.js';
 
-// app.js's syncRoute() only manages store.projectId for the classic #/p/<id>
-// route; on our #/p2/<id> route it resets projectId to null (its "not a
-// project" branch). This synchronous signals effect re-pins projectId whenever
-// the console2 route is active, so api.js's project-prefixing stays correct
-// without touching app.js. Runs synchronously on any conflicting write, so the
-// null is never observable to an in-flight fetch.
+// app.js's syncRoute() resets store.projectId to null on every non-console2
+// route (its "not a project" branch). This synchronous signals effect re-pins
+// projectId whenever the console2 route is active, so api.js's
+// project-prefixing stays correct without touching app.js. Runs synchronously
+// on any conflicting write, so the null is never observable to an in-flight
+// fetch.
 effect(() => {
   const r = store.route.value;
   if (r.view === 'console2' && r.projectId && store.projectId.value !== r.projectId) {
@@ -97,28 +97,24 @@ function Header() {
           </a>
           <div class="c2-themesw-header"><${ThemeSwitch} /></div>
           ${/* Console 2.0 shipped with no route to #/settings at all: the only
-                ways in were detouring through the classic view's gear or
-                tripping a 401 redirect. Icon-only and unlabelled on purpose —
-                the gear is the same affordance the classic top bar uses, and
-                the labelled controls beside it (+New / Templates / Guide) are
-                things you do, while this, the hub link and "classic view" are
+                ways in were a detour through the (now retired) classic view's
+                gear or tripping a 401 redirect. Icon-only and unlabelled on
+                purpose — the labelled controls beside it (+New / Templates /
+                Guide) are things you do, while this and the hub link are
                 places you go, which this header already renders as bare
                 glyphs. It stays in the HEADER at every breakpoint, unlike the
                 theme switch, which hands off to the pulse-details panel at
                 <=768px: that one is a multi-control popover that genuinely
                 can't work in a 44px slot, whereas this is a single navigation
-                target shaped exactly like the hub / classic links that already
-                survive there — and burying the fix for "Settings is
-                unreachable" inside a drawer that's collapsed by default on
-                phones would just rebuild the detour it removes. */ ''}
+                target shaped exactly like the hub link that already survives
+                there — and burying the fix for "Settings is unreachable"
+                inside a drawer that's collapsed by default on phones would
+                just rebuild the detour it removes. */ ''}
           <a class="c2-setlink" href="#/settings" aria-label="Settings"
             title="Settings — access token, bd health, docs roots, appearance">
             <span class="c2-icon" aria-hidden="true">⚙</span>
           </a>
           <span class=${'c2-sync sync-' + syncState} title=${'Issue export: ' + syncState}>${syncState}</span>
-          <a class="c2-classic" href=${'#/p/' + encodeURIComponent(pid || '')} title="Open the classic project view">
-            <span class="c2-btn-label">classic view </span><span class="c2-icon" aria-hidden="true">→</span>
-          </a>
         </div>
       </div>
       <div class="c2-header-echo"><${CliFlash} /></div>
@@ -242,6 +238,9 @@ export function Console2() {
       <${DistillDialog} />
       <${FormulaEditorDialog} />
       ${detailOpen && html`<div class="c2-scrim" aria-hidden="true" onClick=${() => selectIssue(null)}></div>`}
-      ${store.issuesError.value && html`<div class="c2-boot-err" role="alert">Failed to load issues: ${store.issuesError.value} · <a href=${'#/p/' + encodeURIComponent(pid || '')}>classic view</a></div>`}
+      ${/* The escape hatch here used to be "open the classic view instead".
+            That view is retired (and #/p/<id> now redirects straight back
+            here), so the only honest offer left is a retry and the hub. */ ''}
+      ${store.issuesError.value && html`<div class="c2-boot-err" role="alert">Failed to load issues: ${store.issuesError.value} · <a href="#" onClick=${(e) => { e.preventDefault(); loadIssues({ force: true }); }}>retry</a> · <a href="#/">hub</a></div>`}
     </div>`;
 }

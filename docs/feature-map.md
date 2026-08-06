@@ -17,35 +17,33 @@ needs its own `.beads/` (a `bd init`'d beads database). The hub (`#/`) is a
 landing page listing every registered project as a card; clicking a card
 opens that project.
 
-**Console 2.0 is the primary project view.** Hub cards route straight to it
+**Console 2.0 is the only project view.** Hub cards route straight to it
 (`#/p2/<id>`) — a full-viewport "mission control" screen (omnibar, pulse
-stats, a three-mode canvas, a relationship-rich Detail slide-over). There is
-also an older **classic view** (`#/p/<id>`), still fully functional, reachable
-via Console 2.0's own "classic view →" header link, but no longer a hub
-destination — see [Recently added](#recently-added) for what that means in
-practice, and the caveats under each feature below for what classic view is
-missing relative to Console 2.0.
+stats, a three-mode canvas, a relationship-rich Detail slide-over). The older
+**classic view** (`#/p/<id>`, a three-pane issues layout plus a read-only docs
+tab) was retired in bd-console-0nd: its components are deleted, and the two
+hashes it owned (`#/p/<id>` and `#/p/<id>/docs`) now redirect to `#/p2/<id>`
+so old bookmarks still land on the project.
 
 ## 2. Every page/route
 
-Routing is hash-based (`public/ui/store.js`'s `parseHash()`), so every one of
-these is a shareable/bookmarkable URL as well as a click path.
+Routing is hash-based (`public/ui/routing.js`'s `parseRoute()`, wrapped by
+`public/ui/store.js`'s `parseHash()`), so every one of these is a
+shareable/bookmarkable URL as well as a click path. Every route except
+`#/p2/<id>` renders under the hub-level top bar
+(`public/ui/components/TopBar.js`); Console 2.0 is full-viewport with its own
+header.
 
 | Route | How you get there | What it's for |
 |---|---|---|
-| `#/` | Default landing page; the ⌂ icon in Console 2.0's header; the "Hub" back button in classic view's top bar | Global Hub: project cards, live tmux/scheduler summary, bd-version status, usage gauges |
-| `#/p2/<id>` | Click a project card on the hub (the *only* click-through the cards offer) | Console 2.0 — the primary per-project view (§4) |
-| `#/p/<id>` | Console 2.0's "classic view →" header link; a bookmarked/typed URL | Classic project view: three-pane issues layout (filters · list · detail) |
-| `#/p/<id>/docs` | The "Docs" tab inside classic view | Classic docs browser (read + open a markdown file; no inline editor or promote-to-issue — those are Console 2.0's Docs mode only) |
-| `#/tmux` | Hub's "Overview" ops-strip chip; hub's "Terminal sessions" section "View all →"; classic top bar's Terminal nav icon; a tmux session card's own click | Grid of every tmux session/pane on the hub's host, with a live scrollback preview drawer |
-| `#/schedule` | Hub's "Overview" ops-strip chip; classic top bar's Schedule nav icon; a tmux session card's "Schedule a prompt here" button (preloads that session) | Create/list/cancel scheduled prompts (queued keystrokes into a named tmux session at a future time) |
-| `#/settings` | Classic top bar's gear icon; an automatic redirect whenever a write is rejected for a missing/wrong token (`requireToken()` in `store.js`) | Server settings (read-only), Appearance, Beads CLI version/update, browser + server write tokens, Default epics |
+| `#/` | Default landing page; the ⌂ icon in Console 2.0's header; the top bar's brand link | Global Hub: project cards, live tmux/scheduler summary, bd-version status, usage gauges |
+| `#/p2/<id>` | Click a project card on the hub (the *only* click-through the cards offer) | Console 2.0 — the per-project view (§4) |
+| `#/p/<id>`, `#/p/<id>/docs` | An old bookmark or link only — nothing in the UI emits these any more | **Retired** (bd-console-0nd). Redirected in place to `#/p2/<id>` via `history.replaceState`, so no history entry is left behind and Back doesn't bounce off it (`legacyProjectHash()` in `public/ui/routing.js`) |
+| `#/tmux` | Hub's "Overview" ops-strip chip; hub's "Terminal sessions" section "View all →"; the top bar's Terminal nav icon; a tmux session card's own click | Grid of every tmux session/pane on the hub's host, with a live scrollback preview drawer |
+| `#/schedule` | Hub's "Overview" ops-strip chip; the top bar's Schedule nav icon; a tmux session card's "Schedule a prompt here" button (preloads that session) | Create/list/cancel scheduled prompts (queued keystrokes into a named tmux session at a future time) |
+| `#/settings` | The top bar's gear icon; Console 2.0's own ⚙ header link; an automatic redirect whenever a write is rejected for a missing/wrong token (`requireToken()` in `store.js`) | Server settings (read-only), Appearance, Beads CLI version/update, browser + server write tokens, Default epics |
+| `#/learn` | Console 2.0's "? Guide" header link; "Read more" in any concept tip | The concepts reference — every bead/link-type concept the UI links to |
 | anything unrecognized | — | Falls back to the hub (`#/`) |
-
-**Caveat:** Console 2.0's own header has no Settings link. From Console 2.0
-you reach `#/settings` only by clicking "classic view →" first and then the
-gear icon, or by hitting a 401 on a write (which auto-navigates you there with
-a toast). This is easy to miss the first time you need it.
 
 ## 3. The hub (`#/`)
 
@@ -104,14 +102,13 @@ Top to bottom, `public/ui/components/HubView.js`:
   a labeled repo chip linking to GitHub/GitLab/etc.), status stat pills
   (Ready/Active/Blocked), a velocity pill (closed in the last 7 days) and an
   open-bugs pill when non-zero. **The entire card is one click-through to
-  Console 2.0** (`#/p2/<id>`) — there is no separate control to land on the
-  classic view from here.
+  Console 2.0** (`#/p2/<id>`).
 - **Empty state**: "No projects registered. Run `bd-console add` inside a
   project to register it."
 
 ## 4. Console 2.0 (`#/p2/<id>`)
 
-`public/ui/console2/Console2.js`. A full-viewport view with no classic top
+`public/ui/console2/Console2.js`. A full-viewport view with no hub-level top
 bar — its own header, a persistent **Pulse** stats bar, a segmented **Canvas**
 (Flow / Map / Docs), and a right-hand **Detail** slide-over for the selected
 issue.
@@ -121,13 +118,15 @@ issue.
 - **⌂** — back to the hub.
 - **Brand** — project name/id, "CONSOLE 2.0 · MISSION CONTROL".
 - **Omnibar** — the centerpiece command input (§5).
-- **+ New** — opens the same full-featured `CreateIssueDialog` classic view
-  uses (type/priority/labels/description/acceptance/epic/assignee) — the
+- **+ New** — opens the full-featured `CreateIssueDialog`
+  (type/priority/labels/description/acceptance/epic/assignee) — the
   omnibar's own plain-text mode only does quick triage capture, not this.
+- **⚗ Templates** — the molecule/formula pour dialog.
+- **? Guide** — `#/learn`, the concepts reference.
 - **Theme switch** — preset + light/dark/auto popover.
+- **⚙** — `#/settings`.
 - **Sync chip** — `synced` / `stale` / `error` / `unknown`, reflecting the
   freshness of the `.beads/issues.jsonl` export this view is reading from.
-- **classic view →** — the *only* way back to `#/p/<id>` from here.
 - **CLI-flash strip** (directly under the header) — every write you make
   through Console 2.0 echoes the literal `bd`/`tmux` command it just ran
   ("✓ ran `$ bd update … --claim`"), with copy/dismiss — this is Console
@@ -232,8 +231,7 @@ a molecule root does:
     … Run `bd show <id>` for full context."), pick a *live* tmux session (no
     default preselected — you must choose, a deliberate anti-footgun after an
     earlier stray-prompt incident), then "Send now" or pick a datetime and
-    "Schedule…". **This section, and the Pulse rail's "delegate here", exist
-    only in Console 2.0** — the classic view has no equivalent.
+    "Schedule…".
 13. **Comments** — live via `bd comments --json` (never stale), ⌘/Ctrl+Enter
     to submit.
 14. **Meta** — assignee, created/updated/closed timestamps.
@@ -310,7 +308,7 @@ Console 2.0: type into the omnibar, Enter. Anywhere else (or via the `i`
 shortcut): the full "+ New issue" dialog, intent chip "Idea / triage".
 
 **2. File a full issue with an epic.**
-Press `i` (or click "+ New" in Console 2.0 / "New issue" in classic view) →
+Press `i` (or click "+ New" in Console 2.0) →
 `CreateIssueDialog`: pick an intent chip (Log a bug / New feature / Task /
 Idea·triage / Epic / Chore — each maps to a `bd create` type plus default
 labels), enter a title (the only required field), optionally add a
@@ -384,16 +382,16 @@ onto this machine. Warns if more than one `bd` binary shadows another on
 
 ## 7. Keyboard shortcuts
 
-Global (both classic project view and Console 2.0, ignored while typing in a
-field — `public/app.js`'s `onKeyDown`):
+Global (ignored while typing in a field — `public/app.js`'s `onKeyDown`).
+`j`/`k` (list cursor) and `c` (focus the comment box) were retired with the
+classic view in bd-console-0nd: both targeted DOM only its list/detail panes
+rendered.
 
 | Shortcut | Action | Where |
 |---|---|---|
-| `i` | Open the full "New issue" dialog | Classic project view and Console 2.0 |
-| `j` / `k` | Select the next/previous issue in the list | Classic project view only |
-| `/` | Focus the issue search field | Classic project view (and, redundantly, Console 2.0 — the omnibar shares the same `.issue-search` class, so this and the omnibar's own `/` handler both target it) |
-| `c` | Focus the "Add a comment" box | Classic project view only (Console 2.0's comment box isn't wired to this shortcut) |
-| `Esc` | Close the open dialog / mobile filters drawer | Both |
+| `i` | Open the full "New issue" dialog | Console 2.0 |
+| `/` | Focus the search field | Anywhere; the omnibar carries the `.issue-search` class this targets, so in Console 2.0 this and the omnibar's own `/` handler both hit it |
+| `Esc` | Close the open dialog | Anywhere |
 
 Console 2.0's omnibar (`public/ui/console2/Omnibar.js`), independent of the
 above:
@@ -458,16 +456,14 @@ graph, and molecule support existed:
   action.
 - **Global Hub + Console 2.0 architecture** — the umbrella change behind all
   of the above: one hub server registering many projects, with Console 2.0 as
-  the primary per-project view. The older classic view (`#/p/<id>`) still
-  works but is no longer a hub destination — see the caveat below.
+  the per-project view.
+- **Classic view retired** (bd-console-0nd) — `ProjectView`/`IssueList`/
+  `IssueDetail`/`FiltersPane`/`DocsView` are deleted; `#/p/<id>` and
+  `#/p/<id>/docs` redirect to `#/p2/<id>`. Every feature had been shipping
+  twice; there is now one place for each.
 
 ### Caveats worth knowing
 
-- **Classic view is being phased out as a hub destination**, not removed:
-  hub project cards go straight to Console 2.0; classic view survives as
-  Console 2.0's own "classic view →" escape hatch. Some newer features exist
-  **only** in Console 2.0 — Delegate-to-tmux, the dependency Map, and the
-  molecule Steps/Burn sections have no classic-view equivalent.
 - **Molecule dry-run previews are opaque text, not structured data.**
   `bd mol pour/distill/burn --dry-run` silently ignores `--json` even when
   it's passed — bd-console renders the raw stdout verbatim rather than
@@ -482,8 +478,5 @@ graph, and molecule support existed:
   resolution was found to be unreliable on the installed CLI version during
   design research. See `docs/molecules-design.md` §2/§8 for the full
   reasoning.
-- **Settings has no direct link from Console 2.0** — reach it via
-  "classic view →" then the gear icon, or via the automatic redirect on a
-  rejected write.
 - **Formula authoring has no UI anywhere** — formulas are files on disk; the
   Molecule dialog only ever reads them.

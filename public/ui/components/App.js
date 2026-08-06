@@ -4,7 +4,6 @@ import { html } from 'htm/preact';
 import { store } from '../store.js';
 import { TopBar } from './TopBar.js';
 import { HubView } from './HubView.js';
-import { ProjectView } from './ProjectView.js';
 import { TmuxView } from './TmuxView.js';
 import { ScheduleView } from './ScheduleView.js';
 import { SettingsView } from './SettingsView.js';
@@ -15,7 +14,6 @@ import { LearnView } from './LearnView.js';
 import { isLearnHash } from '../learn.js';
 
 function CurrentView(route) {
-  if (route.view === 'project') return html`<${ProjectView} />`;
   if (route.view === 'tmux') return html`<${TmuxView} />`;
   if (route.view === 'schedule') return html`<${ScheduleView} />`;
   if (route.view === 'settings') return html`<${SettingsView} />`;
@@ -41,14 +39,14 @@ export function App() {
     `;
   }
 
-  // Console 2.0 is a full-viewport flagship view — it renders without the
-  // classic TopBar chrome, but keeps global Toasts.
+  // Console 2.0 is THE per-project view (#/p2/<id>, and where the retired
+  // #/p/<id> redirects to). Full-viewport: it renders its own header instead
+  // of the hub-level TopBar, but keeps global Toasts.
   if (route.view === 'console2') {
     // CreateIssueDialog rides along: Console 2.0's "+ New" button and the `i`
-    // shortcut drive the same store.createOpen signal the classic view uses,
-    // so the full-fidelity create flow (type, labels, acceptance, epic
-    // target) is reachable here too — the omnibar only does quick triage
-    // capture.
+    // shortcut drive the same store.createOpen signal, so the full-fidelity
+    // create flow (type, labels, acceptance, epic target) is reachable here —
+    // the omnibar only does quick triage capture.
     return html`<${Console2} /><${CreateIssueDialog} /><${Toasts} />`;
   }
   return html`
