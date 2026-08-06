@@ -489,8 +489,20 @@ npm_config_cache=/tmp/bd-console-npm-cache npm pack --dry-run
   the scheduler (create/list/cancel + a tick-driven failure case), daemon
   `start` supersede behavior, systemd unit-file generation, `update
   --dry-run`, `settings` set/list/unset, and the non-TTY first-run defaults
-  path. It never touches your real `~/.config/bd-console` or a real
-  systemd user session.
+  path. It never touches your real `~/.config/bd-console`, your real
+  `~/.claude` / `~/.codex` / `~/.kimi-code` / `~/.gemini`, or a real systemd
+  user session.
+- The suite is split by domain under `scripts/smoke/`, with
+  `scripts/smoke.mjs` as the single entry point. Run one domain while you
+  iterate on it:
+
+  ```bash
+  npm run smoke -- usage        # or: node scripts/smoke.mjs usage
+  node scripts/smoke.mjs docs formulas
+  node scripts/smoke.mjs --list # the domain names
+  ```
+
+  A plain `npm run smoke` still runs every domain.
 - `npm pack --dry-run` confirms the published tarball contains the expected
   files.
 
