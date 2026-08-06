@@ -1,6 +1,6 @@
 // console2/state.js — local UI state for the Console 2.0 mission-control view.
-// Kept separate from the global store so the classic app is untouched; issue
-// data itself still lives in the shared store (store.issues, byId, …).
+// Kept separate from the global store, which owns the shared/hub-level state;
+// issue data itself still lives there (store.issues, byId, …).
 import { signal } from '@preact/signals';
 
 export const c2 = {

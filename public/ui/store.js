@@ -12,6 +12,7 @@ import {
   MOLECULE_TYPE, CONTAINER_TYPES, isContainerType, isContainer, isMolecule,
   childrenOfIssue, containerGroups, moleculeRootOf, moleculeRollup,
 } from './relationships.js';
+import { legacyProjectHash, parseRoute } from './routing.js';
 
 // Server text for the 501 the scheduler routes return when node:sqlite isn't
 // available (Node < 22) — used to tell "feature unavailable" apart from a
@@ -79,14 +80,10 @@ export const store = {
   issuesError: signal(null),
   generatedAt: signal(null),
 
-  // filters + view controls
-  filters: signal({ status: [], priority: [], type: [], label: [] }),
-  search: signal(''),
-  groupEpic: signal(true),
-  readyOnly: signal(false),
-  sort: signal({ key: 'priority', dir: 1 }),
+  // selection (Console 2.0's Flow/Map/Detail; the classic list's own
+  // filter/sort/group signals retired with it — Console 2.0 keeps that state
+  // in console2/state.js)
   selectedId: signal(null),
-  collapsedIssueGroups: signal(new Set(lsGet('bd_issue_groups_collapsed', []))),
 
   // comments (per selected issue)
   comments: signal([]),
@@ -99,7 +96,6 @@ export const store = {
   selectedDocPath: signal(null),
   docContent: signal(null),
   docLoading: signal(false),
-  collapsedDocGroups: signal(new Set(lsGet('bd_docs_collapsed', []))),
 
   // epics (for the create-issue dialog's "target epic" picker)
   epics: signal([]),
@@ -124,7 +120,6 @@ export const store = {
   // ui chrome
   toasts: signal([]),
   createOpen: signal(false),
-  mobileFiltersOpen: signal(false),
 
   // settings (#/settings)
   settings: signal(null),
@@ -248,113 +243,28 @@ export function supersedesOf(id) { return supersedes(id, store.issues.value); }
 export function duplicatedByOf(id) { return duplicatedBy(id, store.issues.value); }
 
 export const PRI_LABEL = ['P0', 'P1', 'P2', 'P3', 'P4'];
-const STATUS_ORDER = { in_progress: 0, blocked: 1, open: 2, closed: 3 };
-
-// ---------------------------------------------------------------------------
-// Filtering / sorting / grouping — a single computed feeding the list.
-// ---------------------------------------------------------------------------
-function passesFilters(i) {
-  const f = store.filters.value;
-  if (f.status.length && !f.status.includes(effStatus(i))) return false;
-  if (f.priority.length && !f.priority.includes(i.priority)) return false;
-  if (f.type.length && !f.type.includes(i.issue_type)) return false;
-  if (f.label.length && !(i.labels || []).some((l) => f.label.includes(l))) return false;
-  if (store.readyOnly.value && !isReady(i)) return false;
-  const q = store.search.value.trim().toLowerCase();
-  if (q && !(`${i.id} ${i.title} ${i.description || ''}`.toLowerCase().includes(q))) return false;
-  return true;
-}
-function sortIssues(list) {
-  const { key, dir } = store.sort.value;
-  return list.slice().sort((a, b) => {
-    let av, bv;
-    if (key === 'status') { av = STATUS_ORDER[effStatus(a)]; bv = STATUS_ORDER[effStatus(b)]; }
-    else if (key === 'priority') { av = a.priority; bv = b.priority; }
-    else { av = a[key] || ''; bv = b[key] || ''; }
-    if (av < bv) return -dir;
-    if (av > bv) return dir;
-    return a.id.localeCompare(b.id);
-  });
-}
-
-// Produces a flat list of render rows: {kind:'group'|'issue', ...}
-export const listRows = computed(() => {
-  const shown = store.issues.value.filter(passesFilters);
-  if (!store.groupEpic.value) {
-    return sortIssues(shown).map((i) => ({ kind: 'issue', issue: i }));
-  }
-  const rows = [];
-  const collapsed = store.collapsedIssueGroups.value;
-  const childMap = new Map();
-  for (const i of shown) {
-    const p = parentOf(i);
-    if (p) { if (!childMap.has(p)) childMap.set(p, []); childMap.get(p).push(i); }
-  }
-  const rendered = new Set();
-  // Containers = epics AND molecule roots (relationships.js's isContainer).
-  // A poured molecule's steps carry the same parent-child row an epic's
-  // children do, so the moment the container test stops being literally
-  // `=== 'epic'` this grouping works for molecules unchanged. The group key
-  // stays `epic:<id>`-prefixed so already-persisted collapsed-group state in
-  // localStorage keeps matching.
-  const containers = sortIssues(shown.filter(isContainer));
-  for (const e of containers) {
-    const kids = sortIssues(childMap.get(e.id) || []);
-    const key = 'epic:' + e.id;
-    rows.push({ kind: 'group', key, title: e.title, epic: e, count: kids.length });
-    rendered.add(e.id);
-    if (!collapsed.has(key)) for (const k of kids) { rows.push({ kind: 'issue', issue: k, indent: true }); rendered.add(k.id); }
-  }
-  const orphans = sortIssues(shown.filter((i) => !rendered.has(i.id) && !parentOf(i) && !isContainer(i)));
-  if (orphans.length) {
-    const key = 'standalone';
-    rows.push({ kind: 'group', key, title: 'Standalone', count: orphans.length });
-    if (!collapsed.has(key)) for (const o of orphans) { rows.push({ kind: 'issue', issue: o }); rendered.add(o.id); }
-  }
-  const leftover = sortIssues(shown.filter((i) => !rendered.has(i.id)));
-  for (const o of leftover) rows.push({ kind: 'issue', issue: o });
-  return rows;
-});
-
-export const visibleIssues = computed(() => listRows.value.filter((r) => r.kind === 'issue').map((r) => r.issue));
-
-// Facet counts for filter chips.
-export const facets = computed(() => {
-  const count = (fn) => {
-    const m = new Map();
-    for (const i of store.issues.value) for (const v of [].concat(fn(i))) { if (v == null) continue; m.set(v, (m.get(v) || 0) + 1); }
-    return m;
-  };
-  return {
-    status: count((i) => effStatus(i)),
-    priority: count((i) => i.priority),
-    type: count((i) => i.issue_type),
-    label: count((i) => i.labels || []),
-  };
-});
-
-export const tally = computed(() => {
-  const t = { open: 0, in_progress: 0, blocked: 0, closed: 0 };
-  for (const i of store.issues.value) { const s = effStatus(i); if (t[s] != null) t[s]++; }
-  return t;
-});
+// Filtering / sorting / grouping / facet counts, and the flat list-row model
+// they fed, retired with the classic view's three-pane layout — Console 2.0
+// derives its lanes, counts and search from console2/derive.js over the same
+// store.issues signal.
 
 // ---------------------------------------------------------------------------
 // Routing
 // ---------------------------------------------------------------------------
+// The parsing itself lives in routing.js (pure, import-free, smoke-tested in
+// Node). This wrapper adds the one browser-only behaviour: a retired classic
+// hash (`#/p/<id>`, `#/p/<id>/docs`) is rewritten in place to its Console 2.0
+// equivalent. replaceState, not `location.hash = …`, on purpose — it leaves no
+// history entry (so Back doesn't bounce off the redirect) and fires no
+// hashchange (so this call can't re-enter), and the route we return is already
+// the target's.
 export function parseHash() {
-  const h = (location.hash || '').replace(/^#/, '');
-  const parts = h.split('/').filter(Boolean); // ['p','id','docs']
-  if (parts[0] === 'p' && parts[1]) {
-    return { view: 'project', projectId: decodeURIComponent(parts[1]), tab: parts[2] === 'docs' ? 'docs' : 'issues' };
+  const target = legacyProjectHash(location.hash);
+  if (target) {
+    try { history.replaceState(null, '', target); } catch { /* keep the old URL; the route below is still right */ }
+    return parseRoute(target);
   }
-  if (parts[0] === 'p2' && parts[1]) {
-    return { view: 'console2', projectId: decodeURIComponent(parts[1]) };
-  }
-  if (parts[0] === 'tmux') return { view: 'tmux' };
-  if (parts[0] === 'schedule') return { view: 'schedule' };
-  if (parts[0] === 'settings') return { view: 'settings' };
-  return { view: 'hub' };
+  return parseRoute(location.hash);
 }
 export function navigate(hash) { if (location.hash !== hash) location.hash = hash; }
 
@@ -373,34 +283,8 @@ export function dismissToast(id) {
 }
 
 // ---------------------------------------------------------------------------
-// Filter actions
+// Collapse actions
 // ---------------------------------------------------------------------------
-export function toggleFilter(kind, value) {
-  const f = store.filters.value;
-  const has = f[kind].includes(value);
-  store.filters.value = { ...f, [kind]: has ? f[kind].filter((v) => v !== value) : [...f[kind], value] };
-}
-export function clearFilters() {
-  store.filters.value = { status: [], priority: [], type: [], label: [] };
-  store.search.value = '';
-  store.readyOnly.value = false;
-}
-export function setSort(key) {
-  const s = store.sort.value;
-  store.sort.value = { key, dir: s.key === key ? -s.dir : 1 };
-}
-export function toggleIssueGroup(key) {
-  const set = new Set(store.collapsedIssueGroups.value);
-  set.has(key) ? set.delete(key) : set.add(key);
-  store.collapsedIssueGroups.value = set;
-  lsSet('bd_issue_groups_collapsed', [...set]);
-}
-export function toggleDocGroup(name) {
-  const set = new Set(store.collapsedDocGroups.value);
-  set.has(name) ? set.delete(name) : set.add(name);
-  store.collapsedDocGroups.value = set;
-  lsSet('bd_docs_collapsed', [...set]);
-}
 export function toggleHubSection(id) {
   const set = new Set(store.collapsedHubSections.value);
   set.has(id) ? set.delete(id) : set.add(id);
@@ -822,13 +706,6 @@ export async function selectIssue(id) {
     if (store.selectedId.value === id) store.comments.value = data.comments || [];
   } catch { /* ignore */ }
   finally { store.commentsLoading.value = false; }
-}
-export function selectAdjacent(delta) {
-  const list = visibleIssues.value;
-  if (!list.length) return;
-  const idx = list.findIndex((i) => i.id === store.selectedId.value);
-  const next = idx === -1 ? 0 : Math.min(Math.max(idx + delta, 0), list.length - 1);
-  selectIssue(list[next].id);
 }
 
 // ---------------------------------------------------------------------------

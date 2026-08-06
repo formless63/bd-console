@@ -29,8 +29,8 @@ import { LearnEmpty, ConceptDot } from '../components/ConceptTip.js';
 import { agentName, isServerMode, promptTip } from '../components/common.js';
 import { learn, concept } from '../learn.js';
 
-// Link/supersede/duplicate writes live in store.js (shared with the classic
-// view) rather than actions.js; wrap them here so Console 2.0 still flashes
+// Link/supersede/duplicate writes live in store.js (with the other shared
+// write paths) rather than actions.js; wrap them here so Console 2.0 flashes
 // the bd equivalent — and only ever AFTER the write resolved, matching
 // actions.js's contract.
 const actAddLink = async (id, other, type) => {

@@ -53,31 +53,12 @@ import { render } from 'preact';
 import { html } from 'htm/preact';
 import { App } from './ui/components/App.js';
 import { initTheme } from './ui/theme.js';
-import {
-  store, parseHash, selectAdjacent, selectIssue,
-  loadBootMeta, loadHub, loadProjectMeta, loadIssues, loadDocs,
-} from './ui/store.js';
+import { store, parseHash, loadBootMeta, loadHub } from './ui/store.js';
 
 // --- routing: hash-based so deep links survive a static-file server ----------
-let lastProjectId = null;
-async function syncRoute() {
+function syncRoute() {
   const route = store.route.value;
-  if (route.view === 'project') {
-    store.projectId.value = route.projectId;
-    if (route.projectId !== lastProjectId) {
-      lastProjectId = route.projectId;
-      store.issues.value = [];
-      store.docs.value = [];
-      store.selectedId.value = null;
-      store.selectedDocPath.value = null;
-      store.docContent.value = null;
-      await loadProjectMeta();
-      loadIssues();
-      loadDocs();
-    } else if (route.tab === 'docs' && store.docs.value.length === 0) {
-      loadDocs();
-    }
-  } else if (route.view === 'console2') {
+  if (route.view === 'console2') {
     // Console 2.0 (#/p2/<id>) owns its own project bootstrapping — see
     // console2/Console2.js's route effect + mount useEffect, which set
     // projectId and load issues/docs/tmux themselves. Nulling projectId
@@ -87,14 +68,11 @@ async function syncRoute() {
     // pid Console2 had just set back to null and leak an unscoped
     // /api/issues + /api/docs fetch (404s in hub mode, since those only
     // exist per-project as /api/p/<id>/issues|docs). Leave projectId
-    // alone here; just reset the classic view's "last project" tracker so
-    // a later #/p/<id> visit reloads fresh instead of no-op'ing.
-    lastProjectId = null;
-  } else {
-    store.projectId.value = null;
-    lastProjectId = null;
-    loadHub();
+    // alone here.
+    return;
   }
+  store.projectId.value = null;
+  loadHub();
 }
 
 function onHashChange() {
@@ -113,22 +91,19 @@ function isTyping() {
 function onKeyDown(e) {
   if (e.key === 'Escape') {
     if (store.createOpen.value) store.createOpen.value = false;
-    if (store.mobileFiltersOpen.value) store.mobileFiltersOpen.value = false;
     return;
   }
   if (isTyping() || e.metaKey || e.ctrlKey || e.altKey) return;
   const view = store.route.value.view;
-  const inProject = view === 'project';
-  // `i` opens the full New-issue dialog in both project views (Console 2.0
-  // mounts the same dialog); j/k/search stay classic-only.
-  if (e.key === 'i' && (inProject || view === 'console2')) { e.preventDefault(); store.createOpen.value = true; }
-  else if (e.key === 'j' && inProject) { e.preventDefault(); selectAdjacent(1); scrollSelectedIntoView(); }
-  else if (e.key === 'k' && inProject) { e.preventDefault(); selectAdjacent(-1); scrollSelectedIntoView(); }
+  // `i` opens the full New-issue dialog in the project view (Console 2.0
+  // mounts the same dialog). `/` focuses the search box — Console 2.0's
+  // omnibar carries the `.issue-search` class for exactly this.
+  //
+  // j/k (list cursor) and `c` (focus the comment box) went with the classic
+  // view: both targeted DOM only its list/detail panes rendered, and Console
+  // 2.0 drives selection through the omnibar and Flow lanes instead.
+  if (e.key === 'i' && view === 'console2') { e.preventDefault(); store.createOpen.value = true; }
   else if (e.key === '/') { e.preventDefault(); document.querySelector('.issue-search')?.focus(); }
-  else if (e.key === 'c') { const box = document.querySelector('#comment-input'); if (box) { e.preventDefault(); box.focus(); } }
-}
-function scrollSelectedIntoView() {
-  setTimeout(() => document.querySelector('.issue-row.sel')?.scrollIntoView({ block: 'nearest' }), 40);
 }
 
 // --- boot --------------------------------------------------------------------

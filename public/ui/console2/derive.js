@@ -1,8 +1,7 @@
 // console2/derive.js — pure, client-side derivations over the shared issue
 // list: pulse stats, flow lanes, the dependency-graph layout for MAP, and the
-// unblock hint / critical chain. All computed from store.issues so they stay in
-// lockstep with the classic view's semantics (reusing store's relationship
-// helpers verbatim).
+// unblock hint / critical chain. All computed from store.issues, reusing
+// store's relationship helpers verbatim rather than re-deriving them.
 import { computed } from '@preact/signals';
 import {
   store, byId, effStatus, isReady, openBlockersOf, blockersOf,

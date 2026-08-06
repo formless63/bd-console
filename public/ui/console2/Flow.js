@@ -252,8 +252,8 @@ function IssueGroup({ container, kids, closed, total, complete, focusActive, sta
 // the epic-grouped view's half of the focus-bug fix (previously this
 // function never read c2.laneFocus / focusedIds at all).
 function EpicRows({ focusSet }) {
-  // Grouping itself is relationships.js's containerGroups() — pure, shared
-  // with the classic view's semantics and asserted in smoke. Containers are
+  // Grouping itself is relationships.js's containerGroups() — pure and
+  // asserted in smoke. Containers are
   // epics AND poured-molecule roots, so a molecule gets its own row with its
   // steps nested instead of scattering across the orphan section.
   const { groups, orphans: allOrphans } = containerGroups(store.issues.value);

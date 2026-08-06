@@ -1,7 +1,7 @@
-// docCreate.js — the "New doc" entry point, shared by the classic docs view
-// and Console 2.0's docs canvas (bd-console-09n). POST /api/doc could always
-// create a file; neither view had a way to ask for one, so docs were an
-// edit-only world you could never add to from the browser.
+// docCreate.js — the "New doc" entry point behind Console 2.0's docs canvas
+// (bd-console-09n). POST /api/doc could always create a file; the UI had no
+// way to ask for one, so docs were an edit-only world you could never add to
+// from the browser.
 //
 // Everything above createDoc() is pure derivation (no signals, no fetch) so
 // scripts/smoke.mjs can assert it in Node, the same contract relationships.js

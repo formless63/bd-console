@@ -13,9 +13,9 @@ Preact app with vendored dependencies — still no bundler, no build step.
   between repos from a single dashboard instead of running one server per
   repo.
 - **Beads triage**: every issue from `.beads/issues.jsonl`, including
-  dependencies, with filter/sort by status, priority, type, label, search,
-  group-by-epic, and "ready only". Claim, close, reopen, re-prioritize, label,
-  and re-parent issues inline.
+  dependencies — status lanes (Ready · Active · Blocked · Done), optional
+  epic grouping, a dependency map, and omnibar search. Claim, close, reopen,
+  re-prioritize, label, link and re-parent issues inline.
 - **Rich issue creation**: type, priority, labels, acceptance criteria,
   parent epic, and assignee — not just quick one-line captures.
 - **Comments**: read and add comments on any issue through `bd comment`
@@ -434,18 +434,18 @@ first paint (no flash of the wrong theme).
 
 | Shortcut | Action |
 | --- | --- |
-| `j` | Select the next issue in the list |
-| `k` | Select the previous issue in the list |
-| `/` | Focus the issue search field |
-| `c` | Focus the "Add a comment" input area |
+| `/` | Focus the search field (the omnibar, inside a project) |
 | `i` | Open the New issue dialog |
 | `Esc` | Close the open modal dialog or remove focus |
 
 These are ignored while you're typing into a form field or text input.
+Console 2.0's omnibar has its own shortcuts on top of these — see
+`docs/feature-map.md` §5.
 
-The dashboard is hash-routed (`#/`, `#/p/<projectId>`,
-`#/p/<projectId>/docs`, plus tmux and scheduler views), so deep links work
-even served as static files.
+The dashboard is hash-routed (`#/`, `#/p2/<projectId>`, plus `#/tmux`,
+`#/schedule`, `#/settings` and `#/learn`), so deep links work even served as
+static files. The older `#/p/<projectId>` project view was retired; those
+URLs now redirect to `#/p2/<projectId>`, so old bookmarks keep working.
 
 ## Verification
 

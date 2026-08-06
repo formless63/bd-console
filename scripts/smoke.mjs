@@ -38,6 +38,11 @@ import {
   createLearnStore, learnContext, CONCEPTS, CONCEPT_GROUPS, HINTS, concept,
   conceptHref, isLearnHash, learnAnchorFromHash, LEARN_KEY,
 } from '../public/ui/learn.js';
+// Hash router (public/ui/routing.js) — pure and import-free for the same
+// reason relationships.js is: store.js's parseHash() is signal-bound and can't
+// be loaded in Node, but the retired-route redirect it wraps has to be
+// asserted somewhere other than a browser.
+import { legacyProjectHash, parseRoute } from '../public/ui/routing.js';
 import { LINK_TYPES as SERVER_LINK_TYPES } from '../lib/bd.mjs';
 import { parseScopedLimits, getClaudeUsage } from '../lib/usage.mjs';
 import { parseBdVersionStdout, compareVersions, isBehind } from '../lib/bdversion.mjs';
@@ -3117,6 +3122,52 @@ console.log(JSON.stringify({ before, retried }));
     }
 
     console.log(`smoke ok (learn.js: ${CONCEPTS.length} concepts, ${HINTS.length} hints, one-shot + dismissal + retirement + master switch)`);
+  }
+
+  // --- bd-console-0nd: the retired classic route must REDIRECT ------------
+  // #/p/<id> and #/p/<id>/docs were the classic per-project view. It is gone;
+  // Console 2.0 (#/p2/<id>) is the only per-project view. Bookmarks and links
+  // to the old hashes have to land on the project, NOT 404 and NOT fall back
+  // to the hub — that's the whole point of retiring it as a route rather than
+  // deleting it. store.js's parseHash() wraps these two pure functions with
+  // the browser-only half (history.replaceState), which is why they live in
+  // an import-free module: this is assertable here.
+  {
+    assert(legacyProjectHash('#/p/bd-console') === '#/p2/bd-console', '#/p/<id> must redirect to #/p2/<id>');
+    assert(legacyProjectHash('#/p/bd-console/docs') === '#/p2/bd-console', "the classic Docs tab must redirect to the project's Console 2.0 view");
+    assert(legacyProjectHash('#/p/my%20repo/docs') === '#/p2/my%20repo', 'the project segment must pass through still-encoded');
+    // Nothing else may be rewritten — a redirect that fires on #/p2 would be
+    // an infinite loop, and one that fires on a hub-level route would strand
+    // it.
+    for (const h of ['#/p2/bd-console', '#/', '', '#/tmux', '#/schedule', '#/settings', '#/learn', '#/p']) {
+      assert(legacyProjectHash(h) === null, `${h || '(empty)'} must not be treated as a retired classic route`);
+    }
+
+    // Belt and braces: even if the URL rewrite can't run, the retired hash
+    // still resolves to the project, never to the hub.
+    assert(parseRoute('#/p/bd-console').view === 'console2', '#/p/<id> must parse as the console2 view');
+    assert(parseRoute('#/p/bd-console').projectId === 'bd-console', '#/p/<id> must keep its project id');
+    assert(parseRoute('#/p/bd-console/docs').projectId === 'bd-console', 'the docs tab suffix must not change the project');
+    assert(parseRoute('#/p2/my%20repo').projectId === 'my repo', 'the project id must be decoded once');
+    // Hub-level routes still route — they no longer have a per-project top bar
+    // linking to them, so a regression here would strand them.
+    assert(parseRoute('#/tmux').view === 'tmux', '#/tmux must still route');
+    assert(parseRoute('#/schedule').view === 'schedule', '#/schedule must still route');
+    assert(parseRoute('#/settings').view === 'settings', '#/settings must still route');
+    assert(parseRoute('#/').view === 'hub' && parseRoute('').view === 'hub' && parseRoute('#/nope').view === 'hub',
+      'anything unrecognised falls back to the hub');
+
+    // The classic components must be gone, not merely unlinked.
+    for (const f of ['ProjectView.js', 'DocsView.js', 'IssueList.js', 'IssueDetail.js', 'FiltersPane.js']) {
+      assert(!existsSync(resolve(join(process.cwd(), 'public', 'ui', 'components', f))),
+        `public/ui/components/${f} is a retired classic-view component and must not come back`);
+    }
+    const routedSrc = readFileSync(resolve(join(process.cwd(), 'public', 'app.js')), 'utf8')
+      + readFileSync(resolve(join(process.cwd(), 'public', 'ui', 'components', 'App.js')), 'utf8')
+      + readFileSync(resolve(join(process.cwd(), 'public', 'ui', 'console2', 'Console2.js')), 'utf8');
+    assert(!/['"`]#\/p\/|view === 'project'/.test(routedSrc),
+      "nothing may link to #/p/<id> or branch on the retired 'project' view any more");
+    console.log('smoke ok (bd-console-0nd: classic view retired — #/p/<id> and #/p/<id>/docs redirect to #/p2/<id>, hub routes intact)');
   }
 
   // --- Phase 3: formula derivations (pure) --------------------------------

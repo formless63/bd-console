@@ -104,10 +104,10 @@ function GitInsights({ git }) {
 
 function ProjectCard({ id, project, stats, err }) {
   const git = store.projectsGit.value[id];
-  // Console 2.0 is the hub's primary destination (the classic view is being
-  // retired) — the card's whole click-through, and its CTA hint below, both
-  // land on #/p2/<id>. The classic view stays reachable, just not from the
-  // hub: Console 2.0's own header carries a "classic view →" link.
+  // Console 2.0 is the ONLY per-project destination now that the classic view
+  // is retired — the card's whole click-through, and its CTA hint below, both
+  // land on #/p2/<id> (as does the retired #/p/<id>, which redirects there;
+  // see routing.js).
   const open = () => navigate('#/p2/' + encodeURIComponent(id));
   const onKeyDown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } };
 
