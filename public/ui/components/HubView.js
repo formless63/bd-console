@@ -6,7 +6,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { store, navigate, loadProjectStats, loadTmux, loadSchedule, loadProjectsGit, loadUsage, loadUsageHistory, loadBdVersion, loadCliVersions, toggleHubSection, toast, loadHub, requireToken } from '../store.js';
 import { apiPostRaw, AuthError } from '../api.js';
 import { useVisiblePoll } from '../poll.js';
-import { timeAgo, copyToClipboard } from './common.js';
+import { timeAgo, copyToClipboard, hostMemSummary, hostMemTip } from './common.js';
 import { SessionRowCompact, HubTmuxHead } from './TmuxView.js';
 import { ProviderAttribution, formatTokens } from './UsageCharts.js';
 
@@ -204,7 +204,16 @@ function OpsStrip() {
   const pending = store.scheduleJobs.value.filter((j) => j.status === 'pending').length;
   const hasTmux = store.tmuxAvailable.value;
   const collapsed = store.collapsedHubSections.value.has('ops');
-  const summary = `${hasTmux ? sessions.length + ' tmux session' + (sessions.length === 1 ? '' : 's') : 'tmux unavailable'} · ${pending} scheduled prompt${pending === 1 ? '' : 's'}`;
+  // Host memory + forgotten-session count (bd-console-oic / bd-console-xo8).
+  // Both are ADDITIVE and both vanish when the server can't measure them, so
+  // a non-Linux host (or an older daemon) sees the row exactly as before.
+  const host = store.tmuxHost.value;
+  const unattended = sessions.filter((s) => s && s.idle).length;
+  // The collapsed-on-mobile summary carries the memory state whenever it is
+  // NOT ok — a warning that only exists inside a collapsed section is a
+  // warning nobody sees, which is the failure mode this feature exists to fix.
+  const summary = `${hasTmux ? sessions.length + ' tmux session' + (sessions.length === 1 ? '' : 's') : 'tmux unavailable'} · ${pending} scheduled prompt${pending === 1 ? '' : 's'}`
+    + (host && host.level !== 'ok' ? ` · ${host.label}` : '');
 
   const bdKnown = store.bdVersionAvailable.value;
   const v = store.bdVersion.value;
@@ -225,6 +234,19 @@ function OpsStrip() {
         <button type="button" class="hub-chip" onClick=${() => navigate('#/schedule')}>
           ⏰ ${pending} scheduled prompt${pending === 1 ? '' : 's'}
         </button>
+        ${host && html`
+          <button
+            type="button"
+            class=${'hub-chip' + (host.level === 'crit' ? ' hub-chip-crit' : host.level === 'warn' ? ' hub-chip-amber' : '')}
+            title=${hostMemTip(host)}
+            onClick=${() => navigate('#/tmux')}
+          >🧠 ${hostMemSummary(host)}</button>`}
+        ${unattended > 0 && html`
+          <button type="button" class="hub-chip hub-chip-amber"
+            title=${'Sessions nobody has attached to (and that have printed nothing) for days, whose processes are still using CPU — see the session table for what each one is running.'}
+            onClick=${() => navigate('#/tmux')}>
+            ⏳ ${unattended} unattended session${unattended === 1 ? '' : 's'}
+          </button>`}
         ${showVersion && html`
           <a class="hub-chip hub-chip-link" href=${BEADS_REPO_URL} target="_blank" rel="noopener noreferrer"
             title=${'Installed via `bd version`' + (v.checkedAt ? ' · checked ' + timeAgo(v.checkedAt) : '') + ' — open beads on GitHub'}>
@@ -858,7 +880,11 @@ function QuotaSessionsRow() {
   const sessions = store.tmuxSessions.value;
   const tmuxCollapsed = store.collapsedHubSections.value.has('tmux');
   const attached = sessions.filter((s) => s.attached).length;
-  const tmuxSummary = `${sessions.length} session${sessions.length === 1 ? '' : 's'} · ${attached} attached`;
+  const unattended = sessions.filter((s) => s && s.idle).length;
+  const hotSessions = sessions.filter((s) => s && s.memory && s.memory.level !== 'ok').length;
+  const tmuxSummary = `${sessions.length} session${sessions.length === 1 ? '' : 's'} · ${attached} attached`
+    + (hotSessions > 0 ? ` · ${hotSessions} high memory` : '')
+    + (unattended > 0 ? ` · ${unattended} unattended` : '');
 
   return html`
     <div class=${'hub-qs-grid' + (showQuota && showSessions ? '' : ' single-col')}>
