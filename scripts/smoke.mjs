@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
@@ -1464,9 +1464,10 @@ console.log(JSON.stringify({ before, retried }));
   }
 
   // --- provider usage adapters (lib/usage.mjs via GET /api/usage) ------------
-  // Fixture-only: never reads the real ~/.claude or ~/.codex, never hits the
-  // real network. BD_CONSOLE_CLAUDE_DIR / BD_CONSOLE_CODEX_DIR redirect both
-  // adapters at fabricated temp dirs the same way BD_CONSOLE_CONFIG_DIR
+  // Fixture-only: never reads the real ~/.claude, ~/.codex or ~/.kimi-code,
+  // never hits the real network, never touches a real kimi server.
+  // BD_CONSOLE_CLAUDE_DIR / BD_CONSOLE_CODEX_DIR / BD_CONSOLE_KIMI_DIR redirect
+  // all three adapters at fabricated temp dirs the same way BD_CONSOLE_CONFIG_DIR
   // redirects the registry/config above.
   {
     const usageConfigDir = join(tempRoot, 'usage-config');
@@ -1508,12 +1509,98 @@ console.log(JSON.stringify({ before, retried }));
     } } });
     writeFileSync(join(codexDayDir, 'rollout-test.jsonl'), [staleLine, noiseLine, freshLine, ''].join('\n'));
 
+    // --- Kimi Code fixture (~/.kimi-code, redirected by BD_CONSOLE_KIMI_DIR) --
+    // Two server instance records (one stale, one beating), a session index
+    // with a malformed line, two sessions in two workspaces — one with agent
+    // wire logs to sum, one only half-described in workspaces.json — and a
+    // server.token whose contents must never reach the HTTP response.
+    const usageKimiDir = join(tempRoot, 'usage-kimi');
+    const kimiInstancesDir = join(usageKimiDir, 'server', 'instances');
+    mkdirSync(kimiInstancesDir, { recursive: true });
+    const kimiSecret = 'kimi-smoke-server-token-DO-NOT-LEAK-0123456789';
+    writeFileSync(join(usageKimiDir, 'server.token'), kimiSecret);
+
+    // A pid above Linux's pid_max: process.kill(pid, 0) can only ever report
+    // "no such process", which is what makes the dead-pid path deterministic.
+    const KIMI_DEAD_PID = 4194304;
+    writeFileSync(join(kimiInstancesDir, '01STALEINSTANCE.json'), JSON.stringify({
+      server_id: '01STALEINSTANCE', pid: KIMI_DEAD_PID, host: '127.0.0.1', port: 31111,
+      started_at: Date.now() - 7200000, heartbeat_at: Date.now() - 600000, host_version: '0.30.0'
+    }));
+    writeFileSync(join(kimiInstancesDir, '01FRESHINSTANCE.json'), JSON.stringify({
+      server_id: '01FRESHINSTANCE', pid: process.pid, host: '0.0.0.0', port: 33333,
+      started_at: Date.now() - 3600000, heartbeat_at: Date.now() - 5000, host_version: '0.32.0'
+    }));
+
+    const kimiSessionA = join(usageKimiDir, 'sessions', 'wd_alpha_aaa111', 'session_a');
+    const kimiSessionB = join(usageKimiDir, 'sessions', 'wd_beta_bbb222', 'session_b');
+    mkdirSync(join(kimiSessionA, 'agents', 'main'), { recursive: true });
+    mkdirSync(join(kimiSessionA, 'agents', 'agent-0'), { recursive: true });
+    mkdirSync(kimiSessionB, { recursive: true });
+
+    // Session A: the v2 state.json shape (epoch-ms timestamps, `cwd`) with an
+    // over-long title that must come back truncated to 120 chars.
+    const kimiLongTitle = 'Build the thing, then build the other thing, and keep going well past the point where any card could render this title in full without eating the entire row';
+    writeFileSync(join(kimiSessionA, 'state.json'), JSON.stringify({
+      id: 'session_a', version: 2, cwd: '/tmp/alpha-project',
+      createdAt: Date.now() - 90000, updatedAt: Date.now() - 60000, archived: false,
+      agents: { main: { type: 'main' }, 'agent-0': { type: 'sub' } },
+      lastPrompt: 'do the thing', title: kimiLongTitle
+    }));
+    // Session B: the v1 shape (ISO strings, `workDir`) — both must parse.
+    writeFileSync(join(kimiSessionB, 'state.json'), JSON.stringify({
+      createdAt: new Date(Date.now() - 172800000).toISOString(),
+      updatedAt: new Date(Date.now() - 172800000).toISOString(),
+      title: 'New Session', workDir: '/tmp/beta-project', agents: { main: { type: 'main' } }
+    }));
+    // Recency comes from state.json mtime, so B is explicitly backdated —
+    // session A must win as `latestSession`.
+    const kimiTwoDaysAgo = new Date(Date.now() - 172800000);
+    utimesSync(join(kimiSessionB, 'state.json'), kimiTwoDaysAgo, kimiTwoDaysAgo);
+
+    // usage.record events across TWO agents of the same session (main + a
+    // sub-agent) plus noise and a malformed line, so the sum proves both the
+    // fan-out aggregation and the skip-what-doesn't-parse rule.
+    const kimiUsageLine = (model, inputOther, output, inputCacheRead, inputCacheCreation) =>
+      JSON.stringify({ type: 'usage.record', model, usage: { inputOther, output, inputCacheRead, inputCacheCreation }, usageScope: 'turn', time: Date.now() });
+    writeFileSync(join(kimiSessionA, 'agents', 'main', 'wire.jsonl'), [
+      kimiUsageLine('kimi-code/k3', 100, 20, 1000, 5),
+      JSON.stringify({ type: 'context.append_loop_event', event: { type: 'content.part' }, time: Date.now() }),
+      '{ not json at all',
+      kimiUsageLine('kimi-code/k3', 200, 30, 2000, 0),
+      JSON.stringify({ type: 'turn.ended', turnId: 1, reason: 'completed', time: Date.now() }),
+      ''
+    ].join('\n'));
+    writeFileSync(join(kimiSessionA, 'agents', 'agent-0', 'wire.jsonl'), [
+      kimiUsageLine('kimi-code/k3-256k', 50, 10, 500, 0),
+      JSON.stringify({ type: 'turn.ended', turnId: 1, reason: 'completed', time: Date.now() }),
+      ''
+    ].join('\n'));
+    const kimiExpected = { input: 350, output: 60, cacheRead: 3500, cacheCreation: 5 };
+    kimiExpected.total = kimiExpected.input + kimiExpected.output + kimiExpected.cacheRead + kimiExpected.cacheCreation;
+
+    writeFileSync(join(usageKimiDir, 'session_index.jsonl'), [
+      JSON.stringify({ sessionId: 'session_a', sessionDir: kimiSessionA, workDir: '/tmp/alpha-project' }),
+      JSON.stringify({ sessionId: 'session_b', sessionDir: kimiSessionB, workDir: '/tmp/beta-project' }),
+      'not json',
+      JSON.stringify({ sessionId: 'no-dir' }),
+      ''
+    ].join('\n'));
+    // Only alpha is named here — beta must fall back to its workDir with a
+    // null name rather than disappearing.
+    writeFileSync(join(usageKimiDir, 'workspaces.json'), JSON.stringify({
+      version: 1,
+      workspaces: { wd_alpha_aaa111: { root: '/tmp/alpha-project', name: 'alpha', created_at: '2026-01-01T00:00:00.000Z' } },
+      deleted_workspace_ids: []
+    }));
+
     const usagePort = await getPort();
     const usageEnv = {
       ...process.env,
       BD_CONSOLE_CONFIG_DIR: usageConfigDir,
       BD_CONSOLE_CLAUDE_DIR: usageClaudeDir,
-      BD_CONSOLE_CODEX_DIR: usageCodexDir
+      BD_CONSOLE_CODEX_DIR: usageCodexDir,
+      BD_CONSOLE_KIMI_DIR: usageKimiDir
     };
     const usageServer = spawn(process.execPath, [serverEntry, '--host', '127.0.0.1', '--port', String(usagePort)], {
       cwd: process.cwd(), env: usageEnv, stdio: ['ignore', 'pipe', 'pipe']
@@ -1545,6 +1632,52 @@ console.log(JSON.stringify({ before, retried }));
       assert(secondary.resetsAt === secondaryResetsAtSec * 1000, `codex secondary resetsAt should be resets_at*1000, got: ${secondary.resetsAt}`);
 
       console.log('smoke ok (usage API: fixture claude token-expired + fixture codex ok, LAST-event selection, no token material leaked)');
+
+      // ---- kimi block --------------------------------------------------
+      const kimi = usageBody.providers && usageBody.providers.kimi;
+      assert(kimi && kimi.status === 'ok', `fixture kimi dir should report ok, got: ${JSON.stringify(kimi)}`);
+      assert(!rawText.includes(kimiSecret) && !rawText.includes(kimiSecret.slice(0, 16)),
+        '/api/usage response must never contain ~/.kimi-code/server.token material');
+      assert(Array.isArray(kimi.windows) && kimi.windows.length === 0,
+        'kimi must expose no quota windows (Kimi Code publishes no rate-limit data)');
+
+      // Freshest heartbeat wins, and it drives `state` — not the pid.
+      assert(kimi.server && kimi.server.state === 'running', `fresh heartbeat should report running, got: ${JSON.stringify(kimi.server)}`);
+      assert(kimi.server.version === '0.32.0' && kimi.server.port === 33333 && kimi.server.host === '0.0.0.0',
+        `kimi should report the FRESH instance record, got: ${JSON.stringify(kimi.server)}`);
+      assert(kimi.server.instances === 2, `kimi should count both instance records, got: ${kimi.server.instances}`);
+      assert(kimi.server.staleAfterMs === 90000, `kimi staleness threshold should be documented on the payload, got: ${kimi.server.staleAfterMs}`);
+      assert(typeof kimi.server.heartbeatAgeMs === 'number' && kimi.server.heartbeatAgeMs < 90000,
+        `kimi heartbeatAgeMs should be fresh, got: ${kimi.server.heartbeatAgeMs}`);
+
+      assert(kimi.sessions && kimi.sessions.total === 2,
+        `kimi should count 2 well-formed session_index lines (malformed ones skipped), got: ${JSON.stringify(kimi.sessions)}`);
+      const kimiAlpha = kimi.sessions.workspaces.find((w) => w.id === 'wd_alpha_aaa111');
+      const kimiBeta = kimi.sessions.workspaces.find((w) => w.id === 'wd_beta_bbb222');
+      assert(kimiAlpha && kimiAlpha.name === 'alpha' && kimiAlpha.sessions === 1,
+        `kimi alpha workspace should take its name from workspaces.json, got: ${JSON.stringify(kimiAlpha)}`);
+      assert(kimiBeta && kimiBeta.name === null && kimiBeta.root === '/tmp/beta-project',
+        `kimi workspace missing from workspaces.json should fall back to its workDir, got: ${JSON.stringify(kimiBeta)}`);
+      assert(kimi.sessions.workspaces[0].id === 'wd_alpha_aaa111',
+        'kimi workspaces should be ordered most-recently-active first');
+
+      const latest = kimi.latestSession;
+      assert(latest && latest.id === 'session_a', `kimi latestSession should be the newest session by mtime, got: ${JSON.stringify(latest && latest.id)}`);
+      assert(latest.workDir === '/tmp/alpha-project' && latest.workspaceName === 'alpha' && latest.agents === 2,
+        `kimi latestSession detail mismatch: ${JSON.stringify(latest)}`);
+      assert(latest.title.length === 120 && kimiLongTitle.startsWith(latest.title),
+        `kimi session title should be truncated to 120 chars, got ${latest.title.length}`);
+      assert(!JSON.stringify(latest).includes('do the thing'), 'kimi must not surface a session lastPrompt');
+      assert(latest.tokens.input === kimiExpected.input && latest.tokens.output === kimiExpected.output
+        && latest.tokens.cacheRead === kimiExpected.cacheRead && latest.tokens.cacheCreation === kimiExpected.cacheCreation
+        && latest.tokens.total === kimiExpected.total,
+        `kimi token totals should sum usage.record across every agent of the session, got: ${JSON.stringify(latest.tokens)}`);
+      assert(latest.tokens.records === 3 && latest.tokens.turns === 2 && latest.tokens.truncated === false,
+        `kimi token record/turn counts mismatch: ${JSON.stringify(latest.tokens)}`);
+      assert(latest.tokens.models.length === 2 && latest.tokens.models[0].model === 'kimi-code/k3' && latest.model === 'kimi-code/k3',
+        `kimi per-model breakdown should be biggest-first, got: ${JSON.stringify(latest.tokens.models)}`);
+
+      console.log('smoke ok (usage API: kimi fixture ok — freshest instance, session/workspace rollup, cross-agent token sum, server.token never leaked)');
     } finally {
       usageServer.kill('SIGTERM');
       await new Promise((resolveP) => usageServer.once('exit', () => resolveP()));
@@ -1557,11 +1690,13 @@ console.log(JSON.stringify({ before, retried }));
     mkdirSync(usageEmptyConfigDir, { recursive: true });
     mkdirSync(usageEmptyClaudeDir, { recursive: true });
     const usageEmptyPort = await getPort();
+    const usageEmptyKimiDir = join(tempRoot, 'usage-empty-kimi'); // does not exist at all
     const usageEmptyEnv = {
       ...process.env,
       BD_CONSOLE_CONFIG_DIR: usageEmptyConfigDir,
       BD_CONSOLE_CLAUDE_DIR: usageEmptyClaudeDir,
-      BD_CONSOLE_CODEX_DIR: usageEmptyCodexDir
+      BD_CONSOLE_CODEX_DIR: usageEmptyCodexDir,
+      BD_CONSOLE_KIMI_DIR: usageEmptyKimiDir
     };
     const usageEmptyServer = spawn(process.execPath, [serverEntry, '--host', '127.0.0.1', '--port', String(usageEmptyPort)], {
       cwd: process.cwd(), env: usageEmptyEnv, stdio: ['ignore', 'pipe', 'pipe']
@@ -1571,10 +1706,58 @@ console.log(JSON.stringify({ before, retried }));
       const emptyBody = await fetch(`http://127.0.0.1:${usageEmptyPort}/api/usage`).then((r) => r.json());
       assert(emptyBody.providers.claude.status === 'no-creds', `missing .credentials.json should report no-creds, got: ${JSON.stringify(emptyBody.providers.claude)}`);
       assert(emptyBody.providers.codex.status === 'no-data', `missing codex sessions dir should report no-data, got: ${JSON.stringify(emptyBody.providers.codex)}`);
-      console.log('smoke ok (usage API: missing dirs -> no-creds/no-data)');
+      assert(emptyBody.providers.kimi.status === 'not-installed', `missing kimi dir should report not-installed, got: ${JSON.stringify(emptyBody.providers.kimi)}`);
+      console.log('smoke ok (usage API: missing dirs -> no-creds/no-data/not-installed)');
     } finally {
       usageEmptyServer.kill('SIGTERM');
       await new Promise((resolveP) => usageEmptyServer.once('exit', () => resolveP()));
+    }
+
+    // --- kimi heartbeat staleness ------------------------------------------
+    // The heartbeat — not the pid — decides whether the server counts as up. A
+    // record 10 minutes past its last beat is never 'running'; the pid only
+    // distinguishes 'stale' (process still there, gone quiet) from 'stopped'.
+    for (const scenario of [
+      { name: 'stale', pid: process.pid, expected: 'stale', expectedPidAlive: true },
+      { name: 'stopped', pid: 4194304, expected: 'stopped', expectedPidAlive: false }
+    ]) {
+      const staleKimiDir = join(tempRoot, `usage-kimi-${scenario.name}`);
+      mkdirSync(join(staleKimiDir, 'server', 'instances'), { recursive: true });
+      writeFileSync(join(staleKimiDir, 'server', 'instances', '01OLD.json'), JSON.stringify({
+        server_id: '01OLD', pid: scenario.pid, host: '0.0.0.0', port: 33333,
+        started_at: Date.now() - 7200000, heartbeat_at: Date.now() - 600000, host_version: '0.32.0'
+      }));
+      const staleConfigDir = join(tempRoot, `usage-kimi-${scenario.name}-config`);
+      mkdirSync(staleConfigDir, { recursive: true });
+      const stalePort = await getPort();
+      const staleServer = spawn(process.execPath, [serverEntry, '--host', '127.0.0.1', '--port', String(stalePort)], {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          BD_CONSOLE_CONFIG_DIR: staleConfigDir,
+          BD_CONSOLE_CLAUDE_DIR: usageEmptyClaudeDir,
+          BD_CONSOLE_CODEX_DIR: usageEmptyCodexDir,
+          BD_CONSOLE_KIMI_DIR: staleKimiDir
+        },
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+      try {
+        await waitFor(`http://127.0.0.1:${stalePort}/api/meta`);
+        const staleBody = await fetch(`http://127.0.0.1:${stalePort}/api/usage`).then((r) => r.json());
+        const staleKimi = staleBody.providers.kimi;
+        assert(staleKimi.status === 'ok', `a kimi dir with only a stale instance is still installed, got: ${JSON.stringify(staleKimi)}`);
+        assert(staleKimi.server.state === scenario.expected,
+          `stale heartbeat + ${scenario.name} pid should report ${scenario.expected}, got: ${JSON.stringify(staleKimi.server)}`);
+        assert(staleKimi.server.pidAlive === scenario.expectedPidAlive,
+          `kimi pidAlive mismatch for the ${scenario.name} scenario: ${JSON.stringify(staleKimi.server)}`);
+        assert(staleKimi.server.heartbeatAgeMs > 90000, `stale heartbeat age should exceed the threshold, got: ${staleKimi.server.heartbeatAgeMs}`);
+        assert(staleKimi.sessions.total === 0 && staleKimi.latestSession === null,
+          `a kimi dir with no session_index should report zero sessions, got: ${JSON.stringify(staleKimi.sessions)}`);
+        console.log(`smoke ok (usage API: kimi stale heartbeat -> ${scenario.expected})`);
+      } finally {
+        staleServer.kill('SIGTERM');
+        await new Promise((resolveP) => staleServer.once('exit', () => resolveP()));
+      }
     }
 
     // --- token-gated the same way /api/tmux/preview is ---------------------
@@ -1586,7 +1769,8 @@ console.log(JSON.stringify({ before, retried }));
       BD_CONSOLE_CONFIG_DIR: usageAuthConfigDir,
       BD_CONSOLE_TOKEN: 'usage-smoke-token',
       BD_CONSOLE_CLAUDE_DIR: usageEmptyClaudeDir,
-      BD_CONSOLE_CODEX_DIR: usageEmptyCodexDir
+      BD_CONSOLE_CODEX_DIR: usageEmptyCodexDir,
+      BD_CONSOLE_KIMI_DIR: usageEmptyKimiDir
     };
     const usageAuthServer = spawn(process.execPath, [serverEntry, '--host', '127.0.0.1', '--port', String(usageAuthPort)], {
       cwd: process.cwd(), env: usageAuthEnv, stdio: ['ignore', 'pipe', 'pipe']

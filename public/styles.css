@@ -655,6 +655,44 @@ span.usage-update-chip { cursor: help; }
    by color or emoji alone. */
 .usage-version-chip.has-multi { border-style: dashed; border-color: var(--border-2); cursor: help; }
 .usage-multi-mark { margin-left: 5px; font-size: 9.5px; }
+/* Kimi Code row (GET /api/usage's `kimi` block) — stack info, not quota:
+   Kimi publishes no rate-limit data at all, so this row gets chips + fact
+   lines where the Claude/Codex rows get gauges. Everything here reuses the
+   sizing of .usage-plan-chip / .usage-version-chip above so the third row
+   reads as the same card language, one row down.
+
+   The server-state chip never signals by color alone: the glyph (●/◐/○) and
+   the word ("running"/"stale"/"stopped") both change with state, and the
+   color is the same semantic --green/--amber token every other status
+   affordance uses (never a hardcoded hex), so all theme presets stay correct. */
+.usage-state-chip {
+  font-size: 11px; font-weight: 600; border-radius: var(--radius-pill); padding: 2px 8px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text-dim); cursor: help;
+}
+.usage-state-chip.state-running {
+  color: var(--green); background: color-mix(in srgb, var(--green) 12%, transparent);
+  border-color: color-mix(in srgb, var(--green) 40%, transparent);
+}
+.usage-state-chip.state-stale {
+  color: var(--amber); background: color-mix(in srgb, var(--amber) 12%, transparent);
+  border-color: color-mix(in srgb, var(--amber) 40%, transparent);
+}
+.usage-kimi-facts {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  font-size: 12px; color: var(--text-dim);
+}
+.usage-kimi-endpoint { font-family: var(--font-mono); font-size: 11.5px; }
+.usage-kimi-latest {
+  display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;
+  margin-top: 7px; padding-top: 7px; border-top: 1px dashed var(--border);
+  font-size: 12px; min-width: 0;
+}
+.usage-kimi-latest-label {
+  font-size: 10px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint);
+}
+.usage-kimi-latest-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; }
+.usage-kimi-model { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
+
 .usage-gauges { display: flex; flex-direction: column; gap: 9px; }
 .usage-gauge-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .usage-gauge-label { font-family: var(--font-mono); font-size: 11.5px; font-weight: 600; color: var(--text-dim); width: 30px; flex-shrink: 0; }

@@ -67,7 +67,13 @@ Top to bottom, `public/ui/components/HubView.js`:
     windows, percent + "resets in Xh Ym", color-coded ok/warn/crit), plus
     per-model "scoped limits" with a loud "⛔ throttled" badge when a model is
     actively rate-limited. Polls every 60s. Degrades to "not detected" per
-    provider rather than erroring the whole hub.
+    provider rather than erroring the whole hub. Kimi Code joins this band as
+    a third row when `~/.kimi-code` exists (and renders nothing at all when it
+    doesn't): stack info, not quota — server state from the `kimi web`
+    heartbeat (`running`/`stale`/`stopped`, stale after 90s of silence), host
+    version, host:port, session/workspace counts, and the newest session's
+    model + token total. Kimi publishes no rate-limit data anywhere, so it
+    deliberately gets no gauge.
   - **Usage attribution**: a separate, explicitly-labeled "estimated from
     local session logs, not quota" band — a 7/30/90-day range picker and a
     manual refresh. This is parsed from local session logs on the hub host,
