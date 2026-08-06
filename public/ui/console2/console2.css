@@ -301,6 +301,13 @@
   padding: 6px 8px; background: var(--c2-glass); border: 1px solid var(--c2-line); border-radius: 8px; }
 .c2-session-name { font-family: var(--font-mono); font-size: 11px; color: var(--text); }
 .c2-session-cmd { font-size: 11px; color: var(--text-dim); flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Detected agent + server-mode marker (bd-console-2gs). A server-mode session
+   is still listed — it's real work in this repo — but "delegate here" is
+   disabled, so the row itself has to say why at a glance. */
+.c2-session-agent { font-size: 10.5px; font-weight: 600; color: var(--c2-accent, var(--accent));
+  padding: 1px 6px; border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 999px; }
+.c2-session-row.server-mode { border-color: color-mix(in srgb, var(--amber) 40%, var(--c2-line)); }
+.c2-delegate-warn { font-size: 11px; line-height: 1.45; color: var(--amber); padding: 4px 2px; }
 
 /* ==========================================================================
    Canvas + segmented control

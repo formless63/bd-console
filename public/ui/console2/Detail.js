@@ -26,6 +26,7 @@ import {
 import { TypeGlyph, Pip, PRI_LABEL, StatusGlyph, glyphStatus } from './ui.js';
 import { c2, flashCli } from './state.js';
 import { LearnEmpty, ConceptDot } from '../components/ConceptTip.js';
+import { agentName, isServerMode, promptTip } from '../components/common.js';
 import { learn, concept } from '../learn.js';
 
 // Link/supersede/duplicate writes live in store.js (shared with the classic
@@ -433,6 +434,13 @@ function Delegate({ issue }) {
     if (preset) { setSession(preset); c2.delegatePreset.value = null; }
   }, [preset]);
 
+  // The picker still LISTS server-mode sessions (marked), because hiding them
+  // makes the host look wrong; what it won't do is let Send/Schedule aim at
+  // one. The server refuses those sends too (409) — this just stops the user
+  // from finding that out the hard way.
+  const target = sessions.find((s) => s.name === session) || null;
+  const targetServer = isServerMode(target);
+
   const sendNow = async () => { setBusy(true); try { await delegateNow(session, text); } catch {} finally { setBusy(false); } };
   const schedule = async () => {
     if (!when) return;
@@ -451,14 +459,20 @@ function Delegate({ issue }) {
               <span class="c2-edit-k">Session</span>
               <select class="c2-edit-input" value=${session} onChange=${(e) => setSession(e.target.value)}>
                 <option value="">Select a session…</option>
-                ${sessions.map((s) => html`<option key=${s.name} value=${s.name}>${s.name}${s.attached ? ' (attached)' : ''}</option>`)}
+                ${sessions.map((s) => {
+                  const tags = [agentName(s), s.attached ? 'attached' : null, isServerMode(s) ? 'server mode' : null].filter(Boolean);
+                  return html`<option key=${s.name} value=${s.name}>${s.name}${tags.length ? ` (${tags.join(' · ')})` : ''}</option>`;
+                })}
               </select>
-              <button class="c2-mini accent" disabled=${busy || !session} onClick=${sendNow}>Send now</button>
+              <button class="c2-mini accent" disabled=${busy || !session || targetServer}
+                title=${targetServer ? promptTip(target) : ''} onClick=${sendNow}>Send now</button>
             </div>
+            ${targetServer && html`<div class="c2-delegate-warn">${promptTip(target)}</div>`}
             <div class="c2-edit-row">
               <span class="c2-edit-k">Schedule</span>
               <input class="c2-edit-input" type="datetime-local" value=${when} onInput=${(e) => setWhen(e.target.value)} />
-              <button class="c2-mini" disabled=${busy || !session || !when} onClick=${schedule}>Schedule…</button>
+              <button class="c2-mini" disabled=${busy || !session || !when || targetServer}
+                title=${targetServer ? promptTip(target) : ''} onClick=${schedule}>Schedule…</button>
             </div>
             <div class="c2-cli-hint">$ tmux send-keys -t ${session || '<session>'} … Enter</div>`}
     </div>`;
