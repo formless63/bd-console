@@ -605,15 +605,20 @@ export async function loadSchedule() {
   }
 }
 
+// Both writes below are hub-level, so they must use apiPostRaw: apiPost would
+// rewrite /api/schedule… into /api/p/<id>/api/schedule… whenever a project is
+// active, and lib/routes.mjs only matches the unprefixed form (bd-console-xsv).
+// apiUrl() now throws on that mistake rather than 404ing quietly, but the
+// right call is still the raw one.
 export async function scheduleCreate(body) {
-  const data = await withAuth(() => apiPost('/api/schedule', body));
+  const data = await withAuth(() => apiPostRaw('/api/schedule', body));
   await loadSchedule();
   toast('Scheduled for ' + body.session);
   return data.job;
 }
 
 export async function scheduleCancel(id) {
-  await withAuth(() => apiPost('/api/schedule/cancel', { id }));
+  await withAuth(() => apiPostRaw('/api/schedule/cancel', { id }));
   await loadSchedule();
   toast('Cancelled scheduled prompt #' + id);
 }
@@ -635,22 +640,25 @@ export async function loadPrompts() {
   }
 }
 
+// Hub-level writes — apiPostRaw, never apiPost (see scheduleCreate above).
 export async function savePrompt(name, prompt) {
-  const data = await withAuth(() => apiPost('/api/prompts', { name, prompt }));
+  const data = await withAuth(() => apiPostRaw('/api/prompts', { name, prompt }));
   await loadPrompts();
   toast('Saved prompt "' + name + '"');
   return data.id;
 }
 
 export async function deletePrompt(id) {
-  await withAuth(() => apiPost('/api/prompts/delete', { id }));
+  await withAuth(() => apiPostRaw('/api/prompts/delete', { id }));
   await loadPrompts();
   toast('Deleted saved prompt');
 }
 
-// Best-effort "last used" ping — never surfaces an error to the user.
+// Best-effort "last used" ping — never surfaces an error to the user. The
+// swallowed error is exactly why this one had to be audited by hand: a
+// prefixed 404 here could never have shown up as anything at all.
 export async function markPromptUsed(id) {
-  try { await apiPost('/api/prompts/used', { id }); } catch { /* ignore */ }
+  try { await apiPostRaw('/api/prompts/used', { id }); } catch { /* ignore */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -755,8 +763,9 @@ export async function loadSettings() {
 }
 
 // token: a non-empty string to set the server write token, or null to clear it.
+// Hub-level — apiPostRaw (see scheduleCreate above).
 export async function saveServerToken(token) {
-  const data = await withAuth(() => apiPost('/api/settings', { token }));
+  const data = await withAuth(() => apiPostRaw('/api/settings', { token }));
   await loadSettings();
   return data;
 }
@@ -773,7 +782,7 @@ const STANDARD_EPIC_TITLES = { bug: 'Bugs', feature: 'Features', task: 'Tasks', 
 // map: { <projectId>: { bug|feature|task|idea|chore: <epicId|null> } } — merged
 // server-side into the stored map (other projects' entries are untouched).
 export async function saveDefaultEpics(map) {
-  const data = await withAuth(() => apiPost('/api/settings', { defaultEpics: map }));
+  const data = await withAuth(() => apiPostRaw('/api/settings', { defaultEpics: map }));
   await loadSettings();
   return data;
 }
