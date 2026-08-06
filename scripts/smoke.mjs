@@ -39,7 +39,7 @@ import {
   conceptHref, isLearnHash, learnAnchorFromHash, LEARN_KEY,
 } from '../public/ui/learn.js';
 import { LINK_TYPES as SERVER_LINK_TYPES } from '../lib/bd.mjs';
-import { parseScopedLimits } from '../lib/usage.mjs';
+import { parseScopedLimits, getClaudeUsage } from '../lib/usage.mjs';
 import { parseBdVersionStdout, compareVersions, isBehind } from '../lib/bdversion.mjs';
 import { parseCliVersionStdout } from '../lib/cliversions.mjs';
 
@@ -1545,6 +1545,30 @@ console.log(JSON.stringify({ before, retried }));
       assert(secondary.resetsAt === secondaryResetsAtSec * 1000, `codex secondary resetsAt should be resets_at*1000, got: ${secondary.resetsAt}`);
 
       console.log('smoke ok (usage API: fixture claude token-expired + fixture codex ok, LAST-event selection, no token material leaked)');
+
+      // --- ?fresh=1 cache bypass (bd-console-0fg) --------------------------
+      // Exercised against the expired-creds fixture, so it proves the cache
+      // plumbing without ever touching the network: a repeat GET must be
+      // served from cache (same fetchedAt, cached:true), ?fresh=1 must
+      // recompute, and a second immediate ?fresh=1 must be refused by the
+      // server-side minimum interval between fresh calls.
+      const getUsage = (qs = '') => fetch(`http://127.0.0.1:${usagePort}/api/usage${qs}`).then((r) => r.json());
+      const cachedBody = await getUsage();
+      const cachedClaude = cachedBody.providers.claude;
+      assert(cachedClaude.cached === true, `repeat /api/usage should be served from cache, got: ${JSON.stringify(cachedClaude)}`);
+      assert(cachedClaude.fetchedAt === claude.fetchedAt, 'cached /api/usage should keep the original fetchedAt');
+
+      const freshBody = await getUsage('?fresh=1');
+      const freshClaude = freshBody.providers.claude;
+      assert(!freshClaude.cached, `?fresh=1 should bypass the cache, got: ${JSON.stringify(freshClaude)}`);
+      assert(freshClaude.fetchedAt >= claude.fetchedAt, '?fresh=1 result should be recomputed (fetchedAt not older)');
+      assert(freshClaude.status === 'token-expired', `?fresh=1 must not change the fixture's status: ${JSON.stringify(freshClaude)}`);
+
+      const fresh2Claude = (await getUsage('?fresh=1')).providers.claude;
+      assert(fresh2Claude.cached === true, `a second immediate ?fresh=1 should be throttled to cache, got: ${JSON.stringify(fresh2Claude)}`);
+      assert(fresh2Claude.fetchedAt === freshClaude.fetchedAt, 'throttled ?fresh=1 should return the previous computed result');
+
+      console.log('smoke ok (usage API: ?fresh=1 bypasses the cache once, then is throttled to cache)');
     } finally {
       usageServer.kill('SIGTERM');
       await new Promise((resolveP) => usageServer.once('exit', () => resolveP()));
@@ -1638,6 +1662,60 @@ console.log(JSON.stringify({ before, retried }));
     assert(parseScopedLimits(undefined).length === 0, 'parseScopedLimits(undefined) should return []');
     assert(parseScopedLimits([]).length === 0, 'parseScopedLimits([]) should return []');
     console.log('smoke ok (parseScopedLimits: maps scoped entry, ignores scope:null entries)');
+  }
+
+  // --- 429 backoff beats ?fresh=1 (lib/usage.mjs, in-process) ---------------
+  // The one usage behavior that can't be reached through the fixture servers
+  // above (they never get as far as a network call), so it's driven in-process
+  // with a stubbed global fetch: getClaudeUsage() calls the global, so
+  // swapping it lets us fabricate a 429 and COUNT upstream attempts. The
+  // contract under test is the whole point of bd-console-0fg: once we've been
+  // rate-limited, an explicit human refresh must NOT produce another upstream
+  // call — it gets the cached answer, flagged, with a retryAt.
+  {
+    const rlClaudeDir = join(tempRoot, 'usage-429-claude');
+    mkdirSync(rlClaudeDir, { recursive: true });
+    writeFileSync(join(rlClaudeDir, '.credentials.json'), JSON.stringify({
+      claudeAiOauth: {
+        accessToken: 'sk-ant-oat01-SMOKE-429-FIXTURE-DO-NOT-USE',
+        refreshToken: 'fake-refresh-token-do-not-use',
+        expiresAt: Date.now() + 3600_000, // valid, so the adapter reaches the (stubbed) fetch
+        subscriptionType: 'pro',
+        rateLimitTier: 'default'
+      }
+    }));
+
+    const prevClaudeDir = process.env.BD_CONSOLE_CLAUDE_DIR;
+    const realFetch = globalThis.fetch;
+    process.env.BD_CONSOLE_CLAUDE_DIR = rlClaudeDir;
+    let upstreamCalls = 0;
+    globalThis.fetch = async () => {
+      upstreamCalls += 1;
+      return new Response('{"error":"rate_limited"}', { status: 429 });
+    };
+    try {
+      const limited = await getClaudeUsage();
+      assert(limited.status === 'rate-limited', `a 429 should map to status rate-limited, got: ${JSON.stringify(limited)}`);
+      assert(upstreamCalls === 1, `expected exactly 1 upstream attempt, got ${upstreamCalls}`);
+      assert(typeof limited.retryAt === 'number' && (limited.retryAt - Date.now()) >= 10 * 60_000,
+        `429 backoff should be at least 10 minutes, got retryAt in ${(limited.retryAt - Date.now()) / 60000}m`);
+
+      const duringBackoff = await getClaudeUsage({ fresh: true });
+      assert(upstreamCalls === 1, `fresh=1 must not hit upstream during a 429 backoff (upstream calls: ${upstreamCalls})`);
+      assert(duringBackoff.status === 'rate-limited' && duringBackoff.cached === true,
+        `fresh=1 during backoff should return the cached rate-limited result: ${JSON.stringify(duringBackoff)}`);
+      assert(duringBackoff.retryAt === limited.retryAt, 'cached rate-limited result should keep the same retryAt');
+
+      const polled = await getClaudeUsage();
+      assert(upstreamCalls === 1, `a normal poll must not hit upstream during a 429 backoff (upstream calls: ${upstreamCalls})`);
+      assert(polled.cached === true, 'poll during backoff should be flagged cached');
+
+      console.log('smoke ok (usage adapter: 429 -> >=10m backoff, honored even for fresh=1)');
+    } finally {
+      globalThis.fetch = realFetch;
+      if (prevClaudeDir === undefined) delete process.env.BD_CONSOLE_CLAUDE_DIR;
+      else process.env.BD_CONSOLE_CLAUDE_DIR = prevClaudeDir;
+    }
   }
 
   // --- usage history (lib/usage-history.mjs via GET /api/usage/history) ------
