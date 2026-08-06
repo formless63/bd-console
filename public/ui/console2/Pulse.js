@@ -12,7 +12,7 @@ import { store, selectIssue, toast } from '../store.js';
 import { c2, setPulseBarCollapsed } from './state.js';
 import { pulse, AGE_AMBER_H, AGE_RED_H, ageMs } from './derive.js';
 import { Corners, PRI_LABEL, StatusGlyph } from './ui.js';
-import { matchProject, cwdTail } from '../components/common.js';
+import { matchProject, cwdTail, agentName, agentTip, isServerMode, promptTip } from '../components/common.js';
 import { ThemeSwitch } from './ThemeSwitch.js';
 
 function focus(lane) { c2.canvasMode.value = 'flow'; c2.laneFocus.value = lane; }
@@ -171,12 +171,20 @@ function SessionsBlock() {
         ? html`<div class="c2-lane-empty">No sessions here.</div>`
         : sessions.map((s) => {
           const first = s.panes && s.panes[0];
+          // Server-mode sessions (a `claude rc` host, a `kimi web` server, …)
+          // stay listed — they're real work in this repo — but "delegate
+          // here" is disabled with the reason, since send-keys would type
+          // into a process with no prompt. See components/common.js.
+          const server = isServerMode(s);
           return html`
-            <div key=${s.name} class="c2-session-row">
+            <div key=${s.name} class=${'c2-session-row' + (server ? ' server-mode' : '')}>
               <span class="c2-session-name" title=${cwdTail(first?.cwd)}>${s.name}</span>
+              ${agentName(s) ? html`<span class="c2-session-agent" title=${agentTip(s)}>${agentName(s)}</span>` : null}
               <span class=${'badge tmux-attach' + (s.attached ? ' on' : '')}>${s.attached ? 'attached' : 'detached'}</span>
+              ${server ? html`<span class="badge server-mode" title=${promptTip(s)}>server mode</span>` : null}
               <span class="c2-session-cmd">${first?.command || '—'}</span>
-              <button class="c2-mini" title="Delegate here" onClick=${() => delegateHere(s.name)}>delegate here</button>
+              <button class="c2-mini" disabled=${server} title=${server ? promptTip(s) : 'Delegate here'}
+                onClick=${() => delegateHere(s.name)}>delegate here</button>
             </div>`;
         })}
     </div>`;

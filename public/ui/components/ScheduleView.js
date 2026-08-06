@@ -16,7 +16,7 @@ import {
 } from '../store.js';
 import { apiPostRaw, AuthError } from '../api.js';
 import { useVisiblePoll } from '../poll.js';
-import { relTime, cwdTail } from './common.js';
+import { relTime, cwdTail, agentName, isServerMode, promptTip } from './common.js';
 
 // The scheduler's own state is genuinely live — a pending job flips to
 // sent/failed on the server's tick, and the session list behind the create
@@ -124,11 +124,14 @@ function SessionCombobox({ value, onChange, sessions }) {
   };
 
   // A session's first pane's command + cwd tail, so users can tell what's
-  // actually running there instead of picking blind by name alone.
+  // actually running there instead of picking blind by name alone. The
+  // detected agent (bd-console-2gs) leads when we have one — "Claude Code"
+  // says more than "claude" does, and "bash" next to a detected agent is
+  // exactly the confusion the detection exists to resolve.
   const paneSummary = (s) => {
     const first = s.panes && s.panes[0];
     if (!first) return 'no active pane';
-    const cmd = first.command || '—';
+    const cmd = agentName(s) ? `${agentName(s)} · ${first.command || '—'}` : (first.command || '—');
     const cwd = cwdTail(first.cwd);
     return cwd ? `${cmd} · ${cwd}` : cmd;
   };
@@ -150,6 +153,9 @@ function SessionCombobox({ value, onChange, sessions }) {
               <span class="combobox-opt-row">
                 <span class="combobox-opt-name">${s.name}</span>
                 ${s.attached ? html`<span class="badge tmux-attach on combobox-opt-badge">attached</span>` : null}
+                ${isServerMode(s)
+                  ? html`<span class="badge server-mode combobox-opt-badge" title=${promptTip(s)}>server mode</span>`
+                  : null}
               </span>
               <span class="combobox-opt-meta muted small">${paneSummary(s)}</span>
             </li>`)}

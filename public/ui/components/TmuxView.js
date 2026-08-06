@@ -5,7 +5,10 @@
 import { html } from 'htm/preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { store, navigate, loadTmux, loadTmuxPreview, toast } from '../store.js';
-import { timeAgo, cwdTail, stripAnsi, matchProject, ageText, copyToClipboard, CopyIcon } from './common.js';
+import {
+  timeAgo, cwdTail, stripAnsi, matchProject, ageText, copyToClipboard, CopyIcon,
+  agentName, agentTip, isServerMode, promptTip, ServerModeBadge
+} from './common.js';
 
 const SESSION_POLL_MS = 8000;
 const PREVIEW_POLL_MS = 3000;
@@ -77,7 +80,13 @@ export function SessionRowCompact({ session, projects, onClick }) {
           ? html`<span class="chip repo-chip hub-tmux-repo" title=${match[1].path}>${match[0]}</span>`
           : html`<span class="tmux-cell-empty">—</span>`}
       </span>
-      <span class="tmux-cell-cmd pane-cmd" title=${first?.command || ''}>${first?.command || '—'}</span>
+      <span class="tmux-cell-cmd pane-cmd" title=${agentTip(session) || first?.command || ''}>
+        ${agentName(session)
+          ? html`<span class="chip agent-chip">${agentName(session)}</span>`
+          : null}
+        <span class="tmux-cmd-text">${first?.command || '—'}</span>
+        ${ServerModeBadge(session)}
+      </span>
       <span class="tmux-cell-age" title="Session age">${ageText(session.created)}</span>
       <span class="tmux-cell-activity" title="Last activity">${session.activity ? timeAgo(session.activity * 1000) : '—'}</span>
       <span class="tmux-cell-actions"><${CopyAttachButton} name=${session.name} /></span>
@@ -88,7 +97,11 @@ function Pane({ pane, projects }) {
   const match = matchProject(pane.cwd, projects);
   return html`
     <div class="tmux-pane">
+      ${agentName(pane)
+        ? html`<sl-tooltip content=${agentTip(pane)}><span class="chip agent-chip">${agentName(pane)}</span></sl-tooltip>`
+        : null}
       <span class="pane-cmd">${pane.command || '—'}</span>
+      ${ServerModeBadge(pane)}
       <sl-tooltip content=${pane.cwd || '(unknown cwd)'}>
         <span class="pane-cwd">${cwdTail(pane.cwd)}</span>
       </sl-tooltip>
@@ -100,10 +113,19 @@ function Pane({ pane, projects }) {
 }
 
 function SessionCard({ session, projects, onPreview, onSchedule }) {
+  // A server-mode session is deliberately NOT hidden: it is real work running
+  // on this host and worth seeing. What changes is that its prompt affordance
+  // is disabled and says why — the alternative (leaving it enabled) is a
+  // button that reports success and does nothing.
+  const serverMode = isServerMode(session);
   return html`
-    <div class="tmux-card">
+    <div class=${'tmux-card' + (serverMode ? ' server-mode-card' : '')}>
       <div class="tmux-card-head">
         <span class="tmux-name">${session.name}</span>
+        ${agentName(session)
+          ? html`<sl-tooltip content=${agentTip(session)}><span class="chip agent-chip">${agentName(session)}</span></sl-tooltip>`
+          : null}
+        ${serverMode ? html`<sl-tooltip content=${promptTip(session)}><span class="badge server-mode">server mode</span></sl-tooltip>` : null}
         <span class=${'badge tmux-attach' + (session.attached ? ' on' : '')}>${session.attached ? 'attached' : 'detached'}</span>
       </div>
       <div class="tmux-meta muted small">
@@ -117,8 +139,13 @@ function SessionCard({ session, projects, onPreview, onSchedule }) {
       <div class="tmux-card-actions">
         <button class="btn btn-xs" onClick=${onPreview}>Preview</button>
         <button class="btn btn-xs btn-ghost" onClick=${() => copyAttach(session.name)}>Copy attach</button>
-        <button class="btn btn-xs btn-ghost" onClick=${onSchedule}>Schedule a prompt here</button>
+        ${serverMode
+          ? html`<sl-tooltip content=${promptTip(session)}>
+              <button class="btn btn-xs btn-ghost" disabled>Schedule a prompt here</button>
+            </sl-tooltip>`
+          : html`<button class="btn btn-xs btn-ghost" onClick=${onSchedule}>Schedule a prompt here</button>`}
       </div>
+      ${serverMode ? html`<div class="tmux-server-note muted small">${promptTip(session)}</div>` : null}
     </div>`;
 }
 

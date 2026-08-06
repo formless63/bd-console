@@ -42,6 +42,11 @@ import { LINK_TYPES as SERVER_LINK_TYPES } from '../lib/bd.mjs';
 import { parseScopedLimits, getClaudeUsage } from '../lib/usage.mjs';
 import { parseBdVersionStdout, compareVersions, isBehind } from '../lib/bdversion.mjs';
 import { parseCliVersionStdout } from '../lib/cliversions.mjs';
+// Pure tmux agent-type/promptability classifier (bd-console-2gs) — importable
+// here because every I/O-shaped input (argv, kimi server pids) is gathered by
+// its caller, so the rules can be asserted against fixtures with no tmux
+// server, no /proc, and no live agents.
+import { classifyPane } from '../lib/tmux.mjs';
 
 function run(cmd, args, options = {}) {
   return execFileSync(cmd, args, {
@@ -577,10 +582,20 @@ try {
       assert(s.activity === null || typeof s.activity === 'number', 'tmux session activity must be number or null');
       assert(s.lastAttached === null || typeof s.lastAttached === 'number', 'tmux session lastAttached must be number or null');
       assert(Array.isArray(s.panes), 'tmux session missing panes array');
+      // Agent/promptability verdict fields (bd-console-2gs) — shape only; the
+      // RULES are asserted against fixtures below, since this host's real
+      // sessions are whatever they happen to be.
+      assert(s.agent === null || typeof s.agent === 'string', 'tmux session agent must be string or null');
+      assert(typeof s.mode === 'string', 'tmux session missing mode');
+      assert(typeof s.promptable === 'boolean', 'tmux session missing boolean promptable');
+      assert((s.promptable === false) === (s.mode === 'server'),
+        `only a server-mode session may be non-promptable: ${s.name} mode=${s.mode} promptable=${s.promptable}`);
       for (const pane of s.panes) {
         assert(typeof pane.command === 'string', 'tmux pane missing command');
         assert(typeof pane.cwd === 'string', 'tmux pane missing cwd');
         assert(typeof pane.title === 'string', 'tmux pane missing title');
+        assert(typeof pane.pid === 'number', 'tmux pane missing numeric pid');
+        assert(typeof pane.promptable === 'boolean', 'tmux pane missing boolean promptable');
       }
     }
 
@@ -600,6 +615,120 @@ try {
     }
 
     console.log(`smoke ok (tmux API: present, ${tmuxBody.sessions.length} session(s), shape-checked only)`);
+  }
+
+  // --- agent-type + promptability detection (bd-console-2gs) ----------------
+  // FIXTURES, not live tmux: every case below is a real pane record measured
+  // on a multi-agent host, replayed as synthetic input. The rule under test is
+  // that `pane_current_command` alone is never trusted — argv decides, the
+  // pane title is a last resort, and every uncertain path stays promptable so
+  // detection can only ever ADD refusals it can prove.
+  {
+    // The case that motivated the whole feature: `claude rc` (Claude Code's
+    // Remote Control host) and an interactive `claude` are INDISTINGUISHABLE
+    // by pane_current_command — both report "claude".
+    const interactiveClaude = classifyPane({
+      command: 'claude', title: '✳ core2',
+      processes: [{ argv: ['-bash'] }, { argv: ['claude', '--name', 'core2'] }]
+    });
+    assert(interactiveClaude.agent === 'claude' && interactiveClaude.mode === 'interactive' && interactiveClaude.promptable === true,
+      `plain interactive claude should be promptable: ${JSON.stringify(interactiveClaude)}`);
+    assert(interactiveClaude.agentSource === 'process', 'an argv match must report agentSource:process');
+
+    const claudeRc = classifyPane({
+      command: 'claude', title: '✳ core-rc',
+      processes: [
+        { argv: ['-bash'] },
+        { argv: ['claude', 'rc'] },
+        { argv: ['/home/u/.local/share/claude/versions/2.1.211', '--print', '--sdk-url', 'https://api.anthropic.com/v1/code/sessions/cse_x'] }
+      ]
+    });
+    assert(claudeRc.agent === 'claude' && claudeRc.mode === 'server' && claudeRc.promptable === false,
+      `\`claude rc\` must be detected as a server, not a prompt: ${JSON.stringify(claudeRc)}`);
+    assert(/rc/.test(claudeRc.reason), `the refusal must name the signal it saw: ${claudeRc.reason}`);
+
+    // Claude Code's versioned launcher has a NUMBER for a basename, so the
+    // install path is the only thing that names it.
+    const sdkChild = classifyPane({
+      command: 'node', title: '',
+      processes: [{ argv: ['/home/u/.local/share/claude/versions/2.1.211', '--print', '--output-format', 'stream-json'] }]
+    });
+    assert(sdkChild.agent === 'claude' && sdkChild.promptable === false,
+      `the versioned --print launcher is headless claude: ${JSON.stringify(sdkChild)}`);
+
+    // Kimi Code, measured: the pane reports bash, only the TITLE still says
+    // "Kimi Code". Name the agent, but stay promptable — titles go stale.
+    const kimiByTitle = classifyPane({ command: 'bash', title: 'Kimi Code', processes: [{ argv: ['-bash'] }] });
+    assert(kimiByTitle.agent === 'kimi' && kimiByTitle.agentSource === 'title',
+      `a stale-able title must still name the agent: ${JSON.stringify(kimiByTitle)}`);
+    assert(kimiByTitle.promptable === true && kimiByTitle.mode === 'unknown',
+      'a title-only match must never claim a mode or refuse a send');
+
+    // kimi-code rewrites its own argv, so TUI and web server look identical —
+    // the server instance record (pid) is the only discriminator.
+    const kimiTui = classifyPane({
+      command: 'kimi-code', title: 'codium',
+      processes: [{ argv: ['-bash'] }, { argv: ['kimi-code'], kimiServer: false }]
+    });
+    assert(kimiTui.agent === 'kimi' && kimiTui.promptable === true, `kimi TUI is promptable: ${JSON.stringify(kimiTui)}`);
+    const kimiWeb = classifyPane({
+      command: 'kimi-code', title: 'codium',
+      processes: [{ argv: ['-bash'] }, { argv: ['kimi-code'], kimiServer: true }]
+    });
+    assert(kimiWeb.agent === 'kimi' && kimiWeb.mode === 'server' && kimiWeb.promptable === false,
+      `a kimi pane that owns a server instance is not promptable: ${JSON.stringify(kimiWeb)}`);
+
+    // The Gemini CLI's binary is `agy` (Antigravity), NOT `gemini`.
+    const gemini = classifyPane({ command: 'agy', title: 'codium', processes: [{ argv: ['-bash'] }, { argv: ['agy'] }] });
+    assert(gemini.agent === 'gemini' && gemini.promptable === true, `agy is the gemini CLI: ${JSON.stringify(gemini)}`);
+    assert(gemini.agentLabel && /Gemini/.test(gemini.agentLabel), 'the UI label must be human, not the binary name');
+    // ...and "codium" in a title must not read as "codex".
+    assert(classifyPane({ command: 'vim', title: 'codium' }).agent === null,
+      'title matching must be word-anchored — codium is not codex');
+
+    // codex: bare is interactive; app-server is not. `-p` is codex's PROFILE
+    // flag, which is why the server-flag lists are per-agent, not shared.
+    const codex = classifyPane({ command: 'codex', title: 'pric3d', processes: [{ argv: ['-bash'] }, { argv: ['codex'] }] });
+    assert(codex.agent === 'codex' && codex.promptable === true, `bare codex is promptable: ${JSON.stringify(codex)}`);
+    const codexServer = classifyPane({
+      command: 'codex', title: '',
+      processes: [{ argv: ['codex', '-c', 'features.code_mode_host=true', 'app-server', '--listen', 'unix://'] }]
+    });
+    assert(codexServer.mode === 'server' && codexServer.promptable === false,
+      `codex app-server is not promptable: ${JSON.stringify(codexServer)}`);
+    assert(classifyPane({ command: 'codex', processes: [{ argv: ['codex', '-p', 'work'] }] }).promptable === true,
+      'codex -p selects a profile and stays interactive — it must NOT be read as claude/gemini --print');
+
+    // npx/node wrappers still resolve to the agent underneath.
+    const wrapped = classifyPane({
+      command: 'node', title: '',
+      processes: [{ argv: ['node', '/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js'] }]
+    });
+    assert(wrapped.agent === 'claude', `a node-wrapped agent must still resolve: ${JSON.stringify(wrapped)}`);
+
+    // A plain shell: no agent, still a legitimate send target (that is what
+    // the scheduler has always done).
+    const shell = classifyPane({ command: 'bash', title: 'user@host:~', processes: [{ argv: ['-bash'] }] });
+    assert(shell.agent === null && shell.mode === 'shell' && shell.promptable === true,
+      `a shell pane stays promptable: ${JSON.stringify(shell)}`);
+
+    // DEGRADATION: no /proc evidence at all (non-Linux, dead pid, permission
+    // denied) must fall back to tmux's own field and stay promptable — the
+    // pre-detection behaviour — and must never throw.
+    const noProc = classifyPane({ command: 'claude', title: '' });
+    assert(noProc.agent === 'claude' && noProc.agentSource === 'command' && noProc.promptable === true,
+      `without /proc, the pane command names the agent and nothing is refused: ${JSON.stringify(noProc)}`);
+    for (const junk of [undefined, null, {}, { command: null, title: null, processes: null }, { processes: [{ argv: null }] }]) {
+      const v = classifyPane(junk);
+      assert(v && v.promptable === true && v.mode === 'unknown', `garbage input must degrade, not throw: ${JSON.stringify(junk)}`);
+    }
+
+    // THE INVARIANT: promptable:false happens if and only if mode === 'server'.
+    for (const v of [interactiveClaude, claudeRc, sdkChild, kimiByTitle, kimiTui, kimiWeb, gemini, codex, codexServer, shell, noProc]) {
+      assert((v.promptable === false) === (v.mode === 'server'),
+        `only server mode may be non-promptable: ${JSON.stringify(v)}`);
+    }
+    console.log('smoke ok (agent detection: claude rc vs interactive, kimi web vs TUI vs stale title, agy=gemini, codex -p, shell, no-/proc degradation)');
   }
 
   // --- prompt scheduler (hub-level, not project-scoped) -----------------------

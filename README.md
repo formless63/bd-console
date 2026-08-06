@@ -337,11 +337,33 @@ A job that fires against a session that no longer exists (or never existed)
 ends up `failed`, not silently dropped — check `GET /api/schedule` for job
 status (`pending` / `sent` / `failed` / `cancelled`) and `error`.
 
+### Agent type and "server mode"
+
+`GET /api/tmux` labels each session and pane with the agent CLI it detected
+(`agent`: `claude` / `codex` / `gemini` / `kimi` / `null`) and whether that
+pane can actually be prompted (`promptable`, plus a `mode` of `interactive` /
+`server` / `shell` / `unknown` and a human `reason`). Detection reads tmux's
+own fields first, then the pane process's real `/proc` argv and its children,
+with the pane title as a last-resort tiebreak — `pane_current_command` alone
+can't tell an interactive `claude` from a `claude rc` remote-control host, and
+`kimi-code` looks identical whether it's a TUI or a web server.
+
+Sessions in server mode (`claude rc`, `codex app-server`, a `kimi web`
+server, …) are still **listed** — they're real work on the host — but their
+prompt/delegate controls are disabled with the reason attached, and
+`POST /api/tmux/send` answers `409` instead of typing into a process that
+will never read it. That refusal only happens when the verdict came from the
+process's own argv; add `"force": true` to the body to override it. Anything
+less certain stays promptable, so detection can only ever add refusals it can
+prove.
+
 API surface, hub-level (not project-scoped):
 
 ```
 GET  /api/tmux                    list tmux sessions/panes on the hub's host
+                                  (+ detected agent / mode / promptable)
 GET  /api/tmux/preview?session=&lines=   scrollback preview (token-gated)
+POST /api/tmux/send                type a prompt now: {session, text, force?}
 GET  /api/schedule                 list jobs
 POST /api/schedule                 create a job: {prompt, session, runAt}
 POST /api/schedule/cancel          cancel a still-pending job: {id}

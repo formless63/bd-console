@@ -90,6 +90,48 @@ export function matchProject(cwd, projects) {
 
 export const statusText = (s) => s.replace('_', ' ');
 
+// ---------------------------------------------------------------------------
+// tmux agent-type + promptability presentation (bd-console-2gs).
+//
+// GET /api/tmux now labels every session/pane with the agent CLI it detected
+// (claude/codex/gemini/kimi) and whether that pane can actually be prompted.
+// A session in SERVER mode (`claude rc`, a `kimi web` server, `codex
+// app-server`) is still LISTED — hiding it would just make the host look
+// smaller than it is — but its prompt/delegate affordance is disabled with
+// the reason attached, because send-keys into one of those types text at a
+// process that will never read it.
+//
+// Everything here tolerates a server that predates the feature (fields
+// absent → no chip, promptable defaults to true).
+// ---------------------------------------------------------------------------
+export const agentName = (x) => (x && (x.agentLabel || x.agent)) || '';
+export const isServerMode = (x) => !!x && x.promptable === false;
+
+// Tooltip for the agent chip: what we detected and how confident that is.
+export function agentTip(x) {
+  if (!x || !agentName(x)) return '';
+  const how = x.agentSource === 'title'
+    ? 'matched from the pane title only — that can be stale'
+    : x.agentSource === 'command'
+      ? "matched from tmux's pane command"
+      : x.agentSource === 'process'
+        ? 'read from the running process'
+        : '';
+  return how ? `${agentName(x)} — ${how}` : agentName(x);
+}
+
+// Tooltip for a disabled prompt/delegate control.
+export function promptTip(x) {
+  if (!isServerMode(x)) return x?.reason || '';
+  return `${x.reason || 'This session is running in server mode.'} Prompts are disabled here because nothing would read them.`;
+}
+
+// The "server mode" marker itself — one component so the hub grid, the tmux
+// cards, the schedule picker and Console 2.0 can't drift apart.
+export const ServerModeBadge = (x) => (isServerMode(x)
+  ? html`<span class="badge server-mode" title=${promptTip(x)}>server mode</span>`
+  : null);
+
 export const PriBadge = (p) => html`<span class=${'badge pri pri-' + p}>${PRI_LABEL[p] ?? p}</span>`;
 export const StatusBadge = (issue) => {
   const s = effStatus(issue);
