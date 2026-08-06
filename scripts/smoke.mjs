@@ -3984,6 +3984,190 @@ console.log(JSON.stringify({ before, retried }));
     console.log('smoke ok (idle-but-active: 18d silence + live CPU flags, attached/parked/recent-output/short-window do not, server-mode caveat, per-pid deltas survive child exit, sampler is bounded)');
   }
 
+  // --- provider harness (lib/usage/harness.mjs, bd-console-hi7) --------------
+  // The four adapters used to hand-roll a copy of this scaffolding each, so the
+  // rules below were only ever asserted through whichever provider happened to
+  // exercise them (the 429 backoff via Claude, TTLs via nothing at all). They
+  // are shared now, so they are tested once, directly, against fabricated
+  // providers — no fixture dirs, no network, no clock-waiting.
+  //
+  // Imported dynamically so this block stays self-contained and appendable
+  // (bd-console-m90 will split this file; nothing above needs to change).
+  {
+    const { defineProvider } = await import('../lib/usage/harness.mjs');
+
+    // ---- TTL is selected by the RESULT's status, not by the caller ---------
+    // `other: 0` means "a failure is never served from cache", which is what
+    // makes the selection observable without waiting out a real TTL.
+    let ttlCalls = 0;
+    const ttlStatuses = ['error', 'error', 'ok', 'ok'];
+    const ttlProbe = defineProvider({
+      provider: 'ttl-probe',
+      ttl: { ok: 60_000, other: 0 },
+      compute: async () => ({ provider: 'ttl-probe', status: ttlStatuses[ttlCalls++] || 'ok', fetchedAt: Date.now() })
+    });
+    const ttlA = await ttlProbe.get();
+    assert(ttlA.status === 'error' && ttlCalls === 1, `first call should compute: ${JSON.stringify(ttlA)}`);
+    await ttlProbe.get();
+    assert(ttlCalls === 2, `an error result must take the failure TTL, not the ok one (compute calls: ${ttlCalls})`);
+    const ttlOk = await ttlProbe.get();
+    assert(ttlOk.status === 'ok' && ttlCalls === 3, `third call should compute the ok result: ${JSON.stringify(ttlOk)}`);
+    const ttlCached = await ttlProbe.get();
+    assert(ttlCalls === 3, `an ok result must be held for the ok TTL (compute calls: ${ttlCalls})`);
+    assert(ttlCached.fetchedAt === ttlOk.fetchedAt, 'a cache hit must return the same computed value');
+    // A provider with no `fresh` policy has no refresh button, so it neither
+    // honors the flag nor stamps `cached` — Codex/Kimi/Gemini behavior.
+    const ttlIgnoresFresh = await ttlProbe.get({ fresh: true });
+    assert(ttlCalls === 3, `a provider without a fresh policy must ignore { fresh: true } (compute calls: ${ttlCalls})`);
+    assert(ttlIgnoresFresh.cached === undefined, 'a provider without a refresh button must not stamp cached');
+
+    // ---- fresh: bypasses a warm entry once, then is throttled --------------
+    let freshCalls = 0;
+    const freshProbe = defineProvider({
+      provider: 'fresh-probe',
+      ttl: { ok: 60_000, other: 60_000 },
+      fresh: { minIntervalMs: 20_000 },
+      compute: async () => ({ provider: 'fresh-probe', status: 'ok', n: ++freshCalls, fetchedAt: Date.now() })
+    });
+    const f1 = await freshProbe.get();
+    assert(f1.n === 1 && f1.cached === undefined, `first computed result is not cached: ${JSON.stringify(f1)}`);
+    const f2 = await freshProbe.get();
+    assert(f2.n === 1 && f2.cached === true, `a warm poll is served from cache and says so: ${JSON.stringify(f2)}`);
+    const f3 = await freshProbe.get({ fresh: true });
+    assert(f3.n === 2 && f3.cached === undefined, `fresh must bypass a warm entry: ${JSON.stringify(f3)}`);
+    const f4 = await freshProbe.get({ fresh: true });
+    assert(f4.n === 2 && f4.cached === true,
+      `a second fresh inside minIntervalMs must collapse into the first: ${JSON.stringify(f4)}`);
+
+    // ---- backoff: one declaration buys long TTL + retryAt + fresh refusal --
+    // ttl is 0 for BOTH ok and other here, so the only thing that can keep this
+    // value warm is the backoff window — which is the point.
+    let backoffCalls = 0;
+    const backoffProbe = defineProvider({
+      provider: 'backoff-probe',
+      ttl: { ok: 0, other: 0 },
+      backoff: { statuses: ['rate-limited'], ttlMs: 15 * 60_000 },
+      fresh: { minIntervalMs: 0 }, // throttle disabled so ONLY the backoff can refuse
+      compute: async () => { backoffCalls += 1; return { provider: 'backoff-probe', status: 'rate-limited', fetchedAt: Date.now() }; }
+    });
+    const b1 = await backoffProbe.get();
+    assert(b1.status === 'rate-limited' && backoffCalls === 1, `first call computes: ${JSON.stringify(b1)}`);
+    assert(typeof b1.retryAt === 'number' && (b1.retryAt - Date.now()) >= 10 * 60_000,
+      `a backoff status must be stamped with retryAt: ${JSON.stringify(b1)}`);
+    const b2 = await backoffProbe.get({ fresh: true });
+    assert(backoffCalls === 1, `fresh must not go upstream during a backoff (compute calls: ${backoffCalls})`);
+    assert(b2.cached === true && b2.retryAt === b1.retryAt, `cached backoff result keeps its retryAt: ${JSON.stringify(b2)}`);
+    const b3 = await backoffProbe.get();
+    assert(backoffCalls === 1 && b3.cached === true, `a normal poll during backoff is cached too: ${JSON.stringify(b3)}`);
+
+    // ---- never throws, whatever compute() does -----------------------------
+    for (const [name, compute] of [
+      ['rejects', async () => { throw new Error('boom'); }],
+      ['throws synchronously', () => { throw new Error('boom'); }],
+      ['returns null', async () => null],
+      ['returns a string', async () => 'not an object'],
+      ['returns undefined', async () => undefined]
+    ]) {
+      const junk = defineProvider({
+        provider: 'junk-probe', ttl: { ok: 0, other: 0 }, publishesQuota: false, compute
+      });
+      const value = await junk.get();
+      assert(value && value.status === 'error' && value.provider === 'junk-probe',
+        `compute() that ${name} must become status:error, not a rejection: ${JSON.stringify(value)}`);
+      assert(Array.isArray(value.windows) && value.windows.length === 0,
+        `a no-quota provider carries windows:[] even on the error path (${name}): ${JSON.stringify(value)}`);
+      assert(typeof value.fetchedAt === 'number', `the error fallback must still be stamped (${name})`);
+    }
+    // A quota-publishing provider's error fallback stays shaped the way the
+    // Claude and Codex adapters have always shaped theirs: no windows key at
+    // all, so "we don't know" is not rendered as "zero gauges".
+    const quotaJunk = defineProvider({
+      provider: 'quota-junk', ttl: { ok: 0, other: 0 }, publishesQuota: true,
+      compute: async () => { throw new Error('boom'); }
+    });
+    assert((await quotaJunk.get()).windows === undefined,
+      'a quota-publishing provider must not grow an empty windows array on the error path');
+
+    // ---- "publishes no quota" is enforced, not just documented -------------
+    const sneaky = defineProvider({
+      provider: 'sneaky-probe', ttl: { ok: 0, other: 0 }, publishesQuota: false,
+      compute: async () => ({
+        provider: 'sneaky-probe', status: 'ok', fetchedAt: Date.now(),
+        windows: [{ id: 'invented', label: '5h', percent: 42, resetsAt: null }]
+      })
+    });
+    const sneaked = await sneaky.get();
+    assert(Array.isArray(sneaked.windows) && sneaked.windows.length === 0,
+      `a provider that publishes no quota must not be able to grow a gauge: ${JSON.stringify(sneaked.windows)}`);
+
+    console.log('smoke ok (usage harness: status-driven TTLs, fresh bypass + throttle, backoff beats fresh with retryAt, never throws on garbage, no-quota providers cannot grow a gauge)');
+  }
+
+  // --- gemini 429 dedupe (bd-console-a2h) -----------------------------------
+  // Field-found: the adapter reported `exhaustedEvents: 3` for what was ONE
+  // incident — the Antigravity CLI logs a single 429 up to three times as it
+  // propagates through its logger, all inside the same glog second. It was also
+  // a background cache refresh, on a machine whose owner hadn't opened the CLI
+  // in weeks, so calling it a user quota hit overstated twice over. Driven
+  // in-process against a fabricated log: same second = one incident, and the
+  // origin is reported.
+  {
+    const { getGeminiUsage } = await import('../lib/usage/gemini.mjs');
+
+    const dedupeRoot = join(tempRoot, 'usage-gemini-429');
+    const dedupeApp = join(dedupeRoot, 'antigravity-cli');
+    mkdirSync(join(dedupeApp, 'log'), { recursive: true });
+
+    const pad2 = (n) => String(n).padStart(2, '0');
+    const glog = (d, ms) => `${pad2(d.getMonth() + 1)}${pad2(d.getDate())} `
+      + `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}.${ms}`;
+    const burstAt = new Date(Math.floor((Date.now() - 60_000) / 1000) * 1000);
+    const earlierAt = new Date(Math.floor((Date.now() - 3_600_000) / 1000) * 1000);
+    const startedAt = new Date(Math.floor((Date.now() - 7_200_000) / 1000) * 1000);
+    const dedupeLogName = `cli-${startedAt.getFullYear()}${pad2(startedAt.getMonth() + 1)}`
+      + `${pad2(startedAt.getDate())}_${pad2(startedAt.getHours())}`
+      + `${pad2(startedAt.getMinutes())}${pad2(startedAt.getSeconds())}.log`;
+    writeFileSync(join(dedupeApp, 'log', dedupeLogName), [
+      `I${glog(startedAt, '000000')} ${process.pid} server.go:1417] Language server version: 1.1.4`,
+      // An earlier, separate incident with no background marker: a distinct
+      // second must stay a distinct incident, and an origin we can't prove is
+      // reported as unknown rather than guessed.
+      `E${glog(earlierAt, '100000')} ${process.pid} log.go:398] RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. check quota).`,
+      // Mentions RESOURCE_EXHAUSTED but is not a 429 reply — the real log has
+      // one of these inside a dumped JSON body. It must not be counted at all.
+      `I${glog(earlierAt, '200000')} ${process.pid} log.go:100]     "status": "RESOURCE_EXHAUSTED"`,
+      // The three-line propagation burst, verbatim in shape from the real log.
+      `W${glog(burstAt, '652581')} ${process.pid} log_context.go:117] Cache(loadCodeAssistResponse): Singleflight refresh failed: RESOURCE_EXHAUSTED (code 429)`,
+      `E${glog(burstAt, '653012')} ${process.pid} log.go:398] RESOURCE_EXHAUSTED (code 429)`,
+      `W${glog(burstAt, '653202')} ${process.pid} log_context.go:117] Failed to refresh cache in background: RESOURCE_EXHAUSTED (code 429)`,
+      ''
+    ].join('\n'));
+
+    const prevGeminiDir = process.env.BD_CONSOLE_GEMINI_DIR;
+    process.env.BD_CONSOLE_GEMINI_DIR = dedupeRoot;
+    try {
+      const dedupe = await getGeminiUsage();
+      assert(dedupe.status === 'ok', `the 429 fixture should read ok, got: ${JSON.stringify(dedupe.status)}`);
+      const q = dedupe.quota;
+      assert(q.exhaustedEvents === 2,
+        `four 429-ish lines in two distinct seconds are TWO incidents, not four: ${JSON.stringify(q)}`);
+      assert(q.exhaustedLogLines === 4,
+        `the raw line count stays auditable (and the non-429 RESOURCE_EXHAUSTED line is not one of them): ${JSON.stringify(q)}`);
+      assert(q.backgroundEvents === 1,
+        `only the burst names itself a background cache refresh: ${JSON.stringify(q)}`);
+      assert(q.lastExhaustedAt === burstAt.getTime(),
+        `the newest incident dates the block (expected ${burstAt.getTime()}): ${JSON.stringify(q)}`);
+      assert(q.lastExhaustedOrigin === 'background',
+        `a burst logged by the background refresher must be labelled background, not a user quota hit: ${JSON.stringify(q)}`);
+      assert(q.published === false && Array.isArray(dedupe.windows) && dedupe.windows.length === 0,
+        'counting 429s must never turn into a quota gauge');
+    } finally {
+      if (prevGeminiDir === undefined) delete process.env.BD_CONSOLE_GEMINI_DIR;
+      else process.env.BD_CONSOLE_GEMINI_DIR = prevGeminiDir;
+    }
+    console.log('smoke ok (usage API: gemini 429s dedupe by glog second — one incident logged three times counts once, and says it was a background cache refresh)');
+  }
+
   console.log(`smoke ok: ${seedId}, ${quickRes.id}`);
 } catch (err) {
   console.error(`smoke failed: ${err.message}`);
