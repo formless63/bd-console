@@ -294,7 +294,10 @@ const USAGE_POLL_MS = 5 * 60000;
 // provider's rate limit; it lands on the same 5 min as the quota poll purely
 // because that is the right cadence for both, not because they share a timer.
 const USAGE_HISTORY_POLL_MS = 5 * 60000;
-const PROVIDER_LABEL = { claude: 'Claude Code', codex: 'Codex', kimi: 'Kimi Code' };
+// 'Gemini (Antigravity)' matches AGENT_LABEL in lib/tmux.mjs exactly — the same
+// CLI shows up in the Terminal-sessions card under that name, and two different
+// names for one tool on one screen is a bug.
+const PROVIDER_LABEL = { claude: 'Claude Code', codex: 'Codex', kimi: 'Kimi Code', gemini: 'Gemini (Antigravity)' };
 const HISTORY_RANGE_OPTIONS = [7, 30, 90];
 
 // "resets in Xh Ym" / "resets in Ym" — deliberately not timeAgo/relTime
@@ -374,6 +377,16 @@ function summarizeUsage(data) {
 function summarizeKimi(data) {
   if (!data || data.status === 'not-installed') return null;
   if (data.status === 'error') return 'unavailable';
+  if (!data.server) return 'not running';
+  return KIMI_STATE_LABEL[data.server.state] || data.server.state || 'unknown';
+}
+
+// Same contract as summarizeKimi: a state word, never a percentage, and null on
+// machines without the Antigravity CLI so the summary string is untouched there.
+function summarizeGemini(data) {
+  if (!data || data.status === 'not-installed') return null;
+  if (data.status === 'error') return 'unavailable';
+  if (data.auth && data.auth.state === 'signed-out') return 'signed out';
   if (!data.server) return 'not running';
   return KIMI_STATE_LABEL[data.server.state] || data.server.state || 'unknown';
 }
@@ -587,6 +600,92 @@ function KimiUsageRow({ data }) {
     </div>`;
 }
 
+// Gemini / Antigravity CLI (`agy`) — GET /api/usage's `gemini` block. Same
+// treatment and same reason as KimiUsageRow above: the provider publishes no
+// limit, no utilization and no reset instant anywhere the CLI writes down (see
+// the Gemini section in lib/usage.mjs), so a gauge here would be fabricated.
+// Chips + facts instead of bars.
+//
+// The ONE quota fact that is real is `quota.lastExhaustedAt` — not "how much is
+// left" but "the API answered 429 RESOURCE_EXHAUSTED, at this instant". It gets
+// an amber chip, and only when it actually happened, so a healthy machine sees
+// nothing. Renders NOTHING at all when the CLI isn't installed, exactly like
+// the Codex and Kimi rows on a machine without them.
+function GeminiServerChip({ server, auth }) {
+  if (!server) {
+    return html`<span class="usage-state-chip state-stopped"
+      title="No language-server log in ~/.gemini/antigravity-cli/log">○ not running</span>`;
+  }
+  const state = KIMI_STATE_LABEL[server.state] || server.state || 'unknown';
+  const idle = typeof server.logIdleMs === 'number' ? Math.max(0, Math.round(server.logIdleMs / 1000)) : null;
+  const idleAfter = typeof server.idleAfterMs === 'number' ? Math.round(server.idleAfterMs / 1000) : null;
+  const glyph = server.state === 'running' ? '●' : server.state === 'stale' ? '◐' : '○';
+  const title = [
+    idle != null ? `Language server last wrote to its log ${idle}s ago` : 'No log activity recorded',
+    idleAfter != null ? `a live CLI refreshes every ~6 min; treated as gone quiet after ${idleAfter}s` : null,
+    server.state === 'stale' ? `pid ${server.pid} still exists but the log went quiet` : null,
+    auth && auth.state === 'signed-out' ? 'not signed in to Antigravity' : null
+  ].filter(Boolean).join(' — ');
+  return html`<span class=${'usage-state-chip state-' + (server.state || 'stopped')} title=${title}>${glyph} ${state}</span>`;
+}
+
+function GeminiUsageRow({ data }) {
+  if (!data || data.status === 'not-installed') return null;
+
+  const label = PROVIDER_LABEL.gemini;
+  if (data.status === 'error' || data.status === 'no-data') {
+    return html`
+      <div class="usage-row usage-row-quiet">
+        <span class="usage-row-quiet-name"><span class="usage-provider-name">${label}</span></span>
+        <span class="muted small">${data.status === 'no-data' ? 'installed · no sessions yet' : 'stack info unavailable'}</span>
+      </div>`;
+  }
+
+  const server = data.server;
+  const auth = data.auth || { state: 'unknown', method: null };
+  const convos = data.conversations || { total: 0, workspaces: [], latest: null };
+  const workspaces = convos.workspaces || [];
+  const latest = convos.latest;
+  const quota = data.quota || {};
+  const exhaustedAt = typeof quota.lastExhaustedAt === 'number' ? quota.lastExhaustedAt : null;
+  const httpPort = (server && (server.ports || []).find((p) => p.protocol === 'http')) || null;
+
+  return html`
+    <div class="usage-row">
+      <div class="usage-row-head">
+        <span class="usage-provider-name">${label}</span>
+        ${server && server.version && html`<span class="usage-version-chip"
+          title="Antigravity language-server version, as the CLI logged it at startup">🏷️ ${server.version}</span>`}
+        <${GeminiServerChip} server=${server} auth=${auth} />
+        ${auth.state === 'signed-out' && html`<span class="usage-state-chip"
+          title="The CLI's log says it is not signed in to Antigravity">○ signed out</span>`}
+        ${data.asOf && html`<span class="muted small usage-asof">as of ${timeAgo(data.asOf)}</span>`}
+      </div>
+      <div class="usage-gemini-facts">
+        ${httpPort && html`<span class="usage-gemini-endpoint" title="Local language-server HTTP port the CLI bound at startup">127.0.0.1:${httpPort.port}</span>`}
+        <span>${convos.total} conversation${convos.total === 1 ? '' : 's'}${workspaces.length
+          ? ` · ${workspaces.length} workspace${workspaces.length === 1 ? '' : 's'}`
+          : ''}</span>
+        <span title=${'Gemini/Antigravity publishes no quota numbers anywhere on disk — '
+          + 'the only quota fact available is whether the API returned 429 RESOURCE_EXHAUSTED'}>no quota published</span>
+        ${exhaustedAt && html`<span class="usage-gemini-throttle" title=${
+          `${quota.exhaustedEvents} RESOURCE_EXHAUSTED (429) repl${quota.exhaustedEvents === 1 ? 'y' : 'ies'} in the scanned log tail`
+        }>⚠️ quota hit ${timeAgo(exhaustedAt)}</span>`}
+      </div>
+      ${latest && html`
+        <div class="usage-gemini-latest" title=${[
+          latest.title || null,
+          latest.workspace || null,
+          latest.app ? `recorded under ~/.gemini/${latest.app}` : null
+        ].filter(Boolean).join('\n')}>
+          <span class="usage-gemini-latest-label">latest</span>
+          <span class="usage-gemini-latest-name">${lastSegment(latest.workspace) || latest.title || latest.id}</span>
+          ${latest.steps > 0 && html`<span class="muted small">${latest.steps} step${latest.steps === 1 ? '' : 's'}</span>`}
+          ${latest.updatedAt && html`<span class="muted small">· ${timeAgo(latest.updatedAt)}</span>`}
+        </div>`}
+    </div>`;
+}
+
 // Manual "↻ refresh" — reloads both the live-quota gauges and the (heavier)
 // attribution history at whatever range is currently selected.
 //
@@ -753,7 +852,8 @@ function QuotaSessionsRow() {
   // Kimi joins the collapsed-state summary only when it's actually installed —
   // on a machine without it the summary reads exactly as it did before.
   const usageSummary = `Claude ${summarizeUsage(usage.claude)} · Codex ${summarizeUsage(usage.codex)}`
-    + (summarizeKimi(usage.kimi) ? ` · Kimi ${summarizeKimi(usage.kimi)}` : '');
+    + (summarizeKimi(usage.kimi) ? ` · Kimi ${summarizeKimi(usage.kimi)}` : '')
+    + (summarizeGemini(usage.gemini) ? ` · Gemini ${summarizeGemini(usage.gemini)}` : '');
 
   const sessions = store.tmuxSessions.value;
   const tmuxCollapsed = store.collapsedHubSections.value.has('tmux');
@@ -781,6 +881,7 @@ function QuotaSessionsRow() {
               <${ProviderUsageRow} name="claude" data=${usage.claude} />
               <${ProviderUsageRow} name="codex" data=${usage.codex} />
               <${KimiUsageRow} data=${usage.kimi} />
+              <${GeminiUsageRow} data=${usage.gemini} />
             </div>
           </div>
         </section>`}
