@@ -79,7 +79,17 @@ Top to bottom, `public/ui/components/HubView.js`:
     the `kimi web` heartbeat (`running`/`stale`/`stopped`, stale after 90s of
     silence), host version, host:port, session/workspace counts, and the
     newest session's model + token total. Kimi publishes no rate-limit data
-    anywhere, so it deliberately gets no gauge.
+    anywhere, so it deliberately gets no gauge. Gemini (Google's Antigravity
+    CLI — the binary is `agy`, not `gemini`) joins as a fourth row on the same
+    terms when `~/.gemini/antigravity-cli` exists: language-server state and
+    version read from the CLI's own log header, sign-in state, conversation and
+    workspace counts, and the newest conversation. Antigravity publishes no
+    limit, utilization or reset instant anywhere either — its internal quota
+    manager logs only control flow — so it gets no gauge; the one real quota
+    fact is whether the API answered `429 RESOURCE_EXHAUSTED`, which surfaces as
+    a dated "⚠️ quota hit" chip and only when it actually happened. The adapter
+    never opens `antigravity-oauth-token` and never surfaces the account email
+    the CLI writes into its own log.
   - **Usage attribution**: a separate, explicitly-labeled "estimated from
     local session logs, not quota" band — a 7/30/90-day range picker and a
     manual refresh. This is parsed from local session logs on the hub host,

@@ -700,21 +700,30 @@ span.usage-update-chip { cursor: help; }
   color: var(--amber); background: color-mix(in srgb, var(--amber) 12%, transparent);
   border-color: color-mix(in srgb, var(--amber) 40%, transparent);
 }
-.usage-kimi-facts {
+/* The Gemini/Antigravity row (GET /api/usage's `gemini` block) is the same
+   shape for the same reason — that provider publishes no quota numbers either
+   — so it shares these rules rather than cloning them. Only its
+   .usage-gemini-throttle chip is genuinely new: "the API answered 429" is a
+   real, dated event and the one quota-ish fact that exists for Gemini. */
+.usage-kimi-facts, .usage-gemini-facts {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   font-size: 12px; color: var(--text-dim);
 }
-.usage-kimi-endpoint { font-family: var(--font-mono); font-size: 11.5px; }
-.usage-kimi-latest {
+.usage-kimi-endpoint, .usage-gemini-endpoint { font-family: var(--font-mono); font-size: 11.5px; }
+.usage-kimi-latest, .usage-gemini-latest {
   display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;
   margin-top: 7px; padding-top: 7px; border-top: 1px dashed var(--border);
   font-size: 12px; min-width: 0;
 }
-.usage-kimi-latest-label {
+.usage-kimi-latest-label, .usage-gemini-latest-label {
   font-size: 10px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint);
 }
-.usage-kimi-latest-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; }
+.usage-kimi-latest-name, .usage-gemini-latest-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; }
 .usage-kimi-model { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
+/* Never color-alone: the ⚠️ glyph and the "quota hit" wording carry the meaning
+   on their own, and --amber is the same semantic token every other warning
+   affordance uses, so all theme presets stay correct. */
+.usage-gemini-throttle { color: var(--amber); font-weight: 600; cursor: help; }
 
 .usage-gauges { display: flex; flex-direction: column; gap: 9px; }
 .usage-gauge-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }

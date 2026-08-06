@@ -1593,11 +1593,11 @@ console.log(JSON.stringify({ before, retried }));
   }
 
   // --- provider usage adapters (lib/usage.mjs via GET /api/usage) ------------
-  // Fixture-only: never reads the real ~/.claude, ~/.codex or ~/.kimi-code,
-  // never hits the real network, never touches a real kimi server.
-  // BD_CONSOLE_CLAUDE_DIR / BD_CONSOLE_CODEX_DIR / BD_CONSOLE_KIMI_DIR redirect
-  // all three adapters at fabricated temp dirs the same way BD_CONSOLE_CONFIG_DIR
-  // redirects the registry/config above.
+  // Fixture-only: never reads the real ~/.claude, ~/.codex, ~/.kimi-code or
+  // ~/.gemini, never hits the real network, never touches a real kimi server.
+  // BD_CONSOLE_CLAUDE_DIR / BD_CONSOLE_CODEX_DIR / BD_CONSOLE_KIMI_DIR /
+  // BD_CONSOLE_GEMINI_DIR redirect all four adapters at fabricated temp dirs the
+  // same way BD_CONSOLE_CONFIG_DIR redirects the registry/config above.
   {
     const usageConfigDir = join(tempRoot, 'usage-config');
     const usageClaudeDir = join(tempRoot, 'usage-claude');
@@ -1723,13 +1723,99 @@ console.log(JSON.stringify({ before, retried }));
       deleted_workspace_ids: []
     }));
 
+    // --- Gemini / Antigravity CLI fixture (~/.gemini, BD_CONSOLE_GEMINI_DIR) --
+    // A fabricated `agy` home: the language server's own glog file (header
+    // facts + a 429 RESOURCE_EXHAUSTED reply + the account email the real CLI
+    // really does log), the conversation metadata cache, updater/config JSON,
+    // and an antigravity-oauth-token whose contents must never reach the HTTP
+    // response — the adapter must not even open it.
+    const usageGeminiDir = join(tempRoot, 'usage-gemini');
+    const geminiAppDir = join(usageGeminiDir, 'antigravity-cli');
+    mkdirSync(join(geminiAppDir, 'log'), { recursive: true });
+    mkdirSync(join(geminiAppDir, 'cache'), { recursive: true });
+    mkdirSync(join(geminiAppDir, 'updater'), { recursive: true });
+    mkdirSync(join(usageGeminiDir, 'config', 'projects'), { recursive: true });
+
+    const geminiSecret = 'ya29.GEMINI-SMOKE-OAUTH-TOKEN-DO-NOT-LEAK-0123456789';
+    writeFileSync(join(geminiAppDir, 'antigravity-oauth-token'), geminiSecret);
+    // The real CLI writes the signed-in account's address into its own log.
+    // The adapter must lift the auth METHOD off that line and nothing else.
+    const geminiEmail = 'gemini-smoke-fixture@example.invalid';
+
+    const gemTwo = (n) => String(n).padStart(2, '0');
+    const gemGlogStamp = (d) => `${gemTwo(d.getMonth() + 1)}${gemTwo(d.getDate())} `
+      + `${gemTwo(d.getHours())}:${gemTwo(d.getMinutes())}:${gemTwo(d.getSeconds())}.000000`;
+    // glog omits the year, so the adapter infers it from the log file's mtime —
+    // an event an hour old must come back with the right year even across a
+    // new-year boundary.
+    const geminiExhaustedAt = new Date(Math.floor((Date.now() - 3600000) / 1000) * 1000);
+    const geminiStartedAt = new Date(Math.floor((Date.now() - 7200000) / 1000) * 1000);
+    const geminiLogName = `cli-${geminiStartedAt.getFullYear()}${gemTwo(geminiStartedAt.getMonth() + 1)}`
+      + `${gemTwo(geminiStartedAt.getDate())}_${gemTwo(geminiStartedAt.getHours())}`
+      + `${gemTwo(geminiStartedAt.getMinutes())}${gemTwo(geminiStartedAt.getSeconds())}.log`;
+    // An older log that must LOSE to the newest one by mtime.
+    writeFileSync(join(geminiAppDir, 'log', 'cli-20200101_000000.log'),
+      `I0101 00:00:00.000000 4242 server.go:1417] Language server version: 0.0.1\n`);
+    const geminiOldLogTime = new Date('2020-01-01T00:00:00Z');
+    utimesSync(join(geminiAppDir, 'log', 'cli-20200101_000000.log'), geminiOldLogTime, geminiOldLogTime);
+    writeFileSync(join(geminiAppDir, 'log', geminiLogName), [
+      `I${gemGlogStamp(geminiStartedAt)} ${process.pid} server.go:1367] Starting language server process with pid ${process.pid}`,
+      `I${gemGlogStamp(geminiStartedAt)} ${process.pid} server.go:1417] Language server version: 1.1.4`,
+      `I${gemGlogStamp(geminiStartedAt)} ${process.pid} server.go:538] Language server listening on random port at 41227 for HTTPS (gRPC)`,
+      `I${gemGlogStamp(geminiStartedAt)} ${process.pid} server.go:546] Language server listening on random port at 37871 for HTTP`,
+      `E${gemGlogStamp(geminiStartedAt)} ${process.pid} log.go:398] error getting token source: You are not logged into Antigravity.`,
+      `I${gemGlogStamp(geminiStartedAt)} ${process.pid} server_oauth.go:216] applyAuthResult: email=${geminiEmail}, authMethod=consumer, quotaProject=`,
+      `I${gemGlogStamp(geminiExhaustedAt)} ${process.pid} quota_manager.go:72] quotaRefreshLoop: starting reload (force=true)`,
+      `E${gemGlogStamp(geminiExhaustedAt)} ${process.pid} log.go:398] RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. check quota).`,
+      ''
+    ].join('\n'));
+
+    // Two real conversations plus an internal one that must be excluded. The
+    // newest has an empty Title, so its display name must fall back to Preview
+    // — truncated to 120 chars.
+    const geminiLongPreview = 'Wire the Antigravity adapter into the hub and keep going well past the point where any ~350px card could render this preview in full without eating the entire row';
+    writeFileSync(join(geminiAppDir, 'cache', 'conversation_metadata.json'), JSON.stringify({
+      conversations: {
+        'gem-old': {
+          summary: {
+            ID: 'gem-old', Title: 'Older IDE conversation', Preview: 'p', NumSteps: 4,
+            UpdatedAt: new Date(Date.now() - 172800000).toISOString(),
+            WorkspaceURIs: ['file:///tmp/gem-beta'], AppDataDir: 'antigravity', ProjectID: '', AgentName: ''
+          },
+          is_internal: false, last_modified_time: new Date(Date.now() - 172800000).toISOString()
+        },
+        'gem-new': {
+          summary: {
+            ID: 'gem-new', Title: '', Preview: geminiLongPreview, NumSteps: 7,
+            UpdatedAt: new Date(Date.now() - 60000).toISOString(),
+            WorkspaceURIs: ['file:///tmp/gem-alpha'], AppDataDir: 'antigravity-cli',
+            ProjectID: 'default-cli-project', AgentName: ''
+          },
+          is_internal: false, last_modified_time: new Date(Date.now() - 60000).toISOString()
+        },
+        'gem-internal': {
+          summary: { ID: 'gem-internal', Title: 'internal', NumSteps: 1, UpdatedAt: new Date().toISOString(), AppDataDir: 'antigravity-cli' },
+          is_internal: true, last_modified_time: new Date().toISOString()
+        }
+      }
+    }));
+    writeFileSync(join(geminiAppDir, 'updater', 'update_status.json'),
+      JSON.stringify({ success: true, message: 'Update successful, restart CLI to use' }));
+    writeFileSync(join(geminiAppDir, 'settings.json'),
+      JSON.stringify({ trustedWorkspaces: ['/tmp/gem-alpha', '/tmp/gem-beta'] }));
+    writeFileSync(join(usageGeminiDir, 'config', 'config.json'),
+      JSON.stringify({ userSettings: { remoteControlHostname: 'codium-golden-venus' } }));
+    writeFileSync(join(usageGeminiDir, 'config', 'projects', 'default-cli-project.json'),
+      JSON.stringify({ id: 'default-cli-project', name: 'CLI Project', projectResources: {} }));
+
     const usagePort = await getPort();
     const usageEnv = {
       ...process.env,
       BD_CONSOLE_CONFIG_DIR: usageConfigDir,
       BD_CONSOLE_CLAUDE_DIR: usageClaudeDir,
       BD_CONSOLE_CODEX_DIR: usageCodexDir,
-      BD_CONSOLE_KIMI_DIR: usageKimiDir
+      BD_CONSOLE_KIMI_DIR: usageKimiDir,
+      BD_CONSOLE_GEMINI_DIR: usageGeminiDir
     };
     const usageServer = spawn(process.execPath, [serverEntry, '--host', '127.0.0.1', '--port', String(usagePort)], {
       cwd: process.cwd(), env: usageEnv, stdio: ['ignore', 'pipe', 'pipe']
@@ -1831,6 +1917,64 @@ console.log(JSON.stringify({ before, retried }));
         `kimi per-model breakdown should be biggest-first, got: ${JSON.stringify(latest.tokens.models)}`);
 
       console.log('smoke ok (usage API: kimi fixture ok — freshest instance, session/workspace rollup, cross-agent token sum, server.token never leaked)');
+
+      // ---- gemini block --------------------------------------------------
+      const gemini = usageBody.providers && usageBody.providers.gemini;
+      assert(gemini && gemini.status === 'ok', `fixture gemini dir should report ok, got: ${JSON.stringify(gemini)}`);
+      assert(gemini.variant === 'antigravity-cli', `gemini should name its CLI variant, got: ${gemini.variant}`);
+
+      // The two things that must never escape: the OAuth token (which the
+      // adapter must not even open) and the account email the CLI logs itself.
+      const geminiRaw = JSON.stringify(gemini);
+      assert(!rawText.includes(geminiSecret) && !rawText.includes(geminiSecret.slice(0, 16)),
+        '/api/usage response must never contain antigravity-oauth-token material');
+      assert(!rawText.includes(geminiEmail) && !rawText.includes('example.invalid') && !geminiRaw.includes('email='),
+        '/api/usage response must never contain the account email the Antigravity CLI logs');
+
+      // No gauge, ever: Gemini publishes no limit/utilization/reset anywhere.
+      assert(Array.isArray(gemini.windows) && gemini.windows.length === 0,
+        'gemini must expose no quota windows (Antigravity publishes no rate-limit data)');
+      assert(gemini.quota && gemini.quota.published === false,
+        `gemini must say outright that no quota is published, got: ${JSON.stringify(gemini.quota)}`);
+      assert(gemini.quota.exhaustedEvents === 1,
+        `gemini should count the RESOURCE_EXHAUSTED reply in the log, got: ${JSON.stringify(gemini.quota)}`);
+      assert(gemini.quota.lastExhaustedAt === geminiExhaustedAt.getTime(),
+        `gemini should date the 429 from its year-less glog stamp (expected ${geminiExhaustedAt.getTime()}), got: ${gemini.quota.lastExhaustedAt}`);
+
+      // Header facts come from the NEWEST log; the backdated 0.0.1 one must lose.
+      assert(gemini.server && gemini.server.state === 'running',
+        `a just-written log plus a live pid should report running, got: ${JSON.stringify(gemini.server)}`);
+      assert(gemini.server.version === '1.1.4' && gemini.server.pid === process.pid && gemini.server.pidAlive === true,
+        `gemini should read the newest log's header, got: ${JSON.stringify(gemini.server)}`);
+      assert(gemini.server.startedAt === geminiStartedAt.getTime(),
+        `gemini startedAt should come from the log FILE NAME (glog has no year), got: ${gemini.server.startedAt}`);
+      const geminiHttp = (gemini.server.ports || []).find((p) => p.protocol === 'http');
+      const geminiGrpc = (gemini.server.ports || []).find((p) => p.protocol === 'grpc');
+      assert(geminiHttp && geminiHttp.port === 37871 && geminiGrpc && geminiGrpc.port === 41227,
+        `gemini should record both bound ports, got: ${JSON.stringify(gemini.server.ports)}`);
+
+      // "not logged in" then a successful applyAuthResult -> the LAST transition wins.
+      assert(gemini.auth && gemini.auth.state === 'signed-in' && gemini.auth.method === 'consumer',
+        `gemini auth should take the last transition in the log, got: ${JSON.stringify(gemini.auth)}`);
+
+      assert(gemini.conversations.total === 2,
+        `gemini should exclude is_internal conversations, got: ${JSON.stringify(gemini.conversations.total)}`);
+      const geminiLatest = gemini.conversations.latest;
+      assert(geminiLatest && geminiLatest.id === 'gem-new' && geminiLatest.steps === 7 && geminiLatest.workspace === '/tmp/gem-alpha',
+        `gemini latest conversation mismatch: ${JSON.stringify(geminiLatest)}`);
+      assert(geminiLatest.title.length === 120 && geminiLongPreview.startsWith(geminiLatest.title),
+        `an empty Title should fall back to Preview truncated to 120 chars, got ${geminiLatest.title.length}`);
+      assert(gemini.conversations.byApp.length === 2 && gemini.conversations.workspaces.length === 2
+        && gemini.conversations.workspaces[0].path === '/tmp/gem-alpha',
+        `gemini conversations should roll up per app and per workspace, newest first: ${JSON.stringify(gemini.conversations)}`);
+
+      assert(gemini.config.trustedWorkspaces === 2 && gemini.config.remoteHost === 'codium-golden-venus',
+        `gemini config facts mismatch: ${JSON.stringify(gemini.config)}`);
+      assert(gemini.config.projects.length === 1 && gemini.config.projects[0].name === 'CLI Project',
+        `gemini should list declared projects, got: ${JSON.stringify(gemini.config.projects)}`);
+      assert(gemini.update && gemini.update.ok === true, `gemini should report the last self-update outcome, got: ${JSON.stringify(gemini.update)}`);
+
+      console.log('smoke ok (usage API: gemini fixture ok — newest-log header, year-less 429 dated, auth method without the email, no quota invented, oauth token never opened)');
     } finally {
       usageServer.kill('SIGTERM');
       await new Promise((resolveP) => usageServer.once('exit', () => resolveP()));
@@ -1844,12 +1988,14 @@ console.log(JSON.stringify({ before, retried }));
     mkdirSync(usageEmptyClaudeDir, { recursive: true });
     const usageEmptyPort = await getPort();
     const usageEmptyKimiDir = join(tempRoot, 'usage-empty-kimi'); // does not exist at all
+    const usageEmptyGeminiDir = join(tempRoot, 'usage-empty-gemini'); // does not exist at all
     const usageEmptyEnv = {
       ...process.env,
       BD_CONSOLE_CONFIG_DIR: usageEmptyConfigDir,
       BD_CONSOLE_CLAUDE_DIR: usageEmptyClaudeDir,
       BD_CONSOLE_CODEX_DIR: usageEmptyCodexDir,
-      BD_CONSOLE_KIMI_DIR: usageEmptyKimiDir
+      BD_CONSOLE_KIMI_DIR: usageEmptyKimiDir,
+      BD_CONSOLE_GEMINI_DIR: usageEmptyGeminiDir
     };
     const usageEmptyServer = spawn(process.execPath, [serverEntry, '--host', '127.0.0.1', '--port', String(usageEmptyPort)], {
       cwd: process.cwd(), env: usageEmptyEnv, stdio: ['ignore', 'pipe', 'pipe']
@@ -1860,6 +2006,11 @@ console.log(JSON.stringify({ before, retried }));
       assert(emptyBody.providers.claude.status === 'no-creds', `missing .credentials.json should report no-creds, got: ${JSON.stringify(emptyBody.providers.claude)}`);
       assert(emptyBody.providers.codex.status === 'no-data', `missing codex sessions dir should report no-data, got: ${JSON.stringify(emptyBody.providers.codex)}`);
       assert(emptyBody.providers.kimi.status === 'not-installed', `missing kimi dir should report not-installed, got: ${JSON.stringify(emptyBody.providers.kimi)}`);
+      // Machines without the Antigravity CLI must produce a `gemini` block that
+      // renders to nothing — status 'not-installed' and no invented gauge.
+      assert(emptyBody.providers.gemini.status === 'not-installed', `missing gemini dir should report not-installed, got: ${JSON.stringify(emptyBody.providers.gemini)}`);
+      assert(Array.isArray(emptyBody.providers.gemini.windows) && emptyBody.providers.gemini.windows.length === 0,
+        'a not-installed gemini block must still carry an empty windows array');
       console.log('smoke ok (usage API: missing dirs -> no-creds/no-data/not-installed)');
     } finally {
       usageEmptyServer.kill('SIGTERM');
@@ -1890,7 +2041,8 @@ console.log(JSON.stringify({ before, retried }));
           BD_CONSOLE_CONFIG_DIR: staleConfigDir,
           BD_CONSOLE_CLAUDE_DIR: usageEmptyClaudeDir,
           BD_CONSOLE_CODEX_DIR: usageEmptyCodexDir,
-          BD_CONSOLE_KIMI_DIR: staleKimiDir
+          BD_CONSOLE_KIMI_DIR: staleKimiDir,
+          BD_CONSOLE_GEMINI_DIR: usageEmptyGeminiDir
         },
         stdio: ['ignore', 'pipe', 'pipe']
       });
@@ -1923,7 +2075,8 @@ console.log(JSON.stringify({ before, retried }));
       BD_CONSOLE_TOKEN: 'usage-smoke-token',
       BD_CONSOLE_CLAUDE_DIR: usageEmptyClaudeDir,
       BD_CONSOLE_CODEX_DIR: usageEmptyCodexDir,
-      BD_CONSOLE_KIMI_DIR: usageEmptyKimiDir
+      BD_CONSOLE_KIMI_DIR: usageEmptyKimiDir,
+      BD_CONSOLE_GEMINI_DIR: usageEmptyGeminiDir
     };
     const usageAuthServer = spawn(process.execPath, [serverEntry, '--host', '127.0.0.1', '--port', String(usageAuthPort)], {
       cwd: process.cwd(), env: usageAuthEnv, stdio: ['ignore', 'pipe', 'pipe']
@@ -1938,6 +2091,43 @@ console.log(JSON.stringify({ before, retried }));
     } finally {
       usageAuthServer.kill('SIGTERM');
       await new Promise((resolveP) => usageAuthServer.once('exit', () => resolveP()));
+    }
+
+    // --- gemini installed-but-idle -> no-data ------------------------------
+    // The CLI's app-data dir exists (so it IS installed) but it has never
+    // logged or held a conversation. That must be 'no-data', not 'ok' with an
+    // empty everything and not 'not-installed' — the row says "installed · no
+    // sessions yet", exactly like the kimi row's equivalent state.
+    const bareGeminiDir = join(tempRoot, 'usage-gemini-bare');
+    mkdirSync(join(bareGeminiDir, 'antigravity-cli'), { recursive: true });
+    const bareGeminiConfigDir = join(tempRoot, 'usage-gemini-bare-config');
+    mkdirSync(bareGeminiConfigDir, { recursive: true });
+    const bareGeminiPort = await getPort();
+    const bareGeminiServer = spawn(process.execPath, [serverEntry, '--host', '127.0.0.1', '--port', String(bareGeminiPort)], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        BD_CONSOLE_CONFIG_DIR: bareGeminiConfigDir,
+        BD_CONSOLE_CLAUDE_DIR: usageEmptyClaudeDir,
+        BD_CONSOLE_CODEX_DIR: usageEmptyCodexDir,
+        BD_CONSOLE_KIMI_DIR: usageEmptyKimiDir,
+        BD_CONSOLE_GEMINI_DIR: bareGeminiDir
+      },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    try {
+      await waitFor(`http://127.0.0.1:${bareGeminiPort}/api/meta`);
+      const bareBody = await fetch(`http://127.0.0.1:${bareGeminiPort}/api/usage`).then((r) => r.json());
+      const bareGemini = bareBody.providers.gemini;
+      assert(bareGemini.status === 'no-data', `an empty antigravity-cli dir should report no-data, got: ${JSON.stringify(bareGemini)}`);
+      assert(bareGemini.server === null && bareGemini.conversations.total === 0,
+        `a bare gemini dir should report no server and no conversations, got: ${JSON.stringify(bareGemini)}`);
+      assert(bareGemini.quota.exhaustedEvents === 0 && bareGemini.quota.lastExhaustedAt === null,
+        `a bare gemini dir must not invent quota events, got: ${JSON.stringify(bareGemini.quota)}`);
+      console.log('smoke ok (usage API: gemini installed-but-idle -> no-data)');
+    } finally {
+      bareGeminiServer.kill('SIGTERM');
+      await new Promise((resolveP) => bareGeminiServer.once('exit', () => resolveP()));
     }
   }
 
