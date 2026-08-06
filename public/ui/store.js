@@ -658,14 +658,21 @@ export async function markPromptUsed(id) {
 // signals, any failure (401, network, older server without the route)
 // degrades to "unavailable" rather than erroring the whole hub.
 // ---------------------------------------------------------------------------
-export async function loadUsage() {
+// `fresh` (the hub's ↻ button) asks the server to bypass its own OK-cache —
+// the poll path never sets it. The server still refuses to make an upstream
+// call during a 429 backoff or within its minimum fresh interval, and flags
+// any cache-served provider with `cached: true`; returns the providers object
+// so callers can tell the user which of those happened.
+export async function loadUsage({ fresh = false } = {}) {
   try {
-    const data = await apiGetRaw('/api/usage');
+    const data = await apiGetRaw('/api/usage' + (fresh ? '?fresh=1' : ''));
     store.usage.value = data.providers || { claude: null, codex: null };
     store.usageAvailable.value = true;
+    return store.usage.value;
   } catch (e) {
     store.usageAvailable.value = false;
     console.warn('Usage endpoint unavailable: ' + e.message);
+    return null;
   }
 }
 

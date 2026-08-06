@@ -275,13 +275,23 @@ const BEADS_DOCS_URL = 'https://beads.gascity.com';
 
 // ---------------------------------------------------------------------------
 // Usage section — Claude Code / Codex quota gauges (GET /api/usage, polled
-// every 60s while the hub is mounted). Placed near the ops strip since it's
-// the same kind of hub-wide, not-project-scoped glanceable status.
+// every 5 min while the hub is mounted AND visible). Placed near the ops
+// strip since it's the same kind of hub-wide, not-project-scoped glanceable
+// status.
+//
+// 5 minutes, not the original 60s: the server's cache is what actually meters
+// the upstream Claude OAuth call, but a 60s client poll against a 60s server
+// TTL meant an open hub sustained ~1 OAuth call/minute forever and tripped the
+// provider's rate limit (bd-console-0fg). These gauges track 5h/7d windows —
+// minute resolution buys nothing. The ↻ button is the fast path when someone
+// actually wants "now" (see refreshUsageAll).
 // ---------------------------------------------------------------------------
-const USAGE_POLL_MS = 60000;
+const USAGE_POLL_MS = 5 * 60000;
 // History (attribution) is a heavier fetch than the live-quota gauges above
-// — refresh it on a slower cadence (5 min) plus on mount / manual refresh /
-// range switch, never on the 60s quota-poll cadence.
+// — refresh it on its own cadence (5 min) plus on mount / manual refresh /
+// range switch. It reads local session logs only, so it never touches a
+// provider's rate limit; it lands on the same 5 min as the quota poll purely
+// because that is the right cadence for both, not because they share a timer.
 const USAGE_HISTORY_POLL_MS = 5 * 60000;
 const PROVIDER_LABEL = { claude: 'Claude Code', codex: 'Codex' };
 const HISTORY_RANGE_OPTIONS = [7, 30, 90];
@@ -431,13 +441,23 @@ function ProviderUsageRow({ name, data }) {
       </div>`;
   }
   if (data.status === 'error' || data.status === 'rate-limited') {
+    // Rate-limited is not the same failure as "usage unavailable": the server
+    // is deliberately holding off, and ↻ will not change that until the
+    // backoff lifts. Say when, so a refresh that returns the same numbers
+    // reads as expected rather than broken.
+    const retryIn = data.status === 'rate-limited' ? retryInText(data.retryAt) : null;
+    const note = data.status === 'rate-limited'
+      ? (data.message || 'rate-limited; backing off') + (retryIn ? ' · retrying ' + retryIn : '')
+      : 'usage unavailable';
     return html`
       <div class="usage-row usage-row-quiet">
         <span class="usage-row-quiet-name">
           <span class="usage-provider-name">${label}</span>
           <${CliVersionChips} name=${name} />
         </span>
-        <span class="muted small">${data.status === 'rate-limited' ? (data.message || 'rate-limited; retrying') : 'usage unavailable'}</span>
+        <span class="muted small" title=${data.status === 'rate-limited'
+          ? 'The provider rate-limited the usage endpoint. Showing the last cached answer; refresh is intentionally ignored until the backoff lifts.'
+          : ''}>${note}</span>
       </div>`;
   }
 
@@ -466,9 +486,34 @@ function ProviderUsageRow({ name, data }) {
 
 // Manual "↻ refresh" — reloads both the live-quota gauges and the (heavier)
 // attribution history at whatever range is currently selected.
-function refreshUsageAll() {
-  loadUsage();
+//
+// This is the human fast path, so the quota call asks the server to bypass its
+// own 5-minute OK-cache (?fresh=1). The server can still legitimately answer
+// from cache — during a 429 backoff, or when ↻ was clicked seconds ago — and
+// says so with `cached: true`. A button that silently does nothing is worse
+// than one that explains itself, so toast the reason in that case; a genuinely
+// fresh answer just re-renders the gauges and stays quiet.
+async function refreshUsageAll() {
   loadUsageHistory();
+  const providers = await loadUsage({ fresh: true });
+  const claude = providers && providers.claude;
+  if (!claude || !claude.cached) return;
+  if (claude.status === 'rate-limited') {
+    const when = retryInText(claude.retryAt);
+    toast(`Claude usage is rate-limited — showing cached data${when ? ', retrying ' + when : ''}`, 'warn', 6000);
+  } else {
+    toast('Claude usage was just refreshed — showing cached data', 'info', 3200);
+  }
+}
+
+// "in Xm" / "in Xh Ym" for a server-supplied retryAt (when a 429 backoff
+// lifts), or null when there's nothing useful to say.
+function retryInText(retryAt) {
+  if (!retryAt) return null;
+  const mins = Math.round((retryAt - Date.now()) / 60000);
+  if (mins <= 0) return 'shortly';
+  if (mins < 60) return `in ${mins}m`;
+  return `in ${Math.floor(mins / 60)}h ${mins % 60}m`;
 }
 
 function HistoryRangePicker({ days, onChange }) {
@@ -581,13 +626,28 @@ function AttributionBand() {
 function QuotaSessionsRow() {
   useEffect(() => {
     loadUsage();
-    // One-shot, NOT part of the 60s poll below — the server caches the CLI
+    // One-shot, NOT part of the poll below — the server caches the CLI
     // registry lookup for hours (same reasoning as loadBdVersion() in
     // OpsStrip), so polling it on USAGE_POLL_MS would just re-read the same
-    // cached value every minute for no benefit.
+    // cached value for no benefit.
     loadCliVersions();
-    const t = setInterval(loadUsage, USAGE_POLL_MS);
-    return () => clearInterval(t);
+    // A hidden tab is a tab nobody is reading, so its poll is pure waste —
+    // skip the tick while hidden and catch up when the tab comes back (only
+    // if a full interval has actually elapsed, so alt-tabbing rapidly doesn't
+    // become its own poll loop).
+    let lastAt = Date.now();
+    const tick = () => {
+      if (document.hidden) return;
+      lastAt = Date.now();
+      loadUsage();
+    };
+    const t = setInterval(tick, USAGE_POLL_MS);
+    const onVisible = () => { if (!document.hidden && (Date.now() - lastAt) >= USAGE_POLL_MS) tick(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, []);
 
   const projects = store.projects.value;

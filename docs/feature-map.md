@@ -66,8 +66,14 @@ Top to bottom, `public/ui/components/HubView.js`:
   - **Live quota**: Claude Code and Codex quota gauges (session/weekly
     windows, percent + "resets in Xh Ym", color-coded ok/warn/crit), plus
     per-model "scoped limits" with a loud "⛔ throttled" badge when a model is
-    actively rate-limited. Polls every 60s. Degrades to "not detected" per
-    provider rather than erroring the whole hub.
+    actively rate-limited. Polls every 5 minutes (paused while the tab is
+    hidden, caught up on return) and the server caches the Claude call for
+    the same 5 minutes, so an open hub can't sustain the provider's rate
+    limit; the ↻ button asks for a genuinely fresh read
+    (`GET /api/usage?fresh=1`), which the server still refuses during a 429
+    backoff (15 min) or within ~20s of the previous manual refresh — those
+    answers come back marked as cached and say so in the UI. Degrades to
+    "not detected" per provider rather than erroring the whole hub.
   - **Usage attribution**: a separate, explicitly-labeled "estimated from
     local session logs, not quota" band — a 7/30/90-day range picker and a
     manual refresh. This is parsed from local session logs on the hub host,
