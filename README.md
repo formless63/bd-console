@@ -243,7 +243,30 @@ BD_CONSOLE_SCHED_INTERVAL   # scheduler poll interval in ms (default 15000)
 BD_CONSOLE_TERMIX_URL       # overrides termix.baseUrl (see below)
 BD_CONSOLE_TERMIX_TOKEN     # overrides termix.token
 BD_CONSOLE_TERMIX_HOST_ID   # overrides termix.hostId
+BD_CONSOLE_IDLE_DAYS        # days of terminal silence before a session is
+                            # marked "unattended" (default 7 — see below)
 ```
+
+### Session health: memory and unattended sessions
+
+On Linux, the session list also reports what each tmux session's process tree
+is holding in resident memory, and the hub carries a host-level chip: how much
+memory is still available, whether this machine has any **swap**, and how much
+of the total the detected agent sessions account for. A machine with swap gets
+slow when it fills up and a human notices; a machine without swap has no such
+stage — the kernel's OOM killer simply picks the largest process, which on this
+project's own host has twice ended a tmux session and everything running in it.
+Amber/red chips carry the state in words (`memory tight`, `1.2 GB high`), never
+in color alone.
+
+A session is marked **unattended** when nobody has attached to it *and* it has
+printed nothing for `BD_CONSOLE_IDLE_DAYS` days (default 7), while its
+processes are still accruing CPU time. That combination — total terminal
+silence plus live work — is what distinguishes a forgotten agent quietly
+spending API quota from a parked shell (no CPU) or a session you drive from
+this console (which produces output). The tooltip always names the evidence.
+Everything here degrades to absent — no `/proc`, no Linux, no tmux, no
+feature — rather than to an error.
 
 ### Termix: open a tmux session in the browser
 

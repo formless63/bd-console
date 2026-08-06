@@ -1378,3 +1378,108 @@ input.edit-input { flex: 1; min-width: 120px; }
   .topbar-right { gap: 5px; }
   .repo-chip { max-width: 140px; }
 }
+
+/* ==========================================================================
+   Process health — per-session memory + the idle-but-active marker
+   (bd-console-oic, bd-console-xo8)
+
+   Deliberately appended as one self-contained block at the END of this file
+   rather than edited into the sections above: the classic project view is
+   being retired in a concurrent change that removes rules throughout this
+   file, and a block at the end merges cleanly against that. The two overrides
+   below (.hub-tmux-rows' column template and the <=768px row areas) restate
+   whole declarations for exactly that reason — same specificity, later in
+   source order, so they win without touching the originals.
+
+   COLOR IS NEVER THE SIGNAL HERE. Every affordance in this block carries its
+   state in words — the memory chip appends "high"/"critical" to the number,
+   the host chip leads with "memory ok"/"memory tight"/"memory critical", and
+   the idle marker IS the text "unattended 18d". Amber/red is reinforcement
+   only, drawn from the same semantic --amber/--red tokens every other status
+   affordance uses so all theme presets stay correct.
+   ========================================================================== */
+
+/* Seven columns now (Session, Repo, Command, Memory, Age, Active, actions).
+   Memory sits next to Command — "what is it running" and "what is that
+   costing" are one question — on a fixed 74px track, wide enough for
+   "1.2 GB high" without stealing width from the session name. */
+.hub-tmux-rows {
+  grid-template-columns:
+    minmax(150px, 1.3fr) minmax(70px, 0.85fr) minmax(70px, 1.3fr)
+    74px 58px 78px minmax(34px, auto);
+}
+.tmux-cell-mem { display: flex; align-items: center; min-width: 0; overflow: hidden; }
+
+/* The number itself: mono and quiet at rest — a healthy session should read
+   as data, not as an alert. Only warn/crit take color, and only alongside the
+   word that already says it. */
+.mem-chip {
+  display: inline-flex; align-items: baseline; gap: 3px; flex-shrink: 0;
+  font-family: var(--font-mono); font-size: 11.5px; font-weight: 600;
+  color: var(--text-faint); white-space: nowrap; cursor: help;
+}
+.mem-chip .mem-word { font-size: 10px; font-weight: 650; letter-spacing: 0.01em; }
+.mem-chip.mem-warn { color: var(--amber); }
+.mem-chip.mem-crit { color: var(--red); }
+.tmux-pane .mem-chip.pane-mem { margin-left: 2px; }
+.tmux-meta .mem-chip { font-size: 11px; }
+
+/* Session cards whose memory crossed a line get a border tint, matching the
+   existing .server-mode-card language — the card stays fully usable, and the
+   note under it says what was measured and why it matters. */
+.tmux-card.mem-warn-card { border-color: color-mix(in srgb, var(--amber) 30%, var(--border)); }
+.tmux-card.mem-crit-card { border-color: color-mix(in srgb, var(--red) 45%, var(--border)); }
+.tmux-mem-note { margin-top: 6px; line-height: 1.4; color: var(--amber); }
+.tmux-card.mem-crit-card .tmux-mem-note { color: var(--red); }
+.tmux-idle-note { margin-top: 6px; line-height: 1.4; }
+
+/* Idle-but-active marker. A DIFFERENT marker from .server-mode on purpose:
+   "running headless by design" and "nobody has looked at this in 18 days and
+   it is still burning CPU" are different facts, and one session can be both.
+   The dashed border is the same "this is a judgement — hover for the
+   evidence" language .hub-chip-warn uses. */
+.badge.idle-badge {
+  flex-shrink: 0; font-size: 10px; padding: 1px 7px; cursor: help;
+  background: color-mix(in srgb, var(--amber) 12%, transparent);
+  color: var(--amber); border: 1px dashed color-mix(in srgb, var(--amber) 45%, transparent);
+}
+
+/* Host memory banner on the tmux page. The ok state is a quiet surface strip;
+   warn/crit tint the border and surface the whole explanation inline instead
+   of hiding it in a tooltip, because at that point it is the most important
+   thing on the page. */
+.tmux-host-bar {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  margin: 0 0 12px; padding: 8px 12px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  font-size: 12px; color: var(--text-dim);
+}
+.tmux-host-bar .tmux-host-text { font-family: var(--font-mono); font-weight: 600; }
+.tmux-host-bar .tmux-host-reason { flex: 1 1 260px; min-width: 0; font-size: 11.5px; line-height: 1.45; }
+.tmux-host-bar.mem-warn { border-color: color-mix(in srgb, var(--amber) 40%, var(--border)); color: var(--amber); }
+.tmux-host-bar.mem-crit { border-color: color-mix(in srgb, var(--red) 55%, var(--border)); color: var(--red); }
+
+/* Red sibling of .hub-chip-amber for the ops strip's host-memory chip — same
+   color-mix formula with --red in place of --amber, so the chip row still
+   reads as one system. */
+.hub-chip-crit {
+  color: var(--red); background: color-mix(in srgb, var(--red) 12%, transparent);
+  border-color: color-mix(in srgb, var(--red) 40%, transparent);
+}
+.hub-chip-crit:hover { color: var(--red); background: color-mix(in srgb, var(--red) 20%, transparent); border-color: var(--red); }
+
+@media (max-width: 768px) {
+  /* Restates the stacked-row template with the memory cell added as a third
+     line. A healthy session hides it there (.is-ok): on a phone that column
+     would cost a line per row to say "everything is fine", while the numbers
+     that crossed a threshold still show. */
+  .hub-tmux-row {
+    grid-template-areas:
+      "name name name actions"
+      "repo cmd  age  activity"
+      "mem  mem  mem  mem";
+  }
+  .tmux-cell-mem { grid-area: mem; }
+  .tmux-cell-mem.is-ok { display: none; }
+  .tmux-host-bar { flex-direction: column; align-items: flex-start; gap: 4px; }
+}

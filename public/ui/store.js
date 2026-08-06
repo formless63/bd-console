@@ -104,6 +104,11 @@ export const store = {
   tmuxAvailable: signal(true),
   tmuxSessions: signal([]),
   tmuxLoading: signal(false),
+  // Host memory + OOM headroom (bd-console-oic), served alongside the session
+  // list by GET /api/tmux. null whenever the server can't measure it
+  // (non-Linux, unreadable /proc, a server predating the feature) — every
+  // consumer must treat null as "don't render", never as zero.
+  tmuxHost: signal(null),
 
   // scheduler (hub-level)
   scheduleAvailable: signal(true),
@@ -456,6 +461,7 @@ export async function loadTmux() {
     const data = await apiGetRaw('/api/tmux');
     store.tmuxAvailable.value = !!data.available;
     store.tmuxSessions.value = data.sessions || [];
+    store.tmuxHost.value = (data.host && data.host.memory) || null;
   } catch (e) { toast('Failed to load tmux sessions: ' + e.message, 'err'); }
   finally { store.tmuxLoading.value = false; }
 }

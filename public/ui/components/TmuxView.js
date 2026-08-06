@@ -7,7 +7,8 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { store, navigate, loadTmux, loadTmuxPreview, toast } from '../store.js';
 import {
   timeAgo, cwdTail, stripAnsi, matchProject, ageText, copyToClipboard, CopyIcon,
-  agentName, agentTip, isServerMode, promptTip, ServerModeBadge, TermixLink
+  agentName, agentTip, isServerMode, promptTip, ServerModeBadge, TermixLink,
+  MemoryChip, IdleBadge, memLevel, fmtBytes, hostMemSummary
 } from './common.js';
 
 const SESSION_POLL_MS = 8000;
@@ -37,15 +38,22 @@ function CopyAttachButton({ name }) {
 }
 
 // Column header for the hub's compact session grid. It's a sibling
-// `display: contents` group (see .hub-tmux-rows in styles.css) so its six
-// labels land in the exact same grid columns the session rows below use —
-// that's what keeps everything aligned instead of each row sizing itself.
+// `display: contents` group (see .hub-tmux-rows in styles.css) so its labels
+// land in the exact same grid columns the session rows below use — that's
+// what keeps everything aligned instead of each row sizing itself.
+//
+// Seven cells since bd-console-oic: "Memory" earned a column of its own
+// rather than a chip tucked into the command cell, because the thing it has
+// to support is SCANNING — "which session is the fat one" answered by
+// glancing down a column, not by reading nine rows of prose. The column
+// overrides live at the end of styles.css.
 export function HubTmuxHead() {
   return html`
     <div class="hub-tmux-row hub-tmux-head-row">
       <span class="tmux-cell-name tmux-head-label">Session</span>
       <span class="tmux-cell-repo tmux-head-label">Repo</span>
       <span class="tmux-cell-cmd tmux-head-label">Command</span>
+      <span class="tmux-cell-mem tmux-head-label">Memory</span>
       <span class="tmux-cell-age tmux-head-label">Age</span>
       <span class="tmux-cell-activity tmux-head-label">Active</span>
       <span class="tmux-cell-actions tmux-head-label"></span>
@@ -57,8 +65,8 @@ export function HubTmuxHead() {
 // cards, not a status dot — a dot alone doesn't carry the label at a
 // glance) + name, repo chip, first pane's command, age/last-activity stats,
 // and a copy-attach action. Every row (including the header above) must
-// emit exactly six direct-child cells, in this order, for the shared grid's
-// columns to line up — see .hub-tmux-rows in styles.css.
+// emit exactly seven direct-child cells, in this order, for the shared
+// grid's columns to line up — see .hub-tmux-rows in styles.css.
 export function SessionRowCompact({ session, projects, onClick }) {
   const first = session.panes[0];
   const match = first ? matchProject(first.cwd, projects) : null;
@@ -74,6 +82,7 @@ export function SessionRowCompact({ session, projects, onClick }) {
       <span class="tmux-cell-name">
         <span class=${'badge tmux-attach tmux-attach-badge' + (session.attached ? ' on' : '')}>${session.attached ? 'attached' : 'detached'}</span>
         <span class="tmux-name">${session.name}</span>
+        <${IdleBadge} session=${session} />
       </span>
       <span class="tmux-cell-repo">
         ${match
@@ -86,6 +95,11 @@ export function SessionRowCompact({ session, projects, onClick }) {
           : null}
         <span class="tmux-cmd-text">${first?.command || '—'}</span>
         ${ServerModeBadge(session)}
+      </span>
+      <span class=${'tmux-cell-mem is-' + memLevel(session)}>
+        ${session.memory
+          ? html`<${MemoryChip} target=${session} />`
+          : html`<span class="tmux-cell-empty">—</span>`}
       </span>
       <span class="tmux-cell-age" title="Session age">${ageText(session.created)}</span>
       <span class="tmux-cell-activity" title="Last activity">${session.activity ? timeAgo(session.activity * 1000) : '—'}</span>
@@ -105,6 +119,7 @@ function Pane({ pane, projects }) {
         : null}
       <span class="pane-cmd">${pane.command || '—'}</span>
       ${ServerModeBadge(pane)}
+      <${MemoryChip} target=${pane} className="pane-mem" />
       <sl-tooltip content=${pane.cwd || '(unknown cwd)'}>
         <span class="pane-cwd">${cwdTail(pane.cwd)}</span>
       </sl-tooltip>
@@ -121,8 +136,10 @@ function SessionCard({ session, projects, onPreview, onSchedule }) {
   // is disabled and says why — the alternative (leaving it enabled) is a
   // button that reports success and does nothing.
   const serverMode = isServerMode(session);
+  const mem = session.memory;
+  const memLvl = memLevel(session);
   return html`
-    <div class=${'tmux-card' + (serverMode ? ' server-mode-card' : '')}>
+    <div class=${'tmux-card' + (serverMode ? ' server-mode-card' : '') + (memLvl !== 'ok' ? ' mem-' + memLvl + '-card' : '')}>
       <div class="tmux-card-head">
         <span class="tmux-name">${session.name}</span>
         ${agentName(session)
@@ -130,10 +147,16 @@ function SessionCard({ session, projects, onPreview, onSchedule }) {
           : null}
         ${serverMode ? html`<sl-tooltip content=${promptTip(session)}><span class="badge server-mode">server mode</span></sl-tooltip>` : null}
         <span class=${'badge tmux-attach' + (session.attached ? ' on' : '')}>${session.attached ? 'attached' : 'detached'}</span>
+        ${session.idle ? html`<sl-tooltip content=${session.idle.reason}><span class="badge idle-badge">⏳ ${session.idle.label}</span></sl-tooltip>` : null}
       </div>
       <div class="tmux-meta muted small">
         ${session.windows} window${session.windows === 1 ? '' : 's'} · age ${ageText(session.created)} · active ${session.activity ? timeAgo(session.activity * 1000) : '—'}
+        ${mem ? html` · <${MemoryChip} target=${session} />` : null}
       </div>
+      ${mem && memLvl !== 'ok'
+        ? html`<div class="tmux-mem-note small">${mem.reason}</div>`
+        : null}
+      ${session.idle ? html`<div class="tmux-idle-note muted small">${session.idle.reason}</div>` : null}
       <div class="tmux-panes">
         ${session.panes.length === 0
           ? html`<div class="muted small">No panes.</div>`
@@ -150,6 +173,27 @@ function SessionCard({ session, projects, onPreview, onSchedule }) {
           : html`<button class="btn btn-xs btn-ghost" onClick=${onSchedule}>Schedule a prompt here</button>`}
       </div>
       ${serverMode ? html`<div class="tmux-server-note muted small">${promptTip(session)}</div>` : null}
+    </div>`;
+}
+
+// Host memory line for the tmux page (bd-console-oic). The number that
+// actually predicts an OOM kill is not "how much is used" but "how much is
+// still available, and is there any swap to cushion it" — so that is what
+// leads, with what the detected agent sessions are holding right beside it,
+// because that is the part a human can act on. Absent block -> renders
+// nothing, exactly as this page looked before the feature.
+function HostMemoryBar({ host }) {
+  if (!host) return null;
+  const agentPart = Number.isFinite(host.agentRssBytes)
+    ? ` · agents ${fmtBytes(host.agentRssBytes)}${Number.isFinite(host.agentPct) ? ` (${Math.round(host.agentPct)}%)` : ''}`
+    : '';
+  return html`
+    <div class=${'tmux-host-bar mem-' + host.level} title=${host.reason}>
+      <span class="tmux-host-icon" aria-hidden="true">🧠</span>
+      <span class="tmux-host-text">${hostMemSummary(host)}${agentPart}</span>
+      ${host.level !== 'ok'
+        ? html`<span class="tmux-host-reason">${host.reason}</span>`
+        : null}
     </div>`;
 }
 
@@ -213,6 +257,8 @@ export function TmuxView() {
         <h1>Terminal sessions</h1>
         <button class="btn btn-ghost" onClick=${loadTmux}>Refresh</button>
       </div>
+
+      <${HostMemoryBar} host=${store.tmuxHost.value} />
 
       ${!store.tmuxAvailable.value
         ? html`<div class="empty-state">

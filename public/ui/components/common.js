@@ -172,6 +172,80 @@ export function TermixLink({ session }) {
     >Termix${degraded ? ' ⚠' : ''}</a>`;
 }
 
+// ---------------------------------------------------------------------------
+// Process health: per-session memory + the idle-but-active marker
+// (bd-console-oic, bd-console-xo8).
+//
+// GET /api/tmux now carries `session.memory` (resident bytes for the pane's
+// whole process subtree, its level, and a sentence explaining it),
+// `session.idle` (non-null only when a session has been silent for the
+// configured number of days AND its processes are still accruing CPU), and a
+// top-level `host.memory` block. All three are ADDITIVE and all three can be
+// absent — non-Linux, unreadable /proc, an older server — in which case every
+// helper here renders nothing at all rather than a zero or an "unknown".
+//
+// WHY IT'S ON THE DASHBOARD: this host has no swap, and two Claude Code
+// processes were OOM-killed in six days (18.4GB and 11.2GB), each taking a
+// whole tmux session — and the agents inside it — with it. Nothing showed it
+// coming. The hub is already open on screen; this is where it can.
+//
+// ACCESSIBILITY: never signalled by color alone. The memory chip carries the
+// state word ("high" / "critical") next to the number, the host chip carries
+// its label ("memory ok" / "memory tight" / "memory critical"), and the idle
+// marker is a text badge. Color only ever reinforces text that is already
+// there — the same rule the agent/server-mode chips above follow.
+// ---------------------------------------------------------------------------
+const KB = 1024, MB = 1024 * 1024, GB = 1024 * 1024 * 1024;
+export function fmtBytes(bytes) {
+  if (!Number.isFinite(bytes)) return '—';
+  if (bytes >= GB) return `${(bytes / GB).toFixed(bytes >= 10 * GB ? 0 : 1)} GB`;
+  if (bytes >= MB) return `${Math.round(bytes / MB)} MB`;
+  return `${Math.max(0, Math.round(bytes / KB))} KB`;
+}
+
+export const memLevel = (x) => (x && x.memory && x.memory.level) || 'ok';
+// The word that rides along with the number so the level is never carried by
+// color alone. 'ok' adds nothing — a normal session is just its number.
+const MEM_WORD = { warn: 'high', crit: 'critical' };
+
+// Compact "how much RAM is this holding" cell/chip. `x` is a session or a
+// pane; both carry the same `memory` shape.
+export function MemoryChip({ target, className = '' }) {
+  const m = target && target.memory;
+  if (!m || !Number.isFinite(m.rssBytes)) return null;
+  const word = MEM_WORD[m.level];
+  return html`
+    <span
+      class=${`mem-chip mem-${m.level} ${className}`.trim()}
+      title=${m.reason || ''}
+    >${fmtBytes(m.rssBytes)}${word ? html`<span class="mem-word"> ${word}</span>` : null}</span>`;
+}
+
+// The idle-but-active marker. DELIBERATELY a different marker from
+// `server mode`: a deliberate headless server and a session everybody forgot
+// about are not the same fact, even when they look identical from outside
+// (both detached, both busy). The tooltip always names the evidence that
+// produced the verdict — days of silence, and the CPU actually observed.
+export const idleTip = (s) => (s && s.idle && s.idle.reason) || '';
+export function IdleBadge({ session }) {
+  if (!session || !session.idle) return null;
+  return html`<span class="badge idle-badge" title=${idleTip(session)}>⏳ ${session.idle.label}</span>`;
+}
+
+// One sentence for the host memory block, shared by the hub's ops-strip chip
+// and the tmux view's banner so the two can't drift. The swap clause is not
+// decoration: with swap a full machine gets slow and a human notices; without
+// it, the OOM killer fires with no warning stage at all, which is exactly how
+// both incidents played out. `host.label` ("memory ok"/"tight"/"critical")
+// leads, so the state is in the text before any color is applied.
+export function hostMemSummary(host) {
+  if (!host) return '';
+  const free = Number.isFinite(host.headroomBytes) ? fmtBytes(host.headroomBytes) : '?';
+  const total = Number.isFinite(host.totalBytes) ? fmtBytes(host.totalBytes) : '?';
+  return `${host.label || 'memory'} · ${free} free of ${total}${host.swapless ? ' · no swap' : ''}`;
+}
+export const hostMemTip = (host) => (host && host.reason) || '';
+
 export const PriBadge = (p) => html`<span class=${'badge pri pri-' + p}>${PRI_LABEL[p] ?? p}</span>`;
 export const StatusBadge = (issue) => {
   const s = effStatus(issue);
