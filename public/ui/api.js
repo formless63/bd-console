@@ -5,9 +5,56 @@
 
 import { store } from './store.js';
 
+// Hub-level routes. lib/routes.mjs matches every one of these on the
+// UNPREFIXED path (its `originalPath`) and returns before getContext() ever
+// runs, so a /api/p/<id>/-prefixed request for one of them falls through to
+// the project router and 404s — which, in a UI where most of these endpoints
+// already degrade to "unavailable" on any failure, is indistinguishable from
+// "the server doesn't have that feature". That silence is what made
+// bd-console-xsv latent for as long as it was: scheduleCancel() only worked
+// because #/schedule happens to null out store.projectId.
+//
+// So this list is the contract, and apiUrl() enforces it: ask the prefixing
+// helpers for a hub-level path and you get a loud throw naming the raw helper
+// you wanted, at the first call, instead of a 404 nobody sees. Keep it in sync
+// with the `originalPath === …` blocks in lib/routes.mjs.
+export const HUB_PATHS = new Set([
+  '/api/projects',
+  '/api/register',
+  '/api/settings',
+  '/api/prompts',
+  '/api/prompts/delete',
+  '/api/prompts/used',
+  '/api/tmux',
+  '/api/tmux/preview',
+  '/api/tmux/send',
+  '/api/usage',
+  '/api/usage/history',
+  '/api/bd-version',
+  '/api/cli-versions',
+  '/api/schedule',
+  '/api/schedule/cancel',
+  '/api/schedule/retry',
+]);
+
+function pathOnly(path) {
+  const q = path.indexOf('?');
+  return q === -1 ? path : path.slice(0, q);
+}
+
+export function isHubPath(path) {
+  return HUB_PATHS.has(pathOnly(path));
+}
+
 export function apiUrl(path) {
   const pid = store.projectId.value;
   if (pid && path.startsWith('/api/')) {
+    if (isHubPath(path)) {
+      throw new Error(
+        `${pathOnly(path)} is a hub-level route — call it with apiGetRaw/apiPostRaw. ` +
+        'Prefixing it with /api/p/<id>/ would 404 silently.'
+      );
+    }
     return '/api/p/' + encodeURIComponent(pid) + '/' + path.substring(5);
   }
   return path;
