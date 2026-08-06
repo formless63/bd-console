@@ -633,6 +633,13 @@ function KimiUsageRow({ data }) {
 // an amber chip, and only when it actually happened, so a healthy machine sees
 // nothing. Renders NOTHING at all when the CLI isn't installed, exactly like
 // the Codex and Kimi rows on a machine without them.
+//
+// That chip is deliberately understated (bd-console-a2h). The server now counts
+// INCIDENTS rather than log lines — the CLI logs one 429 up to three times as it
+// propagates — and says when the request that hit the limit was the CLI's own
+// background cache refresh. "background quota hit" is the honest wording for a
+// poller tripping a limit while the user hasn't touched the CLI in weeks; the
+// chip must never read as "you burned your quota" when nobody did.
 function GeminiServerChip({ server, auth }) {
   if (!server) {
     return html`<span class="usage-state-chip state-stopped"
@@ -690,9 +697,15 @@ function GeminiUsageRow({ data }) {
           : ''}</span>
         <span title=${'Gemini/Antigravity publishes no quota numbers anywhere on disk — '
           + 'the only quota fact available is whether the API returned 429 RESOURCE_EXHAUSTED'}>no quota published</span>
-        ${exhaustedAt && html`<span class="usage-gemini-throttle" title=${
-          `${quota.exhaustedEvents} RESOURCE_EXHAUSTED (429) repl${quota.exhaustedEvents === 1 ? 'y' : 'ies'} in the scanned log tail`
-        }>⚠️ quota hit ${timeAgo(exhaustedAt)}</span>`}
+        ${exhaustedAt && html`<span class="usage-gemini-throttle" title=${[
+          `${quota.exhaustedEvents} RESOURCE_EXHAUSTED (429) incident${quota.exhaustedEvents === 1 ? '' : 's'} in the scanned log tail`,
+          quota.exhaustedLogLines > quota.exhaustedEvents
+            ? `${quota.exhaustedLogLines} log lines — the CLI logs one failure up to three times as it propagates`
+            : null,
+          quota.lastExhaustedOrigin === 'background'
+            ? 'logged by the CLI\'s own background cache refresh, not by anything you asked it to do'
+            : null
+        ].filter(Boolean).join('\n')}>⚠️ ${quota.lastExhaustedOrigin === 'background' ? 'background quota hit' : 'quota hit'} ${timeAgo(exhaustedAt)}</span>`}
       </div>
       ${latest && html`
         <div class="usage-gemini-latest" title=${[
