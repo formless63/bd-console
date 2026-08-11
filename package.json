@@ -23,7 +23,7 @@
     "LICENSE",
     "serve.mjs",
     "lib",
-    "scripts",
+    "scripts/init.mjs",
     "public",
     "bd-console.json.example",
     "README.md"
