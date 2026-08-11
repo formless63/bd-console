@@ -214,6 +214,15 @@ beads-backed repos via `npm run smoke`.
   architecture — see `docs/upgrading.md` for the migration notes.
 - For release or packaging work, run `npm run check`, `npm run smoke`, and
   `npm_config_cache=/tmp/bd-console-npm-cache npm pack --dry-run`.
+- `node scripts/smoke.mjs browser` is an **opt-in** domain, excluded from
+  `npm run smoke` because it boots a real headless Chrome (~19s). It drives
+  Chrome over the DevTools Protocol with Node's built-in `WebSocket` — never
+  puppeteer, which would break the zero-dependency promise — and covers only
+  what Node cannot see: viewport overflow per route, slide-over stacking and
+  scroll containment (the `bd-console-clb` regression), and tap hit-testing.
+  Run it after any change to layout, `overflow`, `position` or `z-index`. It
+  skips cleanly when no Chrome is installed; `BD_CONSOLE_CHROME` overrides
+  discovery.
 
 ## Agent workflow for bd-console
 

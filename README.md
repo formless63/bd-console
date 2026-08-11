@@ -502,9 +502,23 @@ npm_config_cache=/tmp/bd-console-npm-cache npm pack --dry-run
   node scripts/smoke.mjs --list # the domain names
   ```
 
-  A plain `npm run smoke` still runs every domain.
+  A plain `npm run smoke` runs every domain except the opt-in ones, which
+  `--list` marks.
+- `node scripts/smoke.mjs browser` is the one **opt-in** domain. It drives a
+  real headless Chrome over the DevTools Protocol — using Node's built-in
+  WebSocket client, so it adds no npm dependency — and asserts only the things
+  Node cannot see: that no route widens past the viewport at 1280px or 390px,
+  that the Detail slide-over opens on screen, traps focus, and never scrolls
+  the shell (the bd-console-clb regression, checked across all three close
+  paths), and that the panel actually receives taps rather than the content
+  behind it. It is excluded from the default run because booting a browser
+  costs ~19s against a suite that otherwise finishes in well under a minute;
+  run it before shipping changes to layout, `overflow`, `position` or
+  `z-index`. With no Chrome installed it prints a `smoke skip (...)` line and
+  exits cleanly. Point it at a specific binary with
+  `BD_CONSOLE_CHROME=/path/to/chrome`.
 - `npm pack --dry-run` confirms the published tarball contains the expected
-  files.
+  files (the smoke suite is not published — only `scripts/init.mjs` ships).
 
 ## Documentation site
 

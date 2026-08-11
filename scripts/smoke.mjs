@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // bd-console's smoke suite: one entry point, one fixture, per-domain modules.
 //
-//   npm run smoke                # everything, exactly as before
+//   npm run smoke                # everything except the opt-in domains
 //   npm run smoke -- usage       # one domain
 //   node scripts/smoke.mjs usage # same thing
 //   node scripts/smoke.mjs docs formulas   # several
+//   node scripts/smoke.mjs browser         # opt-in: real Chrome, layout only
 //   node scripts/smoke.mjs --list          # what the domain names are
 //
 // The suite used to be a single 4,000-line file, which made it the most
@@ -38,9 +39,15 @@ import { runUsage } from './smoke/usage.mjs';
 import { runVersions } from './smoke/versions.mjs';
 import { runRouting } from './smoke/routing.mjs';
 import { runFormulas } from './smoke/formulas.mjs';
+import { runBrowser } from './smoke/browser.mjs';
 
 // Order matters: it is the order the sections ran in as one file, so anything
 // that leaned on state an earlier section left behind still sees it.
+//
+// A domain may be marked OPT-IN (4th field), which keeps it out of the default
+// run while leaving it listed by --list and runnable by name. Only `browser`
+// is opt-in today: it boots a real Chrome and costs ~10-20s, which is not a
+// price the default fast loop should pay. See scripts/smoke/browser.mjs.
 const DOMAINS = [
   ['issues', runIssues, 'issue creation, links/relationships, and the pure derivations over them'],
   ['tmux', runTmux, 'tmux sessions API, agent detection, process/host health'],
@@ -53,13 +60,16 @@ const DOMAINS = [
   ['versions', runVersions, 'bd + Claude Code/Codex CLI version checks'],
   ['routing', runRouting, 'hash routes, the hub-route contract, the learn layer'],
   ['formulas', runFormulas, 'formulas and molecules: derivations, routes, authoring'],
+  ['browser', runBrowser, 'layout/stacking/scroll/hit-testing in a real Chrome', true],
 ];
 
 const args = process.argv.slice(2);
 
 if (args.includes('--list') || args.includes('-l')) {
-  console.log('smoke domains (default: all of them):\n');
-  for (const [name, , blurb] of DOMAINS) console.log(`  ${name.padEnd(10)} ${blurb}`);
+  console.log('smoke domains (default: all except the opt-in ones):\n');
+  for (const [name, , blurb, optIn] of DOMAINS) {
+    console.log(`  ${name.padEnd(10)} ${blurb}${optIn ? '  [opt-in: run it by name]' : ''}`);
+  }
   console.log('\n  node scripts/smoke.mjs <domain> [<domain>...]');
   process.exit(0);
 }
@@ -72,7 +82,9 @@ if (unknown.length) {
   process.exit(1);
 }
 
-const selected = requested.length ? DOMAINS.filter(([name]) => requested.includes(name)) : DOMAINS;
+const selected = requested.length
+  ? DOMAINS.filter(([name]) => requested.includes(name))
+  : DOMAINS.filter(([, , , optIn]) => !optIn);
 
 let ctx;
 try {

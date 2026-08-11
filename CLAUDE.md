@@ -76,6 +76,30 @@ file. Shared fixtures, the scratch-port server, and the `BD_CONSOLE_*_DIR`
 isolation live in `scripts/smoke/harness.mjs` — use `ctx`, never the real
 `~/.config/bd-console` or a real provider directory.
 
+**`browser` is an opt-in domain and is NOT in `npm run smoke`.** Run it by
+name whenever you touch layout, `overflow`, `position`, `z-index`, or the
+Detail slide-over:
+
+```bash
+node scripts/smoke.mjs browser
+```
+
+It boots a real headless Chrome (~19s, versus well under a minute for the
+whole default suite — which is why it is opt-in) and drives it over the
+DevTools Protocol with Node's built-in `WebSocket`. **Do not reach for
+puppeteer here**: the zero-dependency, no-install-step property is
+load-bearing, and this domain deliberately implements the small slice of CDP
+it needs instead. Chrome itself is resolved at run time — `BD_CONSOLE_CHROME`
+first, then PATH, well-known install paths, and any puppeteer-managed
+download — and its absence is a clean `smoke skip (...)`, so the suite behaves
+identically on a machine without a browser.
+
+Its scope is layout, stacking, scroll and hit-testing invariants only —
+things Node structurally cannot observe. Business logic belongs in the other
+domains, which test it faster and more reliably. `bd-console-clb` (the Detail
+slide-over stranding the app off-viewport) is pinned there as a named
+regression across all three close paths.
+
 For beginner setup work, also verify the guided init path:
 
 ```bash
