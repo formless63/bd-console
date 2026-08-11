@@ -521,7 +521,13 @@ export function Detail() {
     const focusable = () => [...dialog.querySelectorAll(
       'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), details > summary, [tabindex]:not([tabindex="-1"])',
     )].filter((el) => !el.hidden && el.getClientRects().length > 0);
-    const focusTimer = setTimeout(() => (focusable()[0] || dialog).focus(), 0);
+    // preventScroll: this fires on the next tick, while the panel is still
+    // animating in from translateX(102%), so the control we focus is briefly
+    // off to the right of the viewport. Without it the browser "helpfully"
+    // scrolls the ancestor to reveal it and the whole app ends up shifted
+    // (bd-console-clb). Focus placement is what we want here; scrolling to it
+    // never is — the panel puts itself in view on its own.
+    const focusTimer = setTimeout(() => (focusable()[0] || dialog).focus({ preventScroll: true }), 0);
     const onKeyDown = (e) => {
       // A native dialog opened from this panel owns focus until it closes.
       if (e.target.closest?.('dialog[open]')) return;
@@ -547,7 +553,9 @@ export function Detail() {
       background.forEach((el) => { el.inert = false; });
       const target = returnFocus.current;
       returnFocus.current = null;
-      if (target?.isConnected) setTimeout(() => target.focus(), 0);
+      // Same reasoning as the open-focus above: restore focus to whatever
+      // opened the panel, but never let that restoration scroll anything.
+      if (target?.isConnected) setTimeout(() => target.focus({ preventScroll: true }), 0);
     };
   }, [open]);
 

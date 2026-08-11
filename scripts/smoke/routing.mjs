@@ -270,4 +270,29 @@ export async function runRouting(ctx) {
       `HUB_PATHS in public/ui/api.js lists ${stale.join(', ')}, which lib/routes.mjs no longer serves hub-level — remove it, or apiGet/apiPost will throw on a path that is now project-scoped`);
     console.log(`smoke ok (hub-route contract: ${declared.size} hub-level routes declared in api.js match lib/routes.mjs)`);
   }
+
+  // --- slide-over must not be able to scroll the shell off-viewport --------
+  // bd-console-clb: .c2-detail parks at translateX(102%), ~510px past .c2's
+  // right edge. That is real scrollable overflow, and `overflow: hidden`
+  // clips it while STILL making .c2 a scroll container — one with no
+  // scrollbar. Focusing a control inside the panel while it animated in made
+  // the browser scroll to reveal it, shifting the whole app off screen with
+  // no way for the user to scroll back. Two things keep it fixed, and both
+  // are one careless edit away from coming back, so both are pinned here.
+  // (A browser is the only place to observe the symptom; these are the
+  // source-level invariants that cause it, which is what Node can check.)
+  {
+    const css = readFileSync(resolve(join(process.cwd(), 'public', 'ui', 'console2', 'console2.css')), 'utf8');
+    const rootRule = css.match(/\n\.c2\s*\{[\s\S]*?\n\}/);
+    assert(rootRule, 'could not find the .c2 root rule in console2.css — this check has drifted');
+    assert(/overflow:\s*clip/.test(rootRule[0]),
+      '.c2 must use `overflow: clip`, not `hidden`: hidden still creates a scroll container (no scrollbar) that the parked .c2-detail can be scrolled into, stranding the app off-viewport (bd-console-clb)');
+
+    const detail = readFileSync(resolve(join(process.cwd(), 'public', 'ui', 'console2', 'Detail.js')), 'utf8');
+    const focusCalls = [...detail.matchAll(/\.focus\(([^)]*)\)/g)].map((m) => m[1].trim());
+    const modalFocus = focusCalls.filter((a) => a.includes('preventScroll'));
+    assert(modalFocus.length >= 2,
+      `Detail.js must focus with { preventScroll: true } when it moves focus into the panel and when it restores focus on close — found ${modalFocus.length} such call(s); without it the browser scrolls the shell to reveal a control that is still animating into place (bd-console-clb)`);
+    console.log('smoke ok (detail slide-over: .c2 clips without scrolling, focus moves never scroll the shell)');
+  }
 }

@@ -52,7 +52,17 @@
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-body);
-  overflow: hidden;
+  /* clip, NOT hidden. The closed .c2-detail is parked at translateX(102%) —
+     ~510px past this box's right edge — which is real scrollable overflow.
+     `hidden` clips it visually but still makes this a scroll container with
+     no scrollbar, so anything that scrolls toward the parked panel (the
+     browser bringing a freshly-focused control into view while the panel is
+     still mid-transition, a scrollIntoView, a stray anchor jump) shifts the
+     entire app off-viewport with no user-recoverable way back. `clip` clips
+     without creating a scroll container at all, so scrollLeft can never
+     become non-zero and the whole failure mode is structurally impossible.
+     See Detail.js's preventScroll focus calls for the other half. */
+  overflow: clip;
 }
 [data-scheme="light"] .c2 { --c2-rim: color-mix(in srgb, white 55%, transparent); --c2-rim-soft: color-mix(in srgb, white 40%, transparent); }
 
