@@ -5,11 +5,12 @@
 //     node scripts/smoke.mjs cli
 // Shared fixtures, isolation and helpers come from ./harness.mjs via ctx.
 
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import net from 'node:net';
 import { renderServiceUnit } from '../../lib/systemd.mjs';
+import { detectFlavor, plannedCommands, formatCommand } from '../../lib/update.mjs';
 
 export async function runCli(ctx) {
   const { assert, getPort, waitFor, isPidAlive, waitForExit, tempRoot, serverEntry } = ctx;
@@ -118,6 +119,51 @@ export async function runCli(ctx) {
   assert(dryRunOut.includes('current version:'), `update --dry-run did not print the current version:\n${dryRunOut}`);
 
   console.log('smoke ok (update --dry-run)');
+
+  // --- flavor detection must not adopt an enclosing repo (bd-console-83y) ---
+  // The field failure: an npm-global install sits at
+  // ~/.nvm/.../node_modules/bd-console, and ~/.nvm is nvm's own git clone, so
+  // "am I inside a work tree?" said yes and `git -C <us> pull --ff-only`
+  // fetched from github.com/nvm-sh/nvm. Reproduce that exact topology — a
+  // package directory nested inside a DIFFERENT repo — and require
+  // 'npm-global'. The enclosing repo gets a real commit and a bogus remote so
+  // a regression would visibly plan a pull against someone else's origin.
+  {
+    const outerRepo = join(tempRoot, 'flavor-outer');
+    const nested = join(outerRepo, 'lib', 'node_modules', 'bd-console');
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(join(nested, 'package.json'), JSON.stringify({ name: 'bd-console', version: '9.9.9' }));
+    const git = (cwd, args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    git(outerRepo, ['init', '-q']);
+    git(outerRepo, ['config', 'user.email', 'smoke@example.invalid']);
+    git(outerRepo, ['config', 'user.name', 'smoke']);
+    git(outerRepo, ['remote', 'add', 'origin', 'https://github.com/nvm-sh/nvm.git']);
+    writeFileSync(join(outerRepo, 'README.md'), 'not bd-console\n');
+    git(outerRepo, ['add', '-A']);
+    git(outerRepo, ['commit', '-qm', 'outer repo']);
+
+    const nestedFlavor = await detectFlavor(nested);
+    assert(nestedFlavor === 'npm-global',
+      `a package dir nested inside an unrelated git repo must report 'npm-global', got '${nestedFlavor}' — `
+      + `this is the nvm bug (bd-console-83y): 'git-clone' here means update would run git against a repo bd-console does not own`);
+    const nestedPlan = plannedCommands(nestedFlavor, nested).map(formatCommand).join(' ; ');
+    assert(!nestedPlan.includes('pull'),
+      `the planned update for a nested install must not be a git pull, got: ${nestedPlan}`);
+
+    // The real checkout (this repo, whose root holds package.json) must still
+    // detect 'git-clone', or the fix would have disabled self-update entirely.
+    const selfFlavor = await detectFlavor(process.cwd());
+    assert(selfFlavor === 'git-clone',
+      `the bd-console checkout itself must still detect 'git-clone', got '${selfFlavor}'`);
+
+    // A plain directory that is no repo at all stays 'npm-global'.
+    const plainDir = join(tempRoot, 'flavor-plain');
+    mkdirSync(plainDir, { recursive: true });
+    const plainFlavor = await detectFlavor(plainDir);
+    assert(plainFlavor === 'npm-global', `a non-repo directory must report 'npm-global', got '${plainFlavor}'`);
+
+    console.log('smoke ok (update flavor: nested install never adopts an enclosing repo, real checkout still self-updates)');
+  }
 
   // --- non-TTY first run applies 0.0.0.0:4180 defaults (Feature 1) -----------
   // isFirstRun requires no --host/--port flags and no BD_CONSOLE_HOST/PORT env,
