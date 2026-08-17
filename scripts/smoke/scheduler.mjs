@@ -8,6 +8,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { connect as netConnect } from 'node:net';
 import { join, resolve } from 'node:path';
+import { openEventStream } from './sse.mjs';
 
 // Statuses that mean "the scheduler has not finished with this row yet":
 // 'pending' (not claimed) and 'firing' (claimed, send in flight).
@@ -269,6 +270,43 @@ console.log(JSON.stringify({ created, first, second, claimed, reapedFresh, reape
     assert(/being sent/.test(claimOut.after.error || ''), `a reaped row must record why it is failed, got: ${claimOut.after.error}`);
 
     console.log('smoke ok (schedule claim: exclusive pending->firing, stranded firing rows reaped to failed)');
+
+    // --- the change feed fires for schedule writes (bd-console-974.3) -------
+    // Scheduler jobs are hub-level, so their events carry NO project — a client
+    // that keyed off `project` would silently ignore them. Create then cancel,
+    // because the two land inside the same 2s debounce window: the second event
+    // proves the coalescing is trailing-edge (the last change in a burst is
+    // still announced) rather than "drop everything after the first".
+    const stream = await openEventStream(`http://127.0.0.1:${port}/api/events`);
+    try {
+      assert(await stream.waitFor((f) => f.event === 'hello', { timeoutMs: 3000 }), 'no hello frame');
+      const mark = stream.frames.length;
+
+      const created = await fetch(`http://127.0.0.1:${port}/api/schedule`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: 'feed probe', session: `smoke-feed-${Date.now()}`, runAt: Date.now() + 5 * 60 * 1000 }),
+      }).then((r) => r.json());
+      assert(created.ok, `schedule create failed: ${JSON.stringify(created)}`);
+
+      const onCreate = await stream.waitFor((f) => f.event === 'change', { timeoutMs: 4000, from: mark });
+      assert(onCreate, `creating a job must announce a schedule change; raw stream was ${JSON.stringify(stream.raw)}`);
+      assert(onCreate.frame.data.kind === 'schedule', `expected kind "schedule", got ${JSON.stringify(onCreate.frame.raw_data)}`);
+      assert(Object.keys(onCreate.frame.data).sort().join(',') === 'kind,ts',
+        `a schedule change frame carries exactly kind/ts (no project), got ${JSON.stringify(onCreate.frame.raw_data)}`);
+
+      const cancelled = await fetch(`http://127.0.0.1:${port}/api/schedule/cancel`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: created.job.id }),
+      }).then((r) => r.json());
+      assert(cancelled.ok, `schedule cancel failed: ${JSON.stringify(cancelled)}`);
+      const onCancel = await stream.waitFor((f) => f.event === 'change' && f.data && f.data.kind === 'schedule',
+        { timeoutMs: 4000, from: onCreate.index + 1 });
+      assert(onCancel, `a cancel inside the debounce window must still be announced (trailing edge); raw stream was ${JSON.stringify(stream.raw)}`);
+
+      console.log(`smoke ok (change feed: schedule create + cancel both announced, no project field): job=${created.job.id}`);
+    } finally {
+      stream.close();
+    }
   }
 
   // --- saved prompts API ---------------------------------------------------------
