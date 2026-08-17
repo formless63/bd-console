@@ -233,13 +233,6 @@ export function hostMemSummary(host) {
 }
 export const hostMemTip = (host) => (host && host.reason) || '';
 
-export function syncState(info) {
-  if (!info) return 'ok';
-  if (info.error) return 'err';
-  if (!info.exists || info.stale) return 'warn';
-  return 'ok';
-}
-
 // Copies text to the clipboard, trying the modern async Clipboard API first
 // and falling back to a hidden-textarea + execCommand('copy') for contexts
 // where navigator.clipboard is unavailable (notably: browsing the console

@@ -27,7 +27,7 @@ import {
 import { TypeGlyph, Pip, PRI_LABEL, StatusGlyph, glyphStatus } from './ui.js';
 import { c2, flashCli } from './state.js';
 import { LearnEmpty, ConceptDot } from '../components/ConceptTip.js';
-import { agentName, isServerMode, promptTip } from '../components/common.js';
+import { agentName, isServerMode, promptTip, timeAgo } from '../components/common.js';
 import { learn, concept } from '../learn.js';
 
 // Link/supersede/duplicate writes live in store.js (with the other shared
@@ -54,15 +54,6 @@ const actDuplicate = async (id, canonical) => {
   await markDuplicate(id, canonical);
   flashCli(`bd duplicate ${id} --of ${canonical}`, 'duplicate');
 };
-
-function timeAgo(s) {
-  if (!s) return '';
-  const m = Math.round((Date.now() - new Date(s)) / 60000);
-  if (m < 1) return 'just now';
-  if (m < 60) return m + 'm ago';
-  if (m < 1440) return Math.round(m / 60) + 'h ago';
-  return new Date(s).toLocaleDateString();
-}
 
 function RelChip(id) {
   const i = byId.value.get(id);
