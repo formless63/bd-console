@@ -2,11 +2,14 @@
 // progress · Blocked · Done this week) of intent cards, plus an epic-grouping
 // toggle that regroups everything into epic rows with layer-by-layer progress.
 import { html } from 'htm/preact';
-import { useState } from 'preact/hooks';
-import { store, selectIssue, effStatus, containerGroups } from '../store.js';
+import { useState, useEffect } from 'preact/hooks';
+import {
+  store, selectIssue, effStatus, containerGroups,
+  toggleSelection, selectIds, deselectIds, clearSelection, selectionActive, BATCH_MAX_OPS,
+} from '../store.js';
 import { c2, setEpicGroup } from './state.js';
 import { lanes, isStale, focusedIds, LANE_LABEL } from './derive.js';
-import { actClaim, actStart, actClose, actDefer } from './actions.js';
+import { actClaim, actStart, actClose, actDefer, bulkAct } from './actions.js';
 import { TypeGlyph, Pip, AgeChip, StatusGlyph, glyphStatus } from './ui.js';
 import { LearnEmpty, ConceptDot } from '../components/ConceptTip.js';
 
@@ -61,12 +64,38 @@ const LANE_EMPTY = {
   },
 };
 
-function Card({ issue }) {
+// A card's checkbox. Deliberately a SIBLING of .c2-card-open (the big
+// click-to-open button), never nested inside it: nesting interactive controls
+// is invalid, and the browser smoke domain hit-tests the centre of
+// .c2-card-open, so anything that could sit over that point is a regression
+// waiting to happen. This overlays the card's top-left corner only, and is
+// pointer-events:none until it is revealed (see .c2-sel in console2.css) so it
+// is not even a hit-target the rest of the time.
+//
+// `laneIds` is the ordered list of ids visible in the SAME lane/row, which is
+// what makes shift-click mean "the run of cards between these two, here".
+function SelectBox({ id, laneIds }) {
+  const selected = store.selection.value.has(id);
+  return html`
+    <button type="button" class="c2-sel" role="checkbox" aria-checked=${selected}
+      aria-label=${(selected ? 'Deselect ' : 'Select ') + id}
+      onClick=${(e) => {
+        // stopPropagation so a checkbox click can never also be read as
+        // "open this card"; preventDefault so a shift-click doesn't leave a
+        // text selection dragged across the lane.
+        e.stopPropagation();
+        e.preventDefault();
+        toggleSelection(id, { ids: laneIds, shift: e.shiftKey });
+      }}><span aria-hidden="true">${selected ? '✓' : ''}</span></button>`;
+}
+
+function Card({ issue, laneIds }) {
   const id = issue.id;
   const s = effStatus(issue);
   const g = glyphStatus(issue);
   const stale = isStale(issue);
   const sel = store.selectedId.value === id;
+  const picked = store.selection.value.has(id);
   const closed = issue.status === 'closed';
 
   // Per-card busy flag: quick-actions here are one write + one full
@@ -98,8 +127,9 @@ function Card({ issue }) {
   const doStart = runBusy(() => actStart(id));
 
   return html`
-    <div class=${'c2-card st-' + g + (sel ? ' sel' : '') + (issue.priority <= 0 ? ' p0' : '')}
+    <div class=${'c2-card st-' + g + (sel ? ' sel' : '') + (picked ? ' picked' : '') + (issue.priority <= 0 ? ' p0' : '')}
          >
+      <${SelectBox} id=${id} laneIds=${laneIds} />
       <button class="c2-card-open" aria-label=${`Open ${issue.issue_type || 'issue'} ${id}: ${issue.title}`}
         aria-haspopup="dialog" onClick=${() => selectIssue(id)}>
         <span class="c2-card-top">
@@ -131,10 +161,28 @@ function Card({ issue }) {
 // Pulse/omnibar focus narrows to (see derive.js's focusedIds) — lanes whose
 // items don't intersect it visibly empty out rather than just dimming, so
 // the focus control has an actual, assertable effect on rendered card count.
+// Select-all-in-lane. Scoped to the cards actually SHOWN, not to the lane's
+// full (batch-revealed) contents: a button that silently selected 40 issues the
+// user cannot see would make every bulk action a guess. Toggles, so a second
+// press deselects exactly what the first press selected.
+function LaneSelect({ ids }) {
+  if (ids.length === 0) return null;
+  const sel = store.selection.value;
+  const all = ids.every((id) => sel.has(id));
+  return html`
+    <button type="button" class=${'c2-mini c2-lanesel' + (all ? ' on' : '')} aria-pressed=${all}
+      title=${all ? `Deselect these ${ids.length}` : `Select these ${ids.length}`}
+      onClick=${() => (all ? deselectIds(ids) : selectIds(ids))}>
+      <span aria-hidden="true">${all ? '▣' : '▢'}</span>
+      <span class="sr-only">${all ? 'Deselect' : 'Select'} the ${ids.length} visible ${ids.length === 1 ? 'card' : 'cards'}</span>
+    </button>`;
+}
+
 function Lane({ laneKey, title, cls, items, focus, focusSet }) {
   const [limit, setLimit] = useState(REVEAL_BATCH);
   const filtered = focusSet ? items.filter((i) => focusSet.has(i.id)) : items;
   const shown = filtered.slice(0, limit);
+  const shownIds = shown.map((i) => i.id);
   const remaining = filtered.length - shown.length;
   const focused = focus && filtered.length > 0 && (focus === laneKey || focus === 'stale');
   const dimLane = !!focus && filtered.length === 0;
@@ -144,6 +192,7 @@ function Lane({ laneKey, title, cls, items, focus, focusSet }) {
         <span class="c2-lane-dot"></span>
         <h2 class="c2-lane-title">${title}</h2>
         <span class="c2-lane-count">${filtered.length}</span>
+        <${LaneSelect} ids=${shownIds} />
       </header>
       <div class="c2-lane-body">
         ${filtered.length === 0
@@ -156,7 +205,7 @@ function Lane({ laneKey, title, cls, items, focus, focusSet }) {
                 what=${LANE_EMPTY[laneKey]?.what || 'Nothing here yet.'}
                 why=${LANE_EMPTY[laneKey]?.why} />`)
           : html`
-              ${shown.map((i) => html`<${Card} key=${i.id} issue=${i} />`)}
+              ${shown.map((i) => html`<${Card} key=${i.id} issue=${i} laneIds=${shownIds} />`)}
               ${remaining > 0 && html`
                 <button class="c2-reveal" onClick=${() => setLimit(limit + REVEAL_BATCH)}>
                   Show ${Math.min(REVEAL_BATCH, remaining)} more
@@ -192,6 +241,7 @@ function IssueGroup({ container, kids, closed, total, complete, focusActive, sta
     ? kids.slice(0, Math.max(currentLimit, historyLimit))
     : [...shownCurrent, ...shownHistory];
   const focusRemaining = focusActive ? kids.length - visible.length : 0;
+  const visibleIds = visible.map((k) => k.id);
   const title = standalone ? 'Standalone' : container.title;
   const rowId = standalone ? '__orphans' : container.id;
   const rowType = standalone ? '' : ' ct-' + container.issue_type;
@@ -226,6 +276,7 @@ function IssueGroup({ container, kids, closed, total, complete, focusActive, sta
               onClick=${stopEvent(() => setExpanded(!expanded))}>
             ${expanded ? 'Collapse' : `Show ${history.length} completed`}
           </button>`}
+        ${bodyOpen && html`<${LaneSelect} ids=${visibleIds} />`}
       </header>
       ${bodyOpen && html`
         <div class="c2-epicrow-body">
@@ -235,7 +286,7 @@ function IssueGroup({ container, kids, closed, total, complete, focusActive, sta
               : html`<${LearnEmpty} compact k="epic"
                   what=${'Nothing has been put inside "' + title + '" yet.'}
                   why="Open any issue, set its Parent to this one, and it will appear here with a progress bar across the whole group." />`)
-            : visible.map((k) => html`<${Card} key=${k.id} issue=${k} />`)}
+            : visible.map((k) => html`<${Card} key=${k.id} issue=${k} laneIds=${visibleIds} />`)}
           ${!focusActive && currentRemaining > 0 && html`
             <button class="c2-reveal" onClick=${() => setCurrentLimit(currentLimit + REVEAL_BATCH)}>
               Show ${Math.min(REVEAL_BATCH, currentRemaining)} more active
@@ -331,6 +382,74 @@ function EpicRows({ focusSet }) {
     </div>`;
 }
 
+// The bulk action bar. Rendered as the LAST flex child of .c2-flow — a real
+// layout row, not a floating overlay, and only while something is selected. It
+// therefore cannot sit over a card at any point (which is exactly what the
+// browser smoke domain's card hit-test would catch) and needs no z-index at all.
+//
+// Every button is one bulkAct() call = one POST /api/p/<id>/batch = one bd
+// spawn per issue but ONE export and ONE list reload for the lot. prompt() for
+// the three free-text params, matching the card quick-actions right above.
+function BulkBar() {
+  const ids = [...store.selection.value];
+  // Local, not a store signal: the bar is the only thing that can be mid-flight
+  // and it survives the data refreshes bulkAct triggers (same component
+  // instance), so a signal would buy nothing but a wider blast radius.
+  const [busy, setBusy] = useState(false);
+  if (ids.length === 0) return null;
+
+  const over = ids.length > BATCH_MAX_OPS;
+  const run = (kind, params = {}) => async () => {
+    setBusy(true);
+    try {
+      const data = await bulkAct(kind, ids, params);
+      // Only on a real result: a cancelled prompt or a refused over-cap
+      // selection must leave the selection exactly as the user built it.
+      if (data) clearSelection();
+    } catch { /* bulkAct already toasted */ }
+    finally { setBusy(false); }
+  };
+  // prompt() returns null on Cancel and '' on an empty-but-confirmed OK — the
+  // same distinction the card quick-actions above depend on (bd-console-974.2).
+  // `abortOnEmpty` marks the params where '' is not a meaningful value.
+  const ask = (kind, question, key, def = '', abortOnEmpty = true) => async () => {
+    const v = prompt(question + ` (${ids.length} selected)`, def);
+    if (v == null) return;
+    if (abortOnEmpty && !v.trim()) return;
+    await run(kind, { [key]: v.trim() })();
+  };
+
+  return html`
+    <div class="c2-bulkbar" role="group" aria-label="Bulk actions">
+      <span class="c2-bulk-count">${ids.length} selected</span>
+      ${over && html`<span class="c2-bulk-warn">over the ${BATCH_MAX_OPS}-issue limit</span>`}
+      <button class="c2-mini" disabled=${busy || over} onClick=${async () => {
+        const r = prompt(`Close reason for ${ids.length} selected (optional):`, '');
+        if (r == null) return;
+        await run('close', { reason: r })();
+      }}>close</button>
+      <button class="c2-mini" disabled=${busy || over} onClick=${run('claim')}>claim</button>
+      <button class="c2-mini" disabled=${busy || over} onClick=${run('start')}>start</button>
+      <span class="c2-bulk-pri" role="group" aria-label="Set priority">
+        ${[0, 1, 2, 3, 4].map((pri) => html`
+          <button key=${pri} class="c2-mini" disabled=${busy || over}
+            title=${`Set priority P${pri}`} onClick=${run('priority', { priority: pri })}>P${pri}</button>`)}
+      </span>
+      <button class="c2-mini" disabled=${busy || over}
+        onClick=${ask('add-label', 'Label to ADD to', 'label')}>+ label</button>
+      <button class="c2-mini" disabled=${busy || over}
+        onClick=${ask('remove-label', 'Label to REMOVE from', 'label')}>− label</button>
+      ${/* '' is a legitimate value here: it CLEARS the parent (see set-parent
+            in lib/bd.mjs), so this one does not abort on empty. */ ''}
+      <button class="c2-mini" disabled=${busy || over}
+        onClick=${ask('parent', 'Parent issue id for', 'parent', '', false)}>parent</button>
+      <button class="c2-mini" disabled=${busy || over}
+        onClick=${ask('defer', 'Defer until (e.g. +2d, next monday)', 'defer', '+2d')}>defer</button>
+      <button class="c2-mini c2-bulk-clear" disabled=${busy} onClick=${clearSelection}
+        title="Clear the selection (Escape)">clear</button>
+    </div>`;
+}
+
 export function Flow() {
   const L = lanes.value;
   const focus = c2.laneFocus.value;
@@ -343,8 +462,27 @@ export function Flow() {
   // rendered its full "nothing here yet" teaching copy against a list that
   // simply hadn't arrived yet.
   const bootLoading = store.issuesLoading.value && !c2.ready.value;
+  const selecting = selectionActive.value;
+
+  // Escape clears the multi-selection. Deliberately passive: no
+  // preventDefault, no stopPropagation, and it declines the key outright while
+  // the Detail slide-over is open (Escape is that dialog's, and Console2.js
+  // owns it) or while the user is typing, so this cannot become the reason the
+  // omnibar stops clearing on Escape.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      if (store.selectedId.value) return;
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (store.selection.value.size) clearSelection();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   return html`
-    <div class="c2-flow">
+    <div class=${'c2-flow' + (selecting ? ' selecting' : '')}>
       <div class="c2-flow-bar">
         <button class="c2-mini c2-grouptoggle" aria-pressed=${epic} onClick=${() => setEpicGroup(pid, !epic)}>
           ${epic ? 'Ungroup' : 'Group by epic'}
@@ -359,5 +497,6 @@ export function Flow() {
           : html`<div class="c2-lanes">
               ${LANES.map(([key, title, cls]) => html`<${Lane} key=${key} laneKey=${key} title=${title} cls=${cls} items=${L[key]} focus=${focus} focusSet=${focusSet} />`)}
             </div>`}
+      <${BulkBar} />
     </div>`;
 }

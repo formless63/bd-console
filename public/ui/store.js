@@ -96,6 +96,16 @@ export const store = {
   // in console2/state.js)
   selectedId: signal(null),
 
+  // MULTI-selection for bulk operations (bd-console-974.5) — a Set of issue
+  // ids, distinct from selectedId (which is "the one issue the Detail
+  // slide-over is showing"). Lives here rather than in a Flow-local useState
+  // for one reason: Flow re-renders on every live data refresh (SSE `change`
+  // → loadIssues), and a selection the user spent time building must survive
+  // that. loadIssues() prunes ids that left the list; nothing else touches it
+  // implicitly. Always REPLACED, never mutated in place — a signal holding a
+  // Set only notifies on identity change.
+  selection: signal(new Set()),
+
   // comments (per selected issue)
   comments: signal([]),
   commentsLoading: signal(false),
@@ -288,14 +298,82 @@ export function navigate(hash) { if (location.hash !== hash) location.hash = has
 // Toasts
 // ---------------------------------------------------------------------------
 let toastSeq = 0;
-export function toast(message, kind = 'ok', timeout = 3200) {
+// `action`, when given, is { label, run } — Toasts.js renders it as a button
+// inside the alert. Used by offerUndo() below; nothing else needs it.
+export function toast(message, kind = 'ok', timeout = 3200, action = null) {
   const id = ++toastSeq;
-  store.toasts.value = [...store.toasts.value, { id, message, kind }];
+  store.toasts.value = [...store.toasts.value, { id, message, kind, ...(action ? { action } : {}) }];
   if (timeout) setTimeout(() => dismissToast(id), timeout);
   return id;
 }
 export function dismissToast(id) {
   store.toasts.value = store.toasts.value.filter((t) => t.id !== id);
+}
+
+// ---------------------------------------------------------------------------
+// Multi-selection (bd-console-974.5)
+// ---------------------------------------------------------------------------
+export const selectionCount = computed(() => store.selection.value.size);
+export const selectionActive = computed(() => store.selection.value.size > 0);
+export function isSelected(id) { return store.selection.value.has(id); }
+
+// The anchor for shift-click range selection. Module-level rather than a
+// signal: nothing renders from it, and a re-render caused by it would be
+// noise. Reset by clearSelection() so a fresh selection can't extend a range
+// from an id the user no longer has selected.
+let selectionAnchor = null;
+
+// `ids` is the ORDERED list of ids the click happened within — Flow passes the
+// lane's (or epic row's) currently visible ids, which is what makes a range
+// select mean "everything between these two cards in THIS lane" rather than
+// "everything between these two ids in some global order the user can't see".
+export function toggleSelection(id, { ids = null, shift = false } = {}) {
+  const next = new Set(store.selection.value);
+  const canRange = shift && selectionAnchor && selectionAnchor !== id
+    && Array.isArray(ids) && ids.includes(id) && ids.includes(selectionAnchor);
+  if (canRange) {
+    const a = ids.indexOf(selectionAnchor);
+    const b = ids.indexOf(id);
+    // A range ADDS; it never toggles individual members off, which is what
+    // makes shift-clicking twice in a row idempotent instead of a flicker.
+    for (const x of ids.slice(Math.min(a, b), Math.max(a, b) + 1)) next.add(x);
+  } else {
+    if (next.has(id)) next.delete(id); else next.add(id);
+    selectionAnchor = id;
+  }
+  store.selection.value = next;
+}
+
+export function selectIds(ids) {
+  const next = new Set(store.selection.value);
+  for (const id of ids) next.add(id);
+  store.selection.value = next;
+}
+export function deselectIds(ids) {
+  const next = new Set(store.selection.value);
+  for (const id of ids) next.delete(id);
+  store.selection.value = next;
+}
+export function clearSelection() {
+  selectionAnchor = null;
+  if (store.selection.value.size) store.selection.value = new Set();
+}
+
+// Drop selected ids that are no longer in the loaded issue list. Called from
+// loadIssues() — a live refresh (or a project switch) must not leave the bulk
+// bar holding ids that no longer exist, because every op it would send for
+// them is a guaranteed per-op failure the user cannot explain.
+function pruneSelection(issues) {
+  const sel = store.selection.value;
+  if (sel.size === 0) return;
+  const live = new Set(issues.map((i) => i.id));
+  let dropped = false;
+  const next = new Set();
+  for (const id of sel) { if (live.has(id)) next.add(id); else dropped = true; }
+  if (dropped) {
+    if (selectionAnchor && !next.has(selectionAnchor)) selectionAnchor = null;
+    store.selection.value = next;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -431,6 +509,9 @@ export async function loadIssues({ force = false } = {}) {
     // list (and therefore every card/lane mid-interaction) for even one
     // frame while the new data is in flight.
     store.issues.value = data.issues || [];
+    // A multi-selection outlives data refreshes (that is why it lives in the
+    // store) — but only for ids that are still there.
+    pruneSelection(store.issues.value);
     store.generatedAt.value = data.generatedAt;
     if (store.meta.value) store.meta.value = { ...store.meta.value, export: data.export };
   } catch (e) {
@@ -815,6 +896,77 @@ export async function createIssue(body) {
   if (data.id) await selectIssue(data.id);
   toast('Created ' + data.id);
   return data.id;
+}
+
+// ---------------------------------------------------------------------------
+// Batch edit (bd-console-974.5) — POST /api/p/<id>/batch
+// ---------------------------------------------------------------------------
+// Server-side cap; mirrored here only so callers can chunk/refuse BEFORE
+// spending a round trip. lib/bd.mjs's BATCH_MAX_OPS is the authority.
+export const BATCH_MAX_OPS = 100;
+
+// Resolves to the server's { ok, results, failed, applied } even when some ops
+// failed — a partial failure is a 200, not a throw, because the ops that DID
+// land are real and the caller has to report them. Only a whole-request
+// failure (401, cap exceeded, malformed ops, export failure) throws.
+//
+// One loadIssues() for the whole batch, matching the server's one export.
+export async function batchEdit(ops) {
+  const data = await withAuth(() => apiPost('/api/batch', { ops }));
+  await loadIssues();
+  return data;
+}
+
+// ---------------------------------------------------------------------------
+// One-level undo (bd-console-974.5)
+// ---------------------------------------------------------------------------
+// Deliberately NOT an undo stack. One level, most recent action only, a 10s
+// window, and the reverse is always expressed as a list of ordinary edit ops
+// so undoing a bulk action is exactly one more batch call. Actions whose
+// reverse is not obvious (reopen, burn, supersede, mark-duplicate, create)
+// offer no undo at all rather than a lie — see reverseOpsFor() in
+// console2/actions.js, which is where the "what is the opposite of this"
+// knowledge lives and where the previous values are captured BEFORE the write.
+export const UNDO_WINDOW_MS = 10000;
+
+// The single outstanding offer. Superseded by the next one, consumed by its
+// own Undo button, and expired by its own timer — all three paths null it out,
+// so a stale toast that somehow survives can never fire a second reversal.
+let pendingUndo = null;
+
+export function offerUndo(message, ops, { kind = 'ok', window = UNDO_WINDOW_MS } = {}) {
+  // Most recent only: retire the previous offer (and its toast) outright
+  // rather than leaving two Undo buttons on screen meaning different things.
+  if (pendingUndo) { dismissToast(pendingUndo.toastId); pendingUndo = null; }
+  if (!Array.isArray(ops) || ops.length === 0) return toast(message, kind, window);
+
+  const entry = { ops };
+  entry.toastId = toast(message, kind, window, { label: 'Undo', run: () => runUndo(entry) });
+  pendingUndo = entry;
+  // The toast's own auto-dismiss removes it from the stack but says nothing
+  // about the offer, so expire the offer on the same clock.
+  setTimeout(() => { if (pendingUndo === entry) pendingUndo = null; }, window);
+  return entry.toastId;
+}
+
+async function runUndo(entry) {
+  if (pendingUndo !== entry) return; // already used, superseded or expired
+  pendingUndo = null;
+  dismissToast(entry.toastId);
+  const n = entry.ops.length;
+  try {
+    const data = await batchEdit(entry.ops);
+    const failed = data.failed || 0;
+    toast(
+      failed
+        ? `Undone — ${n - failed} of ${n} reversed, ${failed} failed`
+        : `Undone (${n} ${n === 1 ? 'change' : 'changes'} reversed)`,
+      failed ? 'warn' : 'ok',
+    );
+  } catch (e) {
+    // withAuth already routed a 401 to #/settings with its own toast.
+    if (!(e instanceof AuthError)) toast('Undo failed: ' + e.message, 'err');
+  }
 }
 
 export async function editIssue(payload, successMessage) {
