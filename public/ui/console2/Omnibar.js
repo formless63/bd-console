@@ -111,7 +111,10 @@ export function Omnibar() {
   const { mode, items, verb, rest } = buildItems(raw);
   const open = c2.omniOpen.value && (items.length > 0 || mode === 'capture');
 
-  // focus hotkeys: `/` (when not typing) and Ctrl/Cmd-K
+  // focus hotkeys: `/` (when not typing) and Ctrl/Cmd-K. Omnibar is the sole
+  // owner of `/` while it's mounted (bd-console-974.2) — app.js's global
+  // keydown handler skips `/` on the console2 route specifically so the two
+  // listeners can't race for the same keypress; see the comment there.
   useEffect(() => {
     const onKey = (e) => {
       const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '')

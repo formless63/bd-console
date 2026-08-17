@@ -103,7 +103,15 @@ function onKeyDown(e) {
   // view: both targeted DOM only its list/detail panes rendered, and Console
   // 2.0 drives selection through the omnibar and Flow lanes instead.
   if (e.key === 'i' && view === 'console2') { e.preventDefault(); store.createOpen.value = true; }
-  else if (e.key === '/') { e.preventDefault(); document.querySelector('.issue-search')?.focus(); }
+  // Ownership of `/` (bd-console-974.2): Omnibar.js binds its own window
+  // keydown listener for '/' and owns it on the console2 view — it does more
+  // than focus (also opens the palette via c2.omniOpen). Both handlers used
+  // to fire unconditionally, so which one "won" for a given keypress depended
+  // on registration order rather than which view was on screen. Skip here
+  // whenever console2 is active so there's a single owner per view; every
+  // other view (hub, tmux, schedule, settings) has no omnibar, so this
+  // handler keeps focusing `.issue-search` for them.
+  else if (e.key === '/' && view !== 'console2') { e.preventDefault(); document.querySelector('.issue-search')?.focus(); }
 }
 
 // --- boot --------------------------------------------------------------------

@@ -104,9 +104,27 @@ function NarrativeField({ title, value, plain = false }) {
 
 function PrimaryActions({ issue }) {
   const id = issue.id;
-  const run = (fn) => () => { fn().catch(() => {}); };
-  const askClose = () => actClose(id, prompt('Close reason (optional):', '') || '');
-  const askReopen = () => actReopen(id, prompt('Reopen reason (optional):', '') || '');
+  // Busy while any of the buttons below has a write in flight — every one of
+  // them is a write + a full loadIssues() reload, so leaving them clickable
+  // mid-flight lets a double-tap fire the same write twice (bd-console-974.2).
+  const [busy, setBusy] = useState(false);
+  const run = (fn) => () => {
+    setBusy(true);
+    fn().catch(() => {}).finally(() => setBusy(false));
+  };
+  // prompt() returns null on Cancel, '' on an empty-but-confirmed OK — those
+  // must not collapse into the same thing. `prompt(...) || ''` treated a
+  // Cancel exactly like an empty-reason confirm, so Cancel still closed (or
+  // reopened) the issue with no way to undo it. Only null aborts, mirroring
+  // askDefer below.
+  const askClose = () => {
+    const r = prompt('Close reason (optional):', '');
+    return r == null ? Promise.resolve() : actClose(id, r);
+  };
+  const askReopen = () => {
+    const r = prompt('Reopen reason (optional):', '');
+    return r == null ? Promise.resolve() : actReopen(id, r);
+  };
   const askDefer = () => {
     const when = prompt('Defer until (+2d or 2026-08-01):', issue.defer_until || '+2d');
     return when == null || !when.trim() ? Promise.resolve() : actDefer(id, when.trim());
@@ -114,14 +132,14 @@ function PrimaryActions({ issue }) {
 
   return html`<div class="c2-primary-actions" aria-label="Issue actions">
     ${issue.status === 'closed'
-      ? html`<button class="c2-mini accent" onClick=${run(askReopen)}>Reopen</button>`
+      ? html`<button class="c2-mini accent" disabled=${busy} onClick=${run(askReopen)}>Reopen</button>`
       : html`
-        ${issue.status !== 'in_progress' && html`<button class="c2-mini" onClick=${run(() => actClaim(id))}>Claim</button>`}
-        ${issue.status !== 'in_progress' && html`<button class="c2-mini accent" onClick=${run(() => actStart(id))}>Start</button>`}
-        <button class="c2-mini" onClick=${run(askClose)}>Close</button>
+        ${issue.status !== 'in_progress' && html`<button class="c2-mini" disabled=${busy} onClick=${run(() => actClaim(id))}>Claim</button>`}
+        ${issue.status !== 'in_progress' && html`<button class="c2-mini accent" disabled=${busy} onClick=${run(() => actStart(id))}>Start</button>`}
+        <button class="c2-mini" disabled=${busy} onClick=${run(askClose)}>Close</button>
         ${issue.defer_until
-          ? html`<button class="c2-mini" onClick=${run(() => actDefer(id, ''))}>Resume now</button>`
-          : html`<button class="c2-mini" onClick=${run(askDefer)}>Defer…</button>`}
+          ? html`<button class="c2-mini" disabled=${busy} onClick=${run(() => actDefer(id, ''))}>Resume now</button>`
+          : html`<button class="c2-mini" disabled=${busy} onClick=${run(askDefer)}>Defer…</button>`}
       `}
   </div>`;
 }

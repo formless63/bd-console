@@ -4,7 +4,7 @@
 // toggles Shoelace's sl-theme-dark class so its components track the scheme.
 
 import { effect } from '@preact/signals';
-import { store } from './store.js';
+import { store, lsSetRaw } from './store.js';
 
 export const THEME_PRESETS = [
   { id: 'synergy', name: 'Synergy' },
@@ -40,11 +40,11 @@ export function applyTheme() {
 
 export function setPreset(id) {
   store.themePreset.value = id;
-  localStorage.setItem('bd_theme_preset', id);
+  lsSetRaw('bd_theme_preset', id);
 }
 export function setScheme(id) {
   store.themeScheme.value = id;
-  localStorage.setItem('bd_theme_scheme', id);
+  lsSetRaw('bd_theme_scheme', id);
 }
 
 export function initTheme() {

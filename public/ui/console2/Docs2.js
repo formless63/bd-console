@@ -278,6 +278,24 @@ export function Docs2() {
   const [newOpen, setNewOpen] = useState(false);
 
   useEffect(() => { setRecentPaths(loadRecentDocs(store.projectId.value)); }, [store.projectId.value]);
+
+  // Draft protection: reloading or closing the tab mid-edit used to discard a
+  // dirty draft with no warning at all — bd-console-974.2. Scoped to the
+  // editor's own lifecycle (added only while `editing` is true, removed the
+  // moment it flips back or the component unmounts) rather than a listener
+  // that lives for the app's whole lifetime; the handler re-checks
+  // c2.docDirty.value at fire time instead of closing over a stale snapshot,
+  // since beforeunload only actually fires once, when it matters.
+  useEffect(() => {
+    if (!editing) return;
+    const onBeforeUnload = (e) => {
+      if (!c2.docDirty.value) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [editing]);
   const pick = (nextPath) => {
     setRecentPaths(saveRecentDoc(store.projectId.value, nextPath));
     openDoc(nextPath);
@@ -330,7 +348,14 @@ export function Docs2() {
                   ? html`
                     <button class="c2-mini" onClick=${() => (c2.docPreview.value = !c2.docPreview.value)}>${c2.docPreview.value ? 'hide preview' : 'preview'}</button>
                     <button class="c2-mini" onClick=${async () => { try { await saveDoc(path, c2.docDraft.value); c2.docDirty.value = false; store.docContent.value = c2.docDraft.value; loadDocs(); } catch {} }}>save ⌘S</button>
-                    <button class="c2-mini" onClick=${() => { c2.docEditing.value = false; c2.docDirty.value = false; c2.docDraft.value = content || ''; }}>done</button>`
+                    <button class="c2-mini" onClick=${() => {
+                      // "done" silently discarded a dirty draft with no
+                      // confirmation (bd-console-974.2) — ask before throwing
+                      // away unsaved work, exactly like the beforeunload guard
+                      // above does for a reload/close.
+                      if (c2.docDirty.value && !confirm('Discard unsaved changes to this document?')) return;
+                      c2.docEditing.value = false; c2.docDirty.value = false; c2.docDraft.value = content || '';
+                    }}>done</button>`
                   : html`
                     <button class="c2-mini c2-promote-toggle" onClick=${() => (c2.promoteOpen.value = !c2.promoteOpen.value)}>promote…</button>
                     <button class="c2-mini" onClick=${startEdit}>edit</button>`}

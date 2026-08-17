@@ -69,9 +69,33 @@ function Card({ issue }) {
   const sel = store.selectedId.value === id;
   const closed = issue.status === 'closed';
 
+  // Per-card busy flag: quick-actions here are one write + one full
+  // loadIssues() reload each, so a double-tap (impatient click, or a slow
+  // network making the first click look like a no-op) fires the write twice.
+  // Disabling the row's action buttons for the duration of the in-flight
+  // write is cheap insurance against that — see PrimaryActions in Detail.js
+  // for the same pattern on the slide-over's equivalents.
+  const [busy, setBusy] = useState(false);
+  const runBusy = (fn) => async () => {
+    setBusy(true);
+    try { await fn(); } catch { /* already toasted by the action */ } finally { setBusy(false); }
+  };
   const stop = (fn) => (e) => { e.stopPropagation(); fn(); };
-  const doDefer = () => { const w = prompt('Defer ' + id + ' until (e.g. +2d, next monday):', '+2d'); if (w) actDefer(id, w); };
-  const doClose = () => { const r = prompt('Close reason (optional):', ''); actClose(id, r || ''); };
+  // prompt() returns null on Cancel and '' on an empty-but-confirmed OK —
+  // those are NOT the same thing (bd-console-974.2). `r || ''` used to
+  // collapse both into an empty-reason CLOSE, so Cancel silently closed the
+  // issue anyway with no undo. Only null aborts; '' still closes with no
+  // reason, exactly like typing nothing and hitting OK.
+  const doDefer = runBusy(() => {
+    const w = prompt('Defer ' + id + ' until (e.g. +2d, next monday):', '+2d');
+    return w ? actDefer(id, w) : Promise.resolve();
+  });
+  const doClose = runBusy(() => {
+    const r = prompt('Close reason (optional):', '');
+    return r == null ? Promise.resolve() : actClose(id, r);
+  });
+  const doClaim = runBusy(() => actClaim(id));
+  const doStart = runBusy(() => actStart(id));
 
   return html`
     <div class=${'c2-card st-' + g + (sel ? ' sel' : '') + (issue.priority <= 0 ? ' p0' : '')}
@@ -94,10 +118,10 @@ function Card({ issue }) {
       </button>
       ${!closed && html`
         <div class="c2-card-actions">
-          ${issue.status !== 'in_progress' && html`<button class="c2-mini" title="Claim" onClick=${stop(() => actClaim(id))}>claim</button>`}
-          ${issue.status !== 'in_progress' && html`<button class="c2-mini" title="Start" onClick=${stop(() => actStart(id))}>start</button>`}
-          <button class="c2-mini" title="Defer" onClick=${stop(doDefer)}>defer</button>
-          <button class="c2-mini" title="Close" onClick=${stop(doClose)}>close</button>
+          ${issue.status !== 'in_progress' && html`<button class="c2-mini" title="Claim" disabled=${busy} onClick=${stop(doClaim)}>claim</button>`}
+          ${issue.status !== 'in_progress' && html`<button class="c2-mini" title="Start" disabled=${busy} onClick=${stop(doStart)}>start</button>`}
+          <button class="c2-mini" title="Defer" disabled=${busy} onClick=${stop(doDefer)}>defer</button>
+          <button class="c2-mini" title="Close" disabled=${busy} onClick=${stop(doClose)}>close</button>
           <button class="c2-mini" title="Open detail" onClick=${stop(() => selectIssue(id))}>open →</button>
         </div>`}
     </div>`;
