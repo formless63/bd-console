@@ -881,8 +881,14 @@ select.c2-linktype { flex: 0 0 auto; max-width: 140px; }
   .c2-doc-bar { flex-wrap: wrap; row-gap: 6px; }
   .c2-doc-path { min-width: 100%; order: 3; }
   .c2-doc-reader, .c2-doc-textarea { padding: 14px 16px; }
+  /* There's no room for the desktop side-by-side split at this width, and
+     hiding the preview pane outright (the old rule here) left the "preview"
+     toggle button doing nothing when tapped (bd-console-974.2). Preview
+     REPLACES the textarea instead: single column, editor hidden while the
+     live preview is on. */
   .c2-doc-editor:has(.c2-doc-livepreview) { grid-template-columns: 1fr; }
-  .c2-doc-livepreview { display: none; }
+  .c2-doc-editor:has(.c2-doc-livepreview) .c2-doc-textarea { display: none; }
+  .c2-doc-livepreview { border-left: 0; }
   .c2-doc-home { padding: 18px 16px 30px; }
   .c2-doc-home-head { align-items: flex-start; flex-direction: column; }
   .c2-doc-home-head .c2-mini { min-height: 44px; }
