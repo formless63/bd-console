@@ -21,6 +21,17 @@ const SCHED_UNAVAILABLE_MSG = 'scheduler requires Node >= 22';
 
 const lsGet = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* ignore */ } };
+// Raw (non-JSON) counterparts — for the handful of keys stored as plain
+// strings (theme preset/scheme, the attrib-migration marker) rather than
+// JSON. A storage-blocked browser (private mode with storage disabled, quota
+// exceeded, some enterprise policies) throws on ANY localStorage access —
+// including a plain getItem() — and this module reads/writes localStorage at
+// import time (the signal initializers below), before any UI has rendered,
+// so an unguarded call here white-screens the whole app on load. Exported so
+// theme.js can use the same guard instead of calling localStorage directly
+// (theme.js already imports from here, so this adds no new import cycle).
+export const lsGetRaw = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+export const lsSetRaw = (k, v) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } };
 
 // ---------------------------------------------------------------------------
 // Hub section collapse state — with a one-time migration for the 'attrib'
@@ -42,7 +53,7 @@ const HUB_SECTIONS_KEY = 'bd_hub_sections_collapsed';
 const HUB_ATTRIB_MIGRATED_KEY = 'bd_hub_attrib_migrated_v1';
 
 function initCollapsedHubSections() {
-  if (localStorage.getItem(HUB_ATTRIB_MIGRATED_KEY) === '1') {
+  if (lsGetRaw(HUB_ATTRIB_MIGRATED_KEY) === '1') {
     // Migration already ran on this browser — respect exactly what's
     // persisted (falling back to the 'attrib'-collapsed default only if the
     // key somehow got cleared entirely since), including a deliberate
@@ -60,7 +71,7 @@ function initCollapsedHubSections() {
   // would JSON-encode it (producing the 3-char string `"1"`), which would
   // never match the raw `=== '1'` check above and make this branch (and the
   // re-add of 'attrib' it does) run again on every single reload.
-  localStorage.setItem(HUB_ATTRIB_MIGRATED_KEY, '1');
+  lsSetRaw(HUB_ATTRIB_MIGRATED_KEY, '1');
   return set;
 }
 
@@ -119,8 +130,8 @@ export const store = {
   scheduleSessionPreset: signal(null),
 
   // theme
-  themePreset: signal(localStorage.getItem('bd_theme_preset') || 'synergy'),
-  themeScheme: signal(localStorage.getItem('bd_theme_scheme') || 'auto'),
+  themePreset: signal(lsGetRaw('bd_theme_preset') || 'synergy'),
+  themeScheme: signal(lsGetRaw('bd_theme_scheme') || 'auto'),
 
   // ui chrome
   toasts: signal([]),
@@ -365,36 +376,61 @@ export async function loadProjectStats(id) {
   return t;
 }
 
+// projectMetaSeq/issuesSeq/docsSeq below all follow the same monotonic
+// sequence-number pattern as console2/molecules.js's previewSeq: every write
+// action in the app awaits loadIssues() before it's considered done, so two
+// actions fired in quick succession (e.g. a double-tap slipping past a
+// missing busy guard, or claim-then-close) issue two concurrent GETs — and
+// nothing otherwise guarantees they RESOLVE in request order. Without a
+// guard, a slower older response landing after a faster newer one silently
+// overwrites the newer state with stale data. Bumping the sequence on entry
+// and checking "am I still the latest request" before applying a response
+// makes only the newest request's result ever land, regardless of resolve
+// order.
+let projectMetaSeq = 0;
 export async function loadProjectMeta() {
+  const seq = ++projectMetaSeq;
   try {
     const m = await apiGet('/api/meta');
+    if (seq !== projectMetaSeq) return; // a newer request already won
     store.meta.value = m;
   } catch (e) { /* keep prior meta */ }
 }
 
+let issuesSeq = 0;
 export async function loadIssues({ force = false } = {}) {
+  const seq = ++issuesSeq;
   store.issuesLoading.value = true;
   store.issuesError.value = null;
   try {
     const data = await apiGet('/api/issues' + (force ? '?refresh=1' : ''));
+    if (seq !== issuesSeq) return; // a newer request already won
     store.issues.value = data.issues || [];
     store.generatedAt.value = data.generatedAt;
     if (store.meta.value) store.meta.value = { ...store.meta.value, export: data.export };
   } catch (e) {
+    if (seq !== issuesSeq) return;
     store.issuesError.value = e.message;
     toast(e.message, 'err');
   } finally {
-    store.issuesLoading.value = false;
+    if (seq === issuesSeq) store.issuesLoading.value = false;
   }
 }
 
+let docsSeq = 0;
 export async function loadDocs() {
+  const seq = ++docsSeq;
   store.docsLoading.value = true;
   try {
     const data = await apiGet('/api/docs');
+    if (seq !== docsSeq) return; // a newer request already won
     store.docs.value = data.docs || [];
-  } catch (e) { toast('Failed to load docs: ' + e.message, 'err'); }
-  finally { store.docsLoading.value = false; }
+  } catch (e) {
+    if (seq !== docsSeq) return;
+    toast('Failed to load docs: ' + e.message, 'err');
+  } finally {
+    if (seq === docsSeq) store.docsLoading.value = false;
+  }
 }
 
 export async function openDoc(path) {
