@@ -1246,3 +1246,76 @@ select.c2-linktype { flex: 0 0 auto; max-width: 140px; }
   .c2-workflow-callout { border-top: 1px solid var(--c2-line); }
   .c2-workflow.collapsed .c2-workflow-body { display: none; }
 }
+
+/* ==========================================================================
+   Multi-select + bulk actions (bd-console-974.5)
+   ========================================================================== */
+
+/* The per-card checkbox. Overlays the card's TOP-LEFT corner (over the status
+   glyph) rather than taking a layout slot, on purpose: the browser smoke domain
+   hit-tests the CENTRE of .c2-card-open, and a gutter that appeared on hover
+   would reflow every card title the moment the pointer entered a lane. An
+   opaque background so it reads as a control, not as a smudge over the glyph.
+
+   Hidden state is `opacity: 0` AND `pointer-events: none` — opacity alone still
+   leaves a live hit-target sitting on top of the card, which is exactly the
+   class of bug the browser domain exists to catch. `pointer-events` does not
+   affect tab order, so keyboard users still reach it and :focus-within reveals
+   it. Revealed on hover, on keyboard focus anywhere in the card, whenever a
+   selection is in progress anywhere in Flow, and always for a selected card
+   (a checked box that disappears when the pointer leaves is not a checkbox).
+   The `.selecting` rule is also the whole mobile story: there is no hover on a
+   phone, so selection is entered from a lane header's box button, after which
+   every card's box is visible and tappable. */
+.c2-sel {
+  position: absolute; top: 8px; left: 9px; z-index: 2;
+  width: 18px; height: 18px; display: flex; align-items: center; justify-content: center;
+  padding: 0; cursor: pointer; border-radius: 5px;
+  background: var(--c2-opaque); border: 1px solid var(--c2-line-2); color: var(--text);
+  font: 600 11px/1 var(--font-display);
+  opacity: 0; pointer-events: none; transition: opacity 0.12s var(--ease);
+}
+.c2-card:hover > .c2-sel,
+.c2-card:focus-within > .c2-sel,
+.c2-flow.selecting .c2-sel,
+.c2-card.picked > .c2-sel { opacity: 1; pointer-events: auto; }
+.c2-sel:hover { border-color: var(--c2-neon); }
+.c2-card.picked > .c2-sel { border-color: var(--c2-accent); background: var(--c2-accent); color: var(--accent-ink); }
+/* Distinct from .sel (the ONE card the Detail slide-over is showing) — these
+   two states are independent and can be true at the same time. */
+.c2-card.picked { border-color: color-mix(in srgb, var(--c2-accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--c2-accent) 9%, var(--c2-glass)); }
+
+/* Select-all-in-lane, in the lane header next to the count. */
+.c2-lanesel { min-height: 22px; padding: 1px 6px; line-height: 1; }
+
+/* The bulk bar: the last flex child of .c2-flow, so it is an ordinary layout
+   row that only exists while something is selected — never an overlay over the
+   lanes, and therefore no z-index and no chance of stealing a card's clicks.
+   Scrolls horizontally rather than widening the grid (the .c2-body / .c2-lanes
+   blowout class of bug). */
+.c2-bulkbar {
+  flex: none; min-width: 0; display: flex; align-items: center; gap: 6px;
+  margin: 0 16px 14px; padding: 8px 10px; overflow-x: auto;
+  background: var(--c2-glass-3); backdrop-filter: var(--c2-blur);
+  border: 1px solid color-mix(in srgb, var(--c2-accent) 45%, var(--c2-line));
+  border-radius: var(--c2-r-card);
+  box-shadow: inset 0 1px 0 var(--c2-rim-soft), 0 -6px 20px rgb(var(--shadow-rgb) / 0.18);
+}
+.c2-bulk-count { flex: none; margin-right: 4px; font: 600 11px/1 var(--font-display);
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--text); white-space: nowrap; }
+.c2-bulk-warn { flex: none; font: 600 10px/1 var(--font-display); letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--red); white-space: nowrap; }
+.c2-bulk-pri { flex: none; display: flex; gap: 3px; padding-left: 4px; margin-left: 2px;
+  border-left: 1px solid var(--c2-line); }
+.c2-bulk-clear { margin-left: auto; }
+.c2-bulkbar .c2-mini { flex: none; white-space: nowrap; }
+
+@media (max-width: 768px) {
+  /* Same 44px touch-target floor the rest of the mobile rules use, and the bar
+     gets the phone's full width. .c2-mini already picks up min-width:44px at
+     this breakpoint, so only the checkbox needs restating. */
+  .c2-sel { width: 26px; height: 26px; top: 7px; left: 8px; font-size: 13px; }
+  .c2-bulkbar { margin: 0 12px 12px; }
+  .c2-lanesel { min-height: 32px; min-width: 32px; }
+}

@@ -17,7 +17,16 @@ export function Toasts() {
           class="toast"
           onsl-after-hide=${() => dismissToast(t.id)}
         >
-          <span>${t.message}</span>
+          <div class="toast-row">
+            <span>${t.message}</span>
+            ${/* An optional action button — today that means Undo (see
+                  store.js's offerUndo). The handler owns dismissal and
+                  one-shot-ness; this is purely the affordance. The click never
+                  bubbles into <sl-alert>'s own close handling. */ ''}
+            ${t.action && html`
+              <button type="button" class="toast-action"
+                onClick=${(e) => { e.stopPropagation(); t.action.run(); }}>${t.action.label}</button>`}
+          </div>
         </sl-alert>
       `)}
     </div>`;

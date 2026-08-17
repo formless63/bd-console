@@ -18,7 +18,7 @@ import {
 // therefore importable here exactly like relationships.js above.
 import { buildGraph } from '../../public/ui/console2/graphModel.js';
 import { LINK_TYPES as SERVER_LINK_TYPES } from '../../lib/bd.mjs';
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { openEventStream, sleep } from './sse.mjs';
 
@@ -395,6 +395,195 @@ export async function runIssues(ctx) {
     assert(badLines.length === 0, `${badLines.length} unparseable line(s) in the export after concurrent writes — two exports raced`);
 
     console.log(`smoke ok (concurrent writes: 4 simultaneous edits, one export at a time, no torn JSONL): ${tagged}`);
+  }
+
+  // --- POST /api/p/<id>/batch (bd-console-974.5) -----------------------------
+  // The whole reason the route exists is the EXPORT, not the spawns: N edits
+  // through /api/edit forced N full `bd export` runs over the same JSONL, all
+  // serialized behind one per-workspace lock. A batch must be N spawns and ONE
+  // export. That is asserted directly below by sampling the export file's mtime
+  // while the request is in flight.
+  {
+    const batchJson = async (ops) => {
+      const r = await fetch(p('/batch'), {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ops }),
+      });
+      return { status: r.status, body: await r.json() };
+    };
+    const mk = (title) => trimLastLine(run('bd', ['create', '--silent', '--type', 'task', '-p', '3', '--title', title], { cwd: repoDir }));
+    const exportPath = join(repoDir, '.beads', 'issues.jsonl');
+    const exportMtime = () => { try { return statSync(exportPath).mtimeMs; } catch { return 0; } };
+
+    // Shape rejects: nothing per-op to report, so these are plain 400s.
+    assert((await batchJson(undefined)).status === 400, 'batch with no ops must 400');
+    assert((await batchJson('nope')).status === 400, 'batch with a non-array ops must 400');
+    assert((await batchJson([])).status === 400, 'batch with an empty ops array must 400');
+
+    // --- happy path: FOUR DIFFERENT ops in one request -----------------------
+    const bA = mk('Batch close me');
+    const bB = mk('Batch reprioritize me');
+    const bC = mk('Batch label me');
+    const bD = mk('Batch claim me');
+    run('bd', ['export', '-o', '.beads/issues.jsonl'], { cwd: repoDir });
+
+    const mixed = await batchJson([
+      { id: bA, op: 'set-status', status: 'closed' },
+      { id: bB, op: 'set-priority', priority: '0' },
+      { id: bC, op: 'add-label', label: 'batch-ok' },
+      { id: bD, op: 'claim' },
+    ]);
+    assert(mixed.status === 200 && mixed.body.ok, `mixed batch failed: ${JSON.stringify(mixed.body)}`);
+    assert(mixed.body.failed === 0, `mixed batch should have no failures, got ${mixed.body.failed}: ${JSON.stringify(mixed.body.results)}`);
+    assert(mixed.body.applied === 4, `mixed batch should report 4 applied, got ${mixed.body.applied}`);
+    assert(Array.isArray(mixed.body.results) && mixed.body.results.length === 4,
+      `batch must return one result row per op in request order: ${JSON.stringify(mixed.body.results)}`);
+    assert(mixed.body.results.every((r) => r.ok === true), `every op should have succeeded: ${JSON.stringify(mixed.body.results)}`);
+    assert(mixed.body.results.map((r) => r.id).join(',') === [bA, bB, bC, bD].join(','),
+      `result rows must echo the ids in REQUEST order: ${JSON.stringify(mixed.body.results.map((r) => r.id))}`);
+    assert(mixed.body.results[0].op === 'set-status' && mixed.body.results[3].op === 'claim',
+      `result rows must echo the op: ${JSON.stringify(mixed.body.results)}`);
+    assert(mixed.body.export && mixed.body.export.exportedAt, `batch must report its single export: ${JSON.stringify(mixed.body.export)}`);
+
+    // ...and every one of them actually landed, read back through the ONE export.
+    {
+      const after = await issuesNow();
+      const get = (id) => after.find((i) => i.id === id);
+      assert(get(bA).status === 'closed', `batch close did not land: ${get(bA).status}`);
+      assert(get(bB).priority === 0, `batch set-priority did not land: ${get(bB).priority}`);
+      assert((get(bC).labels || []).includes('batch-ok'), `batch add-label did not land: ${JSON.stringify(get(bC).labels)}`);
+      assert(get(bD).status === 'in_progress' && get(bD).assignee, `batch claim did not land: ${JSON.stringify(get(bD))}`);
+    }
+
+    // --- ONE export for the whole batch --------------------------------------
+    // Sampled from outside: poll the export file's mtime every few ms for the
+    // duration of the request and collect the DISTINCT values. `bd export`
+    // rewrites the file, so a per-op export would leave a trail of several
+    // distinct mtimes; one export leaves exactly one new value. The ops are
+    // real bd spawns (tens of ms each), so the sampling interval cannot miss an
+    // intermediate export.
+    {
+      const ids = [mk('Batch export probe 1'), mk('Batch export probe 2'), mk('Batch export probe 3'),
+        mk('Batch export probe 4'), mk('Batch export probe 5'), mk('Batch export probe 6')];
+      run('bd', ['export', '-o', '.beads/issues.jsonl'], { cwd: repoDir });
+      const seen = new Set([exportMtime()]);
+      const poll = setInterval(() => seen.add(exportMtime()), 3);
+      const probe = await batchJson(ids.map((id) => ({ id, op: 'add-label', label: 'export-probe' })));
+      clearInterval(poll);
+      seen.add(exportMtime());
+      assert(probe.status === 200 && probe.body.failed === 0, `export-probe batch failed: ${JSON.stringify(probe.body)}`);
+      assert(seen.size === 2,
+        `${ids.length} ops in one batch must produce exactly ONE export — saw ${seen.size - 1} distinct export mtimes: ${JSON.stringify([...seen])}`);
+      const probeAfter = await issuesNow();
+      for (const id of ids) {
+        assert((probeAfter.find((i) => i.id === id).labels || []).includes('export-probe'),
+          `the single export must contain every op's change; ${id} is missing its label`);
+      }
+      console.log(`smoke ok (batch: ${ids.length} ops, ONE forced export, all changes visible)`);
+    }
+
+    // --- partial failure: keep going, report per-op --------------------------
+    // A bad op in the middle must not abort the batch, and the ops around it
+    // must still land. Three distinct failure shapes, all per-op, none fatal:
+    // an unknown op name, a malformed label, and a well-formed id that does not
+    // exist (which reaches bd and fails there, i.e. a 500-class op, not a 400).
+    {
+      const gA = mk('Batch survivor A');
+      const gB = mk('Batch survivor B');
+      run('bd', ['export', '-o', '.beads/issues.jsonl'], { cwd: repoDir });
+      const partial = await batchJson([
+        { id: gA, op: 'add-label', label: 'partial-ok' },
+        { id: gA, op: 'nonsense-op' },
+        { id: gA, op: 'add-label', label: '--json' },
+        { id: 'bd-console-definitely-not-here', op: 'set-status', status: 'closed' },
+        { id: 'not a valid id!', op: 'claim' },
+        { id: gB, op: 'set-priority', priority: '1' },
+      ]);
+      assert(partial.status === 200 && partial.body.ok === true,
+        `a partial failure is still a 200 with a report, not an error: ${partial.status} ${JSON.stringify(partial.body)}`);
+      assert(partial.body.failed === 4, `expected 4 failed ops, got ${partial.body.failed}: ${JSON.stringify(partial.body.results)}`);
+      assert(partial.body.applied === 2, `expected 2 applied ops, got ${partial.body.applied}`);
+      const rows = partial.body.results;
+      assert(rows.length === 6, `every op gets a row even when it failed: ${JSON.stringify(rows)}`);
+      assert(rows[0].ok && rows[5].ok, `the ops either side of the failures must still land: ${JSON.stringify(rows)}`);
+      assert(rows[1].ok === false && /bad op/.test(rows[1].error || ''), `unknown op must report per-op: ${JSON.stringify(rows[1])}`);
+      assert(rows[2].ok === false && /bad label/.test(rows[2].error || ''), `flag-shaped label must report per-op: ${JSON.stringify(rows[2])}`);
+      assert(rows[3].ok === false && rows[3].error, `a missing issue must report per-op: ${JSON.stringify(rows[3])}`);
+      assert(rows[4].ok === false && /bad id/.test(rows[4].error || ''), `a malformed id must report per-op: ${JSON.stringify(rows[4])}`);
+      const partialAfter = await issuesNow();
+      assert((partialAfter.find((i) => i.id === gA).labels || []).includes('partial-ok'),
+        'the op BEFORE the failures must have landed and be in the export');
+      assert(partialAfter.find((i) => i.id === gB).priority === 1,
+        'the op AFTER the failures must have landed and be in the export');
+      assert(!(partialAfter.find((i) => i.id === gA).labels || []).includes('--json'),
+        'a rejected label must not reach bd');
+      console.log('smoke ok (batch partial failure: 2 applied, 4 reported per-op, batch not aborted)');
+    }
+
+    // --- a batch of nothing but validation rejects touches no export ---------
+    // Validation happens before any bd process runs, so there is nothing on
+    // disk that could have changed and the export is skipped entirely.
+    {
+      run('bd', ['export', '-o', '.beads/issues.jsonl'], { cwd: repoDir });
+      const before = exportMtime();
+      const allBad = await batchJson([
+        { id: bA, op: 'no-such-op' },
+        { id: 'not a valid id!', op: 'claim' },
+        { id: bA, op: 'set-priority', priority: '9' },
+      ]);
+      assert(allBad.status === 200 && allBad.body.failed === 3 && allBad.body.applied === 0,
+        `an all-invalid batch reports 3 failures and 0 applied: ${JSON.stringify(allBad.body)}`);
+      assert(allBad.body.export === null,
+        `an all-invalid batch must not export at all: ${JSON.stringify(allBad.body.export)}`);
+      assert(exportMtime() === before, 'an all-invalid batch must leave the export file untouched');
+      console.log('smoke ok (batch: validation-only failures run no bd and force no export)');
+    }
+
+    // --- cap enforcement ----------------------------------------------------
+    // Rejected as a whole BEFORE anything runs — the point of a cap is that an
+    // over-size request costs nothing, so it must not half-apply.
+    {
+      run('bd', ['export', '-o', '.beads/issues.jsonl'], { cwd: repoDir });
+      const before = exportMtime();
+      const over = await batchJson(Array.from({ length: 101 }, () => ({ id: bC, op: 'add-label', label: 'over-cap' })));
+      assert(over.status === 400, `101 ops must 400, got ${over.status}: ${JSON.stringify(over.body)}`);
+      assert(/maximum/i.test(over.body.error || ''), `the cap error must say what the maximum is: ${JSON.stringify(over.body)}`);
+      assert(over.body.max === 100, `the cap error must report the cap, got ${JSON.stringify(over.body.max)}`);
+      assert(!over.body.results, 'an over-cap batch has no per-op results — nothing ran');
+      assert(exportMtime() === before, 'an over-cap batch must not export');
+      assert(!((await issuesNow()).find((i) => i.id === bC).labels || []).includes('over-cap'),
+        'an over-cap batch must not apply a single op');
+      // Exactly at the cap is accepted (same op repeated is idempotent for bd).
+      const atCap = await batchJson(Array.from({ length: 100 }, () => ({ id: bC, op: 'add-label', label: 'at-cap' })));
+      assert(atCap.status === 200 && atCap.body.results.length === 100,
+        `exactly 100 ops must be accepted: ${atCap.status} ${JSON.stringify(atCap.body.error)}`);
+      assert(((await issuesNow()).find((i) => i.id === bC).labels || []).includes('at-cap'),
+        'a 100-op batch must actually apply');
+      console.log('smoke ok (batch cap: 101 rejected wholesale with no side effects, 100 accepted)');
+    }
+
+    // --- the reverse ops an undo sends are ordinary batch ops ---------------
+    // public/ui/console2/actions.js's reverseOpsFor() emits exactly this shape
+    // (see its header); undoing a bulk action is one more batch call, so pin
+    // that the reversal of a bulk close/claim round-trips through this route.
+    {
+      const uA = mk('Batch undo A');
+      const uB = mk('Batch undo B');
+      run('bd', ['export', '-o', '.beads/issues.jsonl'], { cwd: repoDir });
+      const closed = await batchJson([
+        { id: uA, op: 'set-status', status: 'closed' },
+        { id: uB, op: 'set-status', status: 'closed' },
+      ]);
+      assert(closed.body.failed === 0, `bulk close failed: ${JSON.stringify(closed.body)}`);
+      const undone = await batchJson([
+        { id: uA, op: 'set-status', status: 'open' },
+        { id: uB, op: 'set-status', status: 'open' },
+      ]);
+      assert(undone.status === 200 && undone.body.failed === 0, `bulk undo failed: ${JSON.stringify(undone.body)}`);
+      const undoAfter = await issuesNow();
+      assert(undoAfter.find((i) => i.id === uA).status === 'open' && undoAfter.find((i) => i.id === uB).status === 'open',
+        'the reverse batch must have reopened both issues');
+      console.log('smoke ok (batch: a bulk close reverses through one more batch call — the undo path)');
+    }
   }
 
   // --- Phase 2: MapView edge-model split (layoutEdges vs overlayEdges) -----
