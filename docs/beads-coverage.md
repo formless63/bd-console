@@ -1,5 +1,24 @@
 # beads coverage audit & roadmap
 
+> **Status: the blocker-direction bug below is resolved (dated 2026-08-17).**
+> This doc's own executive summary and § The blocker-direction bug still read
+> as if the bug ships today — it doesn't. It was fixed in `20f1a44` (this doc
+> was apparently written against the commit the fix itself became) and
+> independently re-verified in `docs/workflow-audit.md` ("Method", one
+> correction up front, and Workflow #4 in its table): `public/ui/
+> relationships.js`'s `blockersOf()`/`blocksList()` compute the dependency
+> direction correctly, and the "Blocked by"/"Blocks" panels, `effStatus`,
+> `isReady`, MapView and the pulse/hub blocked counts all read off that fixed
+> derivation now. Phase 0 in this doc's own roadmap (below) is therefore
+> **done** — treat every other section (gates, molecules, link-type coverage,
+> `history`/`diff`, etc.) as the live part of this audit; only the
+> blocker-direction framing is stale. `bd gate` read + resolve (this doc's
+> own Phase 4 plan, below — delivered essentially as scoped: `GET
+> /api/gates`, `POST /api/gates/resolve`, gate-aware blocked banner) and
+> per-issue `history` (not separately phased in this doc) both shipped
+> 2026-08-17 (bd-console-974.8) — see `lib/routes.mjs`'s `/api/p/<id>/gates`
+> and `/api/p/<id>/history`.
+
 Scope: what beads (the `bd` CLI + Dolt-backed issue graph) can do, what
 bd-console currently surfaces, and a prioritized plan to close the gap —
 with special attention to link types, subtask/parent-child depth,
