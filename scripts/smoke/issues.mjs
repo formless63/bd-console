@@ -885,4 +885,122 @@ export async function runIssues(ctx) {
       stream.close();
     }
   }
+
+  // --- gates (bd-console-974.8): bd gate list/resolve ------------------------
+  // `bd gate create` isn't a route this project exposes (only list + resolve
+  // are), so the gate itself is created the same way every other out-of-band
+  // fixture in this file is — a direct `bd` invocation against the shared
+  // throwaway repo, exactly what the harness's own header says these fixture
+  // repos are for.
+  {
+    // Before any gate exists, the list route must degrade bd's bare `null`
+    // (confirmed on bd v1.1.0 for an empty `bd gate list --json`) to [].
+    const emptyGates = await fetch(p('/gates')).then((r) => r.json());
+    assert(Array.isArray(emptyGates.gates), `GET /gates must always return an array, got ${JSON.stringify(emptyGates)}`);
+
+    const blockedRes = await fetch(p('/create'), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'Gate smoke target' })
+    }).then((r) => r.json());
+    assert(blockedRes.ok && blockedRes.id, `create for gate target failed: ${JSON.stringify(blockedRes)}`);
+    const blockedId = blockedRes.id;
+
+    const gate = JSON.parse(run('bd', ['gate', 'create', '--blocks', blockedId, '--reason', 'needs design review', '--json'], { cwd: repoDir }));
+    assert(gate.id && gate.issue_type === 'gate', `bd gate create did not return a gate: ${JSON.stringify(gate)}`);
+    assert(gate.await_type === 'human', `ad-hoc gates default to human, got ${gate.await_type}`);
+    run('bd', ['export', '-o', '.beads/issues.jsonl'], { cwd: repoDir });
+
+    const gates = await fetch(p('/gates')).then((r) => r.json());
+    assert(gates.gates.some((g) => g.id === gate.id && g.status === 'open'), `GET /gates missing the open gate: ${JSON.stringify(gates)}`);
+
+    const badId = await fetch(p('/gates/resolve'), {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'not a valid id!' })
+    });
+    assert(badId.status === 400, `resolve with a malformed id should 400, got ${badId.status}`);
+
+    const notAGate = await fetch(p('/gates/resolve'), {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: blockedId })
+    });
+    assert(notAGate.status === 400, `resolving a non-gate issue should 400, got ${notAGate.status}`);
+
+    const missingGate = await fetch(p('/gates/resolve'), {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'zzz-does-not-exist' })
+    });
+    assert(missingGate.status === 404, `resolving an unknown gate id should 404, got ${missingGate.status}`);
+
+    const resolved = await fetch(p('/gates/resolve'), {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: gate.id, reason: 'approved in smoke' })
+    }).then((r) => r.json());
+    assert(resolved.ok, `resolving the real gate failed: ${JSON.stringify(resolved)}`);
+
+    const gatesAfter = await fetch(p('/gates')).then((r) => r.json());
+    assert(!gatesAfter.gates.some((g) => g.id === gate.id), `a resolved gate must drop out of the OPEN gate list: ${JSON.stringify(gatesAfter)}`);
+
+    console.log(`smoke ok (gates: empty list -> [], list surfaces an ad-hoc human gate, resolve 400/404/ok, resolved gate leaves the open list): gate=${gate.id}`);
+  }
+
+  // --- per-issue history (bd-console-974.8): bd history <id> --json ----------
+  {
+    const histTarget = await fetch(p('/create'), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'History smoke target', priority: 3 })
+    }).then((r) => r.json());
+    assert(histTarget.ok && histTarget.id, `create for history target failed: ${JSON.stringify(histTarget)}`);
+    const histId = histTarget.id;
+
+    // A second commit against the same issue, so there is a real field diff
+    // to see and not just the creation row.
+    const bump = await fetch(p('/edit'), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: histId, op: 'set-priority', priority: '0' })
+    }).then((r) => r.json());
+    assert(bump.ok, `priority edit for history target failed: ${JSON.stringify(bump)}`);
+
+    const hist = await fetch(p(`/history?issue=${histId}`)).then((r) => r.json());
+    assert(Array.isArray(hist.history) && hist.history.length >= 2,
+      `history for an issue edited twice must have >= 2 entries, got ${JSON.stringify(hist)}`);
+    assert(hist.history[0].actor, 'a history row must carry an actor');
+    assert(hist.history[0].timestamp, 'a history row must carry a timestamp');
+    const oldest = hist.history[hist.history.length - 1];
+    assert(oldest.created === true, `the oldest history row must be marked created, got ${JSON.stringify(oldest)}`);
+    const priorityChange = hist.history.find((h) => (h.changes || []).some((c) => c.field === 'priority'));
+    assert(priorityChange, `the priority bump must show up as a field change: ${JSON.stringify(hist.history)}`);
+
+    const missing = await fetch(p('/history?issue=zzz-does-not-exist'));
+    assert(missing.status === 404, `history for an unknown issue should 404, got ${missing.status}`);
+
+    const badId = await fetch(p('/history?issue=' + encodeURIComponent('not a valid id!')));
+    assert(badId.status === 400, `history for a malformed id should 400, got ${badId.status}`);
+
+    console.log(`smoke ok (history: >=2 entries incl. a priority diff, oldest row marked created, 404 on unknown issue, 400 on malformed id): issue=${histId}`);
+  }
+
+  // --- lint/orphans health nudges (bd-console-974.8) --------------------------
+  // getCachedLintOrphanCounts() never blocks /meta — the first call after a
+  // cold start can legitimately see null counts (no background refresh has
+  // landed yet), so this polls a few times rather than asserting on the very
+  // first response. The fixture repo's own "Seed issue" (a task, no
+  // acceptance criteria) is enough to guarantee `bd lint` finds something,
+  // with or without any OTHER domain having run first in a full-suite run.
+  {
+    let meta = null;
+    for (let i = 0; i < 30; i++) {
+      meta = await fetch(p('/meta')).then((r) => r.json());
+      const warnings = meta?.health?.warnings || [];
+      if (warnings.some((w) => /missing recommended sections/.test(w))) break;
+      await sleep(500);
+    }
+    const warnings = meta?.health?.warnings || [];
+    assert(warnings.some((w) => /missing recommended sections/.test(w)),
+      `lint nudge did not appear in health.warnings after warm-up: ${JSON.stringify(warnings)}`);
+    // orphans is NOT separately asserted here: reliably producing a real one
+    // (a commit message referencing an issue that's still open) did not
+    // reproduce in a throwaway `bd init` fixture on this bd version (see the
+    // final report). The mechanism is shared with lint's cache/refresh path
+    // above, so this still exercises getCachedLintOrphanCounts end-to-end —
+    // it just can't pin a non-zero orphan count without a fixture that
+    // reliably produces one.
+
+    console.log('smoke ok (health nudges: bd-lint warning appears in /meta health.warnings after warm-up, never blocking the response)');
+  }
 }

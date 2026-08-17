@@ -1410,3 +1410,22 @@ select.c2-linktype { flex: 0 0 auto; max-width: 140px; }
   .c2-bulkbar { margin: 0 12px 12px; }
   .c2-lanesel { min-height: 32px; min-width: 32px; }
 }
+
+/* ---- gates + history (bd-console-974.8) --------------------------------- */
+/* A "Resolve first" chip paired with its own Resolve-gate button — the chip
+   stays the plain RelChip everywhere else, this just puts a button next to
+   it without changing the chip itself. */
+.c2-rel-wrap { display: inline-flex; align-items: center; gap: 6px; }
+
+/* Comments now render through the same markdown path descriptions do
+   (bd-console-974.8); .c2-comment-text's pre-wrap was written for the old
+   plain-text render and would double the vertical rhythm markdown's own
+   <p>/<li> spacing already provides. */
+.c2-comment-text.markdown { white-space: normal; }
+
+.c2-history { display: flex; flex-direction: column; gap: 10px; }
+.c2-history-row { padding: 8px 10px; background: var(--surface); border: 1px solid var(--c2-line); border-radius: 8px; }
+.c2-history-meta { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-faint); margin-bottom: 4px; }
+.c2-history-changes { margin: 0; padding-left: 18px; font-size: 12px; line-height: 1.6; }
+.c2-history-changes li { word-break: break-word; }
+.c2-history-created { font-size: 12px; }

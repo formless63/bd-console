@@ -4,9 +4,9 @@
 // raw here. Every action flashes its CLI equivalent so the UI teaches bd.
 import {
   store, editIssue, quickCapture, createIssue, toast, navigate, selectIssue, requireToken,
-  batchEdit, offerUndo, byId, parentOf, BATCH_MAX_OPS,
+  batchEdit, offerUndo, byId, parentOf, BATCH_MAX_OPS, loadIssues,
 } from '../store.js';
-import { apiPost, getToken, AuthError } from '../api.js';
+import { apiPost, apiPostRaw, AuthError } from '../api.js';
 import { flashCli } from './state.js';
 // Nudge retirement (public/ui/learn.js): a hint's whole job is to teach one
 // move, so the moment the user makes that move — anywhere, by any route — the
@@ -16,19 +16,6 @@ import { flashCli } from './state.js';
 import { learn } from '../learn.js';
 
 const q = (s) => JSON.stringify(String(s));
-
-// Raw hub POST (no project prefixing) — for /api/tmux/send and /api/schedule.
-export async function hubPost(path, body) {
-  const headers = { 'content-type': 'application/json' };
-  if (store.meta.value?.tokenRequired) headers['x-bd-token'] = getToken();
-  const r = await fetch(path, { method: 'POST', headers, body: JSON.stringify(body) });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) {
-    if (r.status === 401) throw new AuthError(data.error || 'token required');
-    throw new Error(data.error || `HTTP ${r.status}`);
-  }
-  return data;
-}
 
 async function guarded(fn) {
   try { return await fn(); }
@@ -322,15 +309,35 @@ export async function saveDoc(path, content) {
 }
 
 // ---- delegate to a tmux session -------------------------------------------
+// apiPostRaw (api.js) — no project prefixing, for the two hub-level routes
+// below. This used to be a locally reimplemented `hubPost` doing the exact
+// same token-header-plus-401-mapping apiPostRaw already does everywhere
+// else; one copy of that logic now, not two (bd-console-974.8).
 export async function delegateNow(session, text) {
-  await withErrorToast(() => guarded(() => hubPost('/api/tmux/send', { session, text })), `Failed to send to ${session}`);
+  await withErrorToast(() => guarded(() => apiPostRaw('/api/tmux/send', { session, text })), `Failed to send to ${session}`);
   flashCli(`tmux send-keys -t ${session} ${q(text)} Enter`, 'delegate');
   toast('Sent to ' + session);
 }
 export async function delegateSchedule(session, text, runAt) {
-  await withErrorToast(() => guarded(() => hubPost('/api/schedule', { prompt: text, session, runAt })), `Failed to schedule for ${session}`);
+  await withErrorToast(() => guarded(() => apiPostRaw('/api/schedule', { prompt: text, session, runAt })), `Failed to schedule for ${session}`);
   flashCli(`bd-console schedule --session ${session} --at ${new Date(runAt).toISOString()}`, 'schedule');
   toast('Scheduled for ' + session);
+}
+
+// ---- gates (bd-console-974.8) ---------------------------------------------
+// Project-scoped write, so apiPost (api.js) — it prefixes /api/p/<id>/ for
+// us, unlike the two hub-level calls above.
+export async function actResolveGate(gateId, reason) {
+  await withErrorToast(
+    () => guarded(() => apiPost('/api/gates/resolve', { id: gateId, ...(reason ? { reason } : {}) })),
+    `Failed to resolve gate ${gateId}`,
+  );
+  flashCli(reason ? `bd gate resolve ${gateId} --reason ${q(reason)}` : `bd gate resolve ${gateId}`, 'gate');
+  toast(`Resolved gate ${gateId}`);
+  // The gate write doesn't go through editIssue/batchEdit (store.js's usual
+  // write paths, which already reload), so the blocked issue's banner needs
+  // an explicit refresh to notice the gate closed.
+  await loadIssues({ force: true }).catch(() => {});
 }
 
 export { navigate, selectIssue };

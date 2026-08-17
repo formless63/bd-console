@@ -1,5 +1,41 @@
 # Workflow audit — what a non-developer can actually finish in the UI
 
+> **Status update (2026-08-17, bd-console-974.8).** Re-checked every item in
+> the "Prioritized fix these first" list below against the current tree
+> before writing this. **Shipped since this audit was written:**
+> #1 the deferred-issue Flow-lane bug (`console2/derive.js` now buckets
+> `s === 'deferred'` explicitly, :37/53/65); #2 `set-assignee`
+> (`lib/bd.mjs`'s `set-assignee` op, `console2/actions.js`'s
+> `actSetAssignee`); #3 retry/requeue for a failed scheduled prompt
+> (`lib/schedule.mjs`'s `retryJob`, `POST /api/schedule/retry`,
+> `ScheduleView.js`'s Requeue button); #4 a "+ New document" entry point
+> (`console2/Docs2.js`, wired through `public/ui/docCreate.js`); #5
+> `bd mol distill` wired to a "Save as reusable template…" button on any
+> container (`console2/Detail.js`'s `TemplateBox`); and the registration
+> half of #8 — a non-terminal path to register a project now exists
+> (`POST /api/register`, `HubView.js`'s "Register a project" flow) —
+> **though it shipped token-gated via the existing `authed()` check, not
+> localhost-gated as this doc specifically proposed**; same non-terminal
+> outcome reached by a different trust boundary. Separately, `bd gate`
+> read-only surfacing (#7's first half) shipped **today**, in the same
+> session as this note: `GET /api/p/<id>/gates`, a gate-aware "blocked by
+> gate: human — …" banner, and a Resolve button for `human`-type gates. A
+> real formula-authoring UI (#7's second half) also shipped
+> (`console2/FormulaAuthor.js`, wired into `Console2.js`).
+>
+> **Checked and still open, contrary to an earlier draft of this note:**
+> #6's "no-delete" copy near the Retire row was never added —
+> `console2/Detail.js`'s `c2-edit-note` still only explains supersede/
+> duplicate mechanics ("state transitions, not links: bd closes … immediately"),
+> never states there's no delete or points at `bd delete` on the CLI. The
+> companion half of #6 (an exact, copy-pasteable `bd-console add <cwd>` in
+> the hub's empty state) is also still generic (`bd-console add
+> /path/to/project`) — lower-stakes now that the #8 registration UI exists
+> as the primary path, but the literal fix was never made.
+>
+> See `docs/beads-coverage.md`'s matching preamble for the blocker-direction
+> bug this doc already flagged as fixed (§ Method, one correction, above).
+
 Triggered by a real dead end: molecules require formulas, and nothing in the
 UI can create a formula (`public/ui/console2/MoleculeDialog.js:93-95` tells
 you so directly — "If you have already built an epic by hand that you would
