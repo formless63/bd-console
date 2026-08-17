@@ -54,11 +54,14 @@ export function closeHelp() { helpOpen.value = false; }
 // shapes are probed since the exact name a parallel agent picks isn't known
 // yet; extend this list rather than hard-depending on either.
 export function hasSelectionApi() {
-  return typeof StoreNS.toggleIssueSelection === 'function'
+  return typeof StoreNS.toggleSelection === 'function'
+    || typeof StoreNS.toggleIssueSelection === 'function'
     || typeof StoreNS.toggleSelected === 'function';
 }
 function toggleSelection(id) {
   if (!id) return;
+  // bd-console-974.5 landed the API as toggleSelection — probed first.
+  if (typeof StoreNS.toggleSelection === 'function') { StoreNS.toggleSelection(id); return; }
   if (typeof StoreNS.toggleIssueSelection === 'function') { StoreNS.toggleIssueSelection(id); return; }
   if (typeof StoreNS.toggleSelected === 'function') { StoreNS.toggleSelected(id); return; }
   // No selection API yet — Space/x still preventDefault (see below) so they

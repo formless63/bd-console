@@ -8,7 +8,7 @@ import {
   toggleSelection, selectIds, deselectIds, clearSelection, selectionActive, BATCH_MAX_OPS,
 } from '../store.js';
 import { c2, setEpicGroup } from './state.js';
-import { lanes, isStale, focusedIds, LANE_LABEL } from './derive.js';
+import { lanes, isStale, focusedIds, LANE_LABEL, filteredIssues } from './derive.js';
 import { actClaim, actStart, actClose, actDefer, bulkAct } from './actions.js';
 import { TypeGlyph, Pip, AgeChip, StatusGlyph, glyphStatus } from './ui.js';
 import { LearnEmpty, ConceptDot } from '../components/ConceptTip.js';
@@ -331,7 +331,10 @@ function EpicRows({ focusSet }) {
   // asserted in smoke. Containers are
   // epics AND poured-molecule roots, so a molecule gets its own row with its
   // steps nested instead of scattering across the orphan section.
-  const { groups, orphans: allOrphans } = containerGroups(store.issues.value);
+  // filteredIssues, not store.issues: the epic-grouped view must respect
+  // FilterBar exactly like the lanes and Map do (bd-console-974.6 follow-up —
+  // this file belonged to a different agent when FilterBar landed).
+  const { groups, orphans: allOrphans } = containerGroups(filteredIssues.value);
   const rows = groups
     .map(({ container, children, closed, total }) => ({
       epic: container,
