@@ -51,9 +51,50 @@ async function verifyAssetFreshness() {
 verifyAssetFreshness();
 import { render } from 'preact';
 import { html } from 'htm/preact';
+import { effect } from '@preact/signals';
 import { App } from './ui/components/App.js';
 import { initTheme } from './ui/theme.js';
 import { store, parseHash, loadBootMeta, loadHub } from './ui/store.js';
+import { eventsConnected } from './ui/events.js';
+
+// --- "can't reach the server" banner (bd-console-974.7) ---------------------
+// Deliberately BOTH signals, not either alone: eventsConnected is briefly
+// false on every page load (still connecting) and loadHub()/loadBootMeta()
+// failing once is common on a slow LAN — neither alone means "unreachable".
+// Requiring hubUnreachable (a fetch that actually failed with no response at
+// all — see api.js's isNetworkError) AND the SSE stream not being connected
+// RIGHT NOW is what makes this "genuinely unreachable" rather than a
+// page-load blip. eventsConnected (not events.js's own eventsAvailable,
+// which latches true forever after the first `hello` and never un-latches on
+// a later drop — see its doc in events.js) is what lets this banner actually
+// react to a live page's connection dying, which is the scenario it exists
+// for.
+//
+// Plain DOM driven by @preact/signals' vanilla effect(), same pattern as
+// verifyAssetFreshness()'s bar above: this needs to show over BOTH the hub
+// chrome (TopBar) and Console 2.0's own full-viewport header, and Console2.js
+// isn't in this agent's file slice, so a fixed-position element built here
+// (rather than threaded through App.js/Console2.js) covers both without
+// touching either.
+let unreachableBar = null;
+function showUnreachableBar() {
+  if (unreachableBar) return;
+  const bar = document.createElement('div');
+  bar.setAttribute('role', 'alert');
+  bar.className = 'bd-unreachable-banner';
+  bar.textContent = "Can't reach the bd-console server — retrying…";
+  document.body.appendChild(bar);
+  unreachableBar = bar;
+}
+function hideUnreachableBar() {
+  if (!unreachableBar) return;
+  unreachableBar.remove();
+  unreachableBar = null;
+}
+effect(() => {
+  const unreachable = store.hubUnreachable.value && !eventsConnected.value;
+  if (unreachable) showUnreachableBar(); else hideUnreachableBar();
+});
 
 // A narrow, explicitly-named escape hatch for scripts/smoke/browser.mjs (the
 // opt-in real-Chrome domain): it needs to simulate a background live-refresh

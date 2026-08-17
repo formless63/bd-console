@@ -72,6 +72,17 @@ export function setToken(t) {
 // Raised on a 401 so the UI can surface the token prompt.
 export class AuthError extends Error {}
 
+// True when `e` came from fetch() itself throwing (DNS failure, connection
+// refused, offline, CORS) rather than the server answering with a non-2xx
+// status. parse() below always attaches `.status` once the server actually
+// responds — its absence here means the request never got an answer at all,
+// which is the "genuinely unreachable" case store.js's hubUnreachable and the
+// app-level banner (app.js) key off of. A 500/404/401 all mean the daemon IS
+// there and answered, just unhappily — none of those are network errors.
+export function isNetworkError(e) {
+  return !!e && e.status === undefined && !(e instanceof AuthError);
+}
+
 async function parse(r) {
   const data = await r.json().catch(() => ({}));
   if (!r.ok) {

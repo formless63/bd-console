@@ -5,7 +5,6 @@ import { signal } from '@preact/signals';
 
 export const c2 = {
   ready: signal(false),          // bootstrap complete for the active project
-  bootError: signal(null),
 
   canvasMode: signal('flow'),    // 'flow' | 'map' | 'docs'
   pulseOpen: signal(false),      // pulse bar: details panel expanded

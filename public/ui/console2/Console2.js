@@ -227,7 +227,6 @@ export function Console2() {
     store.selectedDocPath.value = null;
     store.docContent.value = null;
     c2.ready.value = false;
-    c2.bootError.value = null;
     c2.laneFocus.value = null;
     c2.epicGroup.value = loadEpicGroupPref(pid);
     // FilterBar (bd-console-974.6): a "default" saved view (if any) applies
