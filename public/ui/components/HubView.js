@@ -118,6 +118,15 @@ function ProjectCard({ id, project, stats, err }) {
         ${stats && html`<span class="hub-card-total">${stats.openTotal} open · ${stats.total} lifetime</span>`}
       </div>
       <div class="hub-card-path">${project.path}</div>
+      ${/* Registered, but the folder itself isn't there anymore (moved,
+            renamed, or the disk/mount it lived on is gone) — `missing` on the
+            /api/projects entry (older servers never send it, so this simply
+            never renders for them). Everything else on the card still tries
+            to render normally; this is a heads-up, not a different card. */ ''}
+      ${project.missing && html`
+        <span class="hub-chip hub-chip-crit hub-card-missing-badge" title="Registered at this path, but the directory could not be found on disk.">
+          ⚠ directory missing
+        </span>`}
 
       <${GitInsights} git=${git} />
 
@@ -790,11 +799,13 @@ function attribTeaser(history, days) {
 
 function AttributionBand() {
   const days = store.usageHistoryDays.value;
-  useEffect(() => {
-    loadUsageHistory(days);
-    const t = setInterval(() => loadUsageHistory(store.usageHistoryDays.value), USAGE_HISTORY_POLL_MS);
-    return () => clearInterval(t);
-  }, []);
+  useEffect(() => { loadUsageHistory(days); }, []);
+  // Skips ticks while the tab is hidden and catches up on return — see
+  // public/ui/poll.js. Reads the range signal fresh on every tick rather
+  // than closing over `days`, so a range change while this poll is already
+  // running keeps polling the newly selected range instead of the one that
+  // was active when the effect first mounted.
+  useVisiblePoll(() => loadUsageHistory(store.usageHistoryDays.value), USAGE_HISTORY_POLL_MS);
 
   if (!store.usageHistoryAvailable.value) return null;
   const collapsed = store.collapsedHubSections.value.has('attrib');

@@ -5,6 +5,7 @@
 import { html } from 'htm/preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { store, navigate, loadTmux, loadTmuxPreview, toast } from '../store.js';
+import { useVisiblePoll } from '../poll.js';
 import {
   timeAgo, cwdTail, stripAnsi, matchProject, ageText, copyToClipboard, CopyIcon,
   agentName, agentTip, isServerMode, promptTip, ServerModeBadge, TermixLink,
@@ -202,15 +203,17 @@ export function TmuxView() {
   const [previewText, setPreviewText] = useState('');
   const [previewLoading, setPreviewLoading] = useState(false);
   const preRef = useRef(null);
-  const pollRef = useRef(null);
+  // useVisiblePoll captures its callback once at mount, so the preview poll
+  // below reads the "which session, if any" state through refs rather than
+  // closing over previewSession/setPreviewSession directly — the same
+  // pattern poll.js's own doc calls out ("pass an arrow that reads whatever
+  // signals it needs at call time"), just with plain refs standing in for
+  // signals since this is local component state.
+  const previewSessionRef = useRef(null);
+  const authBlockedRef = useRef(false);
 
-  useEffect(() => {
-    loadTmux();
-    const t = setInterval(loadTmux, SESSION_POLL_MS);
-    return () => clearInterval(t);
-  }, []);
-
-  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
+  useEffect(() => { loadTmux(); }, []);
+  useVisiblePoll(loadTmux, SESSION_POLL_MS);
 
   useEffect(() => {
     if (preRef.current) preRef.current.scrollTop = preRef.current.scrollHeight;
@@ -224,22 +227,30 @@ export function TmuxView() {
     } catch (e) {
       // A 401 already opened the token dialog and toasted — stop polling
       // rather than repeatedly hammering an endpoint we can't read.
-      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      authBlockedRef.current = true;
     } finally {
       setPreviewLoading(false);
     }
   };
 
+  // Skips ticks while hidden and catches up on return, exactly like the
+  // session poll above — the preview drawer previously polled on a raw
+  // setInterval that ignored tab visibility entirely.
+  useVisiblePoll(() => {
+    const session = previewSessionRef.current;
+    if (session && !authBlockedRef.current) refreshPreview(session);
+  }, PREVIEW_POLL_MS);
+
   const openPreview = (session) => {
+    authBlockedRef.current = false;
+    previewSessionRef.current = session;
     setPreviewSession(session);
     setPreviewText('');
     refreshPreview(session);
-    if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = setInterval(() => refreshPreview(session), PREVIEW_POLL_MS);
   };
   const closePreview = () => {
+    previewSessionRef.current = null;
     setPreviewSession(null);
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
   };
 
   const scheduleHere = (session) => {
