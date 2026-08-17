@@ -1,15 +1,18 @@
 // console2/derive.js — pure, client-side derivations over the shared issue
 // list: pulse stats, flow lanes, the dependency-graph layout for MAP, and the
-// unblock hint / critical chain. All computed from store.issues, reusing
-// store's relationship helpers verbatim rather than re-deriving them.
+// unblock hint / critical chain. All computed from filteredIssues (FilterBar's
+// narrowing over store.issues — see filters.js), reusing store's relationship
+// helpers verbatim rather than re-deriving them.
 import { computed } from '@preact/signals';
 import {
   store, byId, effStatus, isReady, openBlockersOf, blockersOf,
   parentOf, childrenOf, blocksList, isContainer,
 } from '../store.js';
 import { c2 } from './state.js';
+import { filteredIssues } from './filters.js';
 import { buildGraph, OVERLAY_DEP_TYPES, OVERLAY_TOGGLE_TYPES } from './graphModel.js';
 export { OVERLAY_DEP_TYPES, OVERLAY_TOGGLE_TYPES };
+export { filteredIssues };
 
 export const DAY = 86400000;
 export const STALE_DAYS = 21;
@@ -29,7 +32,7 @@ export function isStale(issue) {
 
 // The five flow lanes, computed once.
 export const lanes = computed(() => {
-  const issues = store.issues.value;
+  const issues = filteredIssues.value;
   const weekAgo = Date.now() - 7 * DAY;
   const triage = [], ready = [], progress = [], blocked = [], done = [], deferred = [];
   for (const i of issues) {
@@ -65,8 +68,10 @@ export const lanes = computed(() => {
 });
 
 // Pulse numbers — every field is reproduced by the puppeteer test's own math.
+// Reads filteredIssues (not store.issues) so an active FilterBar combination
+// narrows the pulse rail exactly as it narrows Flow/Map — see filters.js.
 export const pulse = computed(() => {
-  const issues = store.issues.value;
+  const issues = filteredIssues.value;
   const readyN = issues.filter(isPickup).length;
   const inProg = issues.filter((i) => effStatus(i) === 'in_progress');
   const blocked = issues.filter((i) => effStatus(i) === 'blocked');
@@ -104,7 +109,7 @@ export const pulse = computed(() => {
 // The single open issue whose closure would flip the most currently-blocked
 // issues to ready (i.e. it is their ONLY open blocker).
 export function unblockHint() {
-  const issues = store.issues.value;
+  const issues = filteredIssues.value;
   const m = byId.value;
   const gain = new Map(); // candidateId -> count
   for (const i of issues) {
@@ -127,8 +132,11 @@ export function unblockHint() {
 // chain, layoutEdges-vs-overlayEdges split) lives in the pure, store-free
 // graphModel.js so it can be unit-tested from plain Node (see
 // scripts/smoke.mjs) without a signals runtime. Returns
-// { nodes, layoutEdges, overlayEdges, width, height, criticalChain }.
-export function graphLayout(issues = store.issues.value) {
+// { nodes, layoutEdges, overlayEdges, width, height, criticalChain }. Default
+// param reads filteredIssues (not store.issues) so a caller that doesn't
+// scope its own issue set (none currently do — MapView always passes an
+// explicit scoped list) still respects an active FilterBar combination.
+export function graphLayout(issues = filteredIssues.value) {
   return buildGraph(issues);
 }
 
@@ -144,7 +152,7 @@ export function graphLayout(issues = store.issues.value) {
 export const focusedIds = computed(() => {
   const focus = c2.laneFocus.value;
   if (!focus) return null;
-  if (focus === 'stale') return new Set(store.issues.value.filter(isStale).map((i) => i.id));
+  if (focus === 'stale') return new Set(filteredIssues.value.filter(isStale).map((i) => i.id));
   const L = lanes.value;
   return new Set((L[focus] || []).map((i) => i.id));
 });

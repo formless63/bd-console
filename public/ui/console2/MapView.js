@@ -14,7 +14,7 @@
 import { html } from 'htm/preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { store, selectIssue } from '../store.js';
-import { graphLayout, OVERLAY_TOGGLE_TYPES } from './derive.js';
+import { graphLayout, OVERLAY_TOGGLE_TYPES, filteredIssues } from './derive.js';
 import { mapScopeIssues } from './graphModel.js';
 import { c2, loadMapOverlayPref, setMapOverlayPref } from './state.js';
 import { TYPE_GLYPH, glyphStatus, STATUS_GLYPH_CHAR, STATUS_GLYPH_LABEL } from './ui.js';
@@ -97,7 +97,11 @@ function overlayPath(e) {
 }
 
 export function MapView() {
-  const issues = store.issues.value; // subscribe
+  // FilterBar's narrowing (console2/filters.js), not the raw project issue
+  // list — every scope mode below (current epic / whole project) and the
+  // epic picker itself are built from whatever FilterBar currently shows, so
+  // Map respects an active filter combination the same way Flow does.
+  const issues = filteredIssues.value; // subscribe
   const [scopeMode, setScopeMode] = useState('current');
   const [epicId, setEpicId] = useState('');
   const [displayMode, setDisplayMode] = useState('graph');

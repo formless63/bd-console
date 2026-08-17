@@ -1176,7 +1176,11 @@ select.c2-linktype { flex: 0 0 auto; max-width: 140px; }
 
 .c2-learnlink { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-height: 28px; padding: 4px 8px; flex: none;
   font-size: 12px; font-weight: 600; text-decoration: none; color: var(--text-dim);
-  border: 1px solid var(--c2-line); border-radius: var(--radius-sm); }
+  border: 1px solid var(--c2-line); border-radius: var(--radius-sm);
+  /* Also worn by the Shortcuts trigger, a real <button> (unlike the <a>
+     this class was written for) — undo the UA button stylesheet so it reads
+     identically. */
+  background: transparent; font-family: inherit; cursor: pointer; }
 .c2-learnlink:hover { color: var(--c2-neon); border-color: var(--c2-neon); }
 
 /* HUD labels host a concept "?" — keep the dot on the label's baseline row. */
@@ -1245,4 +1249,91 @@ select.c2-linktype { flex: 0 0 auto; max-width: 140px; }
   .c2-workflow-steps button { min-height: 52px; }
   .c2-workflow-callout { border-top: 1px solid var(--c2-line); }
   .c2-workflow.collapsed .c2-workflow-body { display: none; }
+}
+
+/* ==========================================================================
+   FilterBar (bd-console-974.6) — multi-dimension filtering over the loaded
+   issue list, plus saved views. Collapsed to a single icon + active-count
+   badge (matching .c2-molbtn's convention) when unused; the "N of M shown"
+   indicator is the load-bearing piece — it must be visible whenever a filter
+   narrows the set, so a thin lane never reads as missing data instead of a
+   filter result.
+   ========================================================================== */
+.c2-filterbar { position: relative; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 12px 16px 0; }
+.c2-filterbtn { display: inline-flex; align-items: center; gap: 3px; padding: 6px 11px; font-size: 12px; cursor: pointer;
+  background: transparent; border: 1px solid var(--c2-line); border-radius: var(--radius-sm); color: var(--text-dim); }
+.c2-filterbtn:hover, .c2-filterbtn[aria-expanded="true"] { color: var(--text); border-color: var(--c2-neon); }
+.c2-filterbtn-n { font-family: var(--font-display); font-size: 9px; letter-spacing: 0.04em; padding: 1px 5px; margin-left: 3px;
+  color: var(--c2-neon); border: 1px solid color-mix(in srgb, var(--c2-neon) 40%, var(--border)); border-radius: 999px; }
+.c2-filter-indicator { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
+.c2-filter-clear { padding: 1px 8px; font-size: 11px; font-family: var(--font-display); background: transparent;
+  border: 1px solid var(--c2-line); border-radius: 999px; color: var(--text-dim); cursor: pointer; }
+.c2-filter-clear:hover { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, var(--c2-line)); }
+
+.c2-filterbar-panel { display: flex; flex-direction: column; gap: 9px; width: 100%; margin-top: 4px; padding: 12px;
+  background: var(--c2-opaque); border: 1px solid var(--c2-line-2); border-radius: 12px;
+  box-shadow: inset 0 1px 0 var(--c2-rim), var(--shadow-lg); }
+.c2-filter-row { display: flex; align-items: center; gap: 10px; }
+.c2-filter-label { flex: none; width: 66px; font-family: var(--font-display); font-size: 10px; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--text-faint); }
+.c2-filter-select { flex: none; width: auto; min-width: 140px; }
+.c2-filter-text { width: 100%; }
+.c2-filter-chips { display: flex; flex-wrap: nowrap; gap: 6px; overflow-x: auto; }
+.c2-filter-chips-wrap { flex-wrap: wrap; overflow-x: visible; }
+.c2-fchip { cursor: pointer; white-space: nowrap; }
+.c2-fchip.on { color: var(--accent-ink); background: var(--c2-neon); border-color: var(--c2-neon); }
+.c2-filter-actions { justify-content: space-between; }
+
+.c2-savedviews { position: relative; }
+.c2-savedviews-drop { position: absolute; top: calc(100% + 8px); left: 0; z-index: 41; min-width: 220px;
+  display: flex; flex-direction: column; gap: 4px; padding: 8px;
+  background: var(--c2-opaque); border: 1px solid var(--c2-line-2); border-radius: 10px;
+  box-shadow: inset 0 1px 0 var(--c2-rim), var(--shadow-lg); }
+.c2-filter-actions .c2-savedviews-drop { top: auto; bottom: calc(100% + 8px); }
+.c2-savedview-row { display: flex; align-items: center; gap: 4px; }
+.c2-savedview-apply { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text); text-align: left;
+  font-size: 12px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.c2-savedview-apply:hover { background: color-mix(in srgb, var(--c2-accent) 14%, transparent); }
+.c2-savedview-tag { flex: none; font-size: 9px; color: var(--text-faint); font-family: var(--font-display); text-transform: uppercase; }
+.c2-savedview-del { flex: none; padding: 2px 7px; font-size: 11px; background: transparent; border: 1px solid var(--c2-line);
+  border-radius: 6px; color: var(--text-faint); cursor: pointer; }
+.c2-savedview-del:hover { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, var(--c2-line)); }
+.c2-savedview-save { display: flex; gap: 6px; margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--c2-line); }
+
+@media (max-width: 768px) {
+  .c2-filterbar { margin: 10px 12px 0; }
+  .c2-filterbtn .c2-btn-label { display: none; }
+  .c2-filter-row { flex-wrap: wrap; }
+  .c2-filter-label { width: auto; }
+  .c2-filter-select, .c2-filter-text { min-width: 0; }
+}
+
+/* ==========================================================================
+   Console 2.0 keyboard navigation (bd-console-974.6) — j/k (or arrows) move
+   real DOM focus between .c2-card-open buttons, so the existing
+   :focus-visible rule (near the top of this file) is the entire visible
+   "focus ring" contract; no bespoke focus styling needed here. Enter opens
+   Detail via the button's own native activation. This block only covers the
+   ONE thing that isn't already free: suppressing the native space-bar
+   button-activation so Space is available for a future selection toggle
+   instead of silently opening Detail.
+   ========================================================================== */
+.c2-card-open:focus-visible { z-index: 1; }
+
+/* ==========================================================================
+   Keyboard shortcuts help overlay (bd-console-974.6) — a native <dialog>,
+   same base classes (.dialog/.dialog-lg) as MoleculeDialog etc.
+   ========================================================================== */
+.c2-help-dialog .dialog-body { gap: 10px; }
+.c2-help-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px; }
+.c2-help-group h3 { margin: 0 0 6px; font-family: var(--font-display); font-size: 11px; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--text-faint); }
+.c2-help-rows { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; }
+.c2-help-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--text-dim); }
+.c2-help-keys { flex: none; display: flex; gap: 4px; }
+.c2-help-key { font-family: var(--font-mono); font-size: 11px; padding: 1px 6px; background: var(--surface-2);
+  border: 1px solid var(--c2-line); border-radius: 5px; color: var(--text); }
+@media (max-width: 640px) {
+  .c2-help-groups { grid-template-columns: 1fr; }
 }

@@ -317,7 +317,13 @@ function createPage(client, sessionId) {
     },
 
     async press(key) {
-      const codes = { Escape: 27, Tab: 9 };
+      // Chrome's native "Enter activates the focused button" default action
+      // (used by the FilterBar/keyboard-nav check below) is keyed off the
+      // legacy keyCode, not just DOM `key`/`code` — Escape/Tab already needed
+      // it for their own default actions (dialog cancel / focus traversal),
+      // and Enter needs the same treatment or the synthetic keypress is
+      // dispatched but no click follows.
+      const codes = { Escape: 27, Tab: 9, Enter: 13 };
       const common = { key, code: key, windowsVirtualKeyCode: codes[key], nativeVirtualKeyCode: codes[key] };
       await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...common });
       await send('Input.dispatchKeyEvent', { type: 'keyUp', ...common });
@@ -658,6 +664,111 @@ export async function runBrowser(ctx) {
     await waitStable(page, closedProbe, 'the Detail panel to close after the live-refresh state-preservation check');
   }
 
+  // --- FilterBar narrows the visible set, and j/j/Enter opens Detail for the
+  // keyboard-focused card (bd-console-974.6) -------------------------------
+  // Business logic (the AND/OR filter matching itself) belongs in a Node
+  // domain and is NOT re-asserted here — see filters.js and derive.js, which
+  // have no browser dependency. What only a real layout/focus engine can see
+  // is asserted instead: that applying a filter actually removes card DOM
+  // nodes and renders the "N of M" indicator (not just narrows some
+  // in-memory list nobody's looking at), and that j/k moves REAL DOM focus
+  // (not a signal) in a way Enter's native button activation then opens.
+  {
+    // Two more issues alongside harness's own P2-triage seed, spanning
+    // distinct priorities so a priority filter has something real to narrow.
+    for (const [title, type, priority] of [['Filter smoke P0', 'bug', 0], ['Filter smoke P4', 'feature', 4]]) {
+      const r = await fetch(ctx.p('/create'), {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title, type, priority }),
+      });
+      assert(r.ok, `browser: fixture create "${title}" failed (${r.status})`);
+    }
+
+    await gotoProject();
+
+    // Flow defaults to epic-grouped (Flow.js's EpicRows), which — a known,
+    // file-ownership-scoped gap (see bd-console-974.6's final report) — reads
+    // store.issues directly rather than derive.js's filteredIssues, so it
+    // does not narrow with the rest of Flow/Map/Pulse. Switch to the
+    // ungrouped Lane view first so this check exercises the path that
+    // actually respects FilterBar today.
+    const ungroupBtn = await waitStable(page, `(() => {
+      const b = document.querySelector('.c2-grouptoggle');
+      if (!b) return { ok: false, why: 'no .c2-grouptoggle' };
+      const r = b.getBoundingClientRect();
+      return { ok: r.width > 0, x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+    })()`, 'the Flow group-toggle to render');
+    await page.clickAt(ungroupBtn.x, ungroupBtn.y);
+    await waitStable(page, `(() => {
+      const b = document.querySelector('.c2-grouptoggle');
+      return { ok: !!b && b.getAttribute('aria-pressed') === 'false' };
+    })()`, 'Flow to switch to the ungrouped lane view');
+
+    const before = await waitStable(page, `(() => {
+      const n = document.querySelectorAll('.c2-card-open').length;
+      return { ok: n >= 3, count: n };
+    })()`, 'at least 3 issue cards to render before filtering');
+    assert(before.count >= 3, `browser: expected >=3 cards before filtering, saw ${before.count}`);
+
+    const filterBtn = await waitStable(page, `(() => {
+      const b = document.querySelector('.c2-filterbtn');
+      if (!b) return { ok: false, why: 'no .c2-filterbtn' };
+      const r = b.getBoundingClientRect();
+      return { ok: r.width > 0, x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+    })()`, 'the FilterBar toggle to render');
+    await page.clickAt(filterBtn.x, filterBtn.y);
+
+    const p0chip = await waitStable(page, `(() => {
+      const chip = [...document.querySelectorAll('.c2-fchip')].find((c) => c.textContent.trim() === 'P0');
+      if (!chip) return { ok: false, why: 'no P0 priority chip rendered' };
+      const r = chip.getBoundingClientRect();
+      return { ok: r.width > 0, x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+    })()`, 'the P0 priority filter chip to render');
+    await page.clickAt(p0chip.x, p0chip.y);
+
+    const filtered = await waitStable(page, `(() => {
+      const count = document.querySelectorAll('.c2-card-open').length;
+      const indicator = document.querySelector('.c2-filter-indicator');
+      return { ok: count === 1 && !!indicator, count, indicatorText: indicator ? indicator.textContent.trim() : null };
+    })()`, 'the priority=P0 filter to narrow to exactly one card and the "N of M" indicator to render');
+    assert(filtered.count === 1, `browser: priority=P0 filter should narrow to 1 card, saw ${filtered.count}`);
+    assert(/1 of \d+ shown/.test(filtered.indicatorText || ''),
+      `browser: filter indicator text unexpected: "${filtered.indicatorText}" — a filtered lane must never read as missing data`);
+
+    const clearBtn = await waitStable(page, `(() => {
+      const b = document.querySelector('.c2-filter-clear');
+      if (!b) return { ok: false, why: 'no .c2-filter-clear' };
+      const r = b.getBoundingClientRect();
+      return { ok: r.width > 0, x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+    })()`, 'the filter-clear control to render');
+    await page.clickAt(clearBtn.x, clearBtn.y);
+    await waitStable(page, `(() => ({ ok: document.querySelectorAll('.c2-card-open').length >= 3 }))()`,
+      'the full card set to return after clearing the filter');
+
+    // j, j, Enter: two presses move real DOM focus from nothing onto the
+    // first card, then to the second; Enter opens Detail via THAT card's own
+    // native <button> activation (keyboardNav.js deliberately does not
+    // intercept Enter itself — see its header comment).
+    await page.press('j');
+    await page.press('j');
+    const focused = await page.evaluate(`(() => {
+      const el = document.activeElement;
+      const card = el ? el.closest('.c2-card') : null;
+      return card ? (card.querySelector('.c2-card-id')?.textContent || '').trim() : null;
+    })()`);
+    assert(focused, 'browser: pressing j twice left no card keyboard-focused (real DOM focus never landed on a .c2-card-open button)');
+    await page.press('Enter');
+    const opened = await waitStable(page, openProbe, 'Detail to open after Enter on the keyboard-focused card');
+    assert(opened.open, `browser: Enter on the keyboard-focused card (${focused}) did not open Detail`);
+    // Detail.js renders no id attribute in the DOM (only a vdom `key`, which
+    // isn't reflected in HTML) — read the actually-opened id off the same
+    // test hook the live-refresh check above already uses.
+    const openedId = await page.evaluate("(() => window.__BD_CONSOLE_TEST_HOOKS__?.store?.selectedId?.value || null)()");
+    assert(openedId === focused, `browser: Enter opened Detail for "${openedId}" but the keyboard-focused card was "${focused}"`);
+    await page.press('Escape');
+    await waitStable(page, closedProbe, 'Detail to close after the FilterBar/keyboard-nav check');
+  }
+
   await chromeHandle.close();
-  console.log('smoke browser ok: modal contract, bd-console-clb close paths, route overflow @1280+390, mobile hit-testing, live-refresh state preservation');
+  console.log('smoke browser ok: modal contract, bd-console-clb close paths, route overflow @1280+390, mobile hit-testing, live-refresh state preservation, FilterBar narrowing + j/j/Enter card focus');
 }

@@ -113,9 +113,12 @@ function onKeyDown(e) {
   // mounts the same dialog). `/` focuses the search box — Console 2.0's
   // omnibar carries the `.issue-search` class for exactly this.
   //
-  // j/k (list cursor) and `c` (focus the comment box) went with the classic
-  // view: both targeted DOM only its list/detail panes rendered, and Console
-  // 2.0 drives selection through the omnibar and Flow lanes instead.
+  // `c` (focus the comment box) went with the classic view: it targeted DOM
+  // only its detail pane rendered. j/k came back for Console 2.0
+  // (bd-console-974.6) as a card cursor over Flow, but — same ownership split
+  // as `/` below — this handler is not where it lives: console2/keyboardNav.js
+  // binds its own window keydown listener, scoped to exactly as long as the
+  // console2 route is mounted, wired from Console2.js rather than here.
   if (e.key === 'i' && view === 'console2') { e.preventDefault(); store.createOpen.value = true; }
   // Ownership of `/` (bd-console-974.2): Omnibar.js binds its own window
   // keydown listener for '/' and owns it on the console2 view — it does more
