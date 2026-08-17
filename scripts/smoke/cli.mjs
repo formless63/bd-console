@@ -7,7 +7,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import net from 'node:net';
 import { renderServiceUnit } from '../../lib/systemd.mjs';
 import { detectFlavor, plannedCommands, formatCommand } from '../../lib/update.mjs';
@@ -28,6 +28,45 @@ export async function runCli(ctx) {
       try { process.kill(firstRunPid, 'SIGKILL'); } catch { /* already gone */ }
     }
   });
+
+  // --- argument validation: a bad --port/--host stops the command ----------
+  // `--port abc` used to become NaN, fail every `||` in resolveSettings(), and
+  // silently bind the DEFAULT port — i.e. a server on a port the user did not
+  // ask for, with no error anywhere. A trailing `--port` with no value pushed
+  // `undefined` into forwardArgs, which the daemon child then received as the
+  // literal string "undefined". Nothing here can bind: every case must exit
+  // before the listener is created, which is also why no port is reserved.
+  {
+    const argConfigDir = join(tempRoot, 'argcheck-config');
+    mkdirSync(argConfigDir, { recursive: true });
+    const argEnv = { ...process.env, BD_CONSOLE_CONFIG_DIR: argConfigDir, BD_CONSOLE_PERSIST: '0' };
+    const badArgCases = [
+      [['--port', 'abc'], /--port needs an integer/],
+      [['--port'], /--port needs an integer.*nothing/],
+      [['--port', '0'], /--port needs an integer/],
+      [['--port', '65536'], /--port needs an integer/],
+      [['--port', '-1'], /--port needs an integer/],
+      [['--port', '80.5'], /--port needs an integer/],
+      [['start', '999999'], /port must be an integer/],
+      [['--host'], /--host needs an address/],
+      [['--host', '--port', '4200'], /--host needs an address/],
+    ];
+    for (const [args, expected] of badArgCases) {
+      const attempt = spawnSync(process.execPath, [serverEntry, ...args], {
+        cwd: process.cwd(), env: argEnv, encoding: 'utf8', timeout: 15000
+      });
+      assert(attempt.status === 1, `\`${args.join(' ')}\` should exit 1, got ${attempt.status} (stdout: ${attempt.stdout})`);
+      assert(expected.test(attempt.stderr), `\`${args.join(' ')}\` should say what was wrong, got stderr: ${attempt.stderr}`);
+    }
+    // A valid value still parses (and reaches the point where it would serve):
+    // proven by the whole harness running on `--port <n>`, so only the range
+    // edges are checked here.
+    assert(spawnSync(process.execPath, [serverEntry, 'status', '--port', '65535'], {
+      cwd: process.cwd(), env: argEnv, encoding: 'utf8', timeout: 15000
+    }).status === 0, 'the top of the port range must still be accepted');
+
+    console.log('smoke ok (arg validation: a non-numeric/out-of-range/missing --port or --host stops the command instead of binding a default)');
+  }
 
   // --- daemon lifecycle: `start` always supersedes (Feature 1) --------------
   // BD_CONSOLE_PERSIST=0 is mandatory here: it forces the plain-spawn path so
@@ -75,7 +114,14 @@ export async function runCli(ctx) {
   assert(await waitForExit(daemonPid2), 'daemon still running after `stop`');
   daemonPid = null;
 
-  console.log(`smoke ok (daemon supersede): ${daemonPid1} -> ${daemonPid2}`);
+  // `stop` sends SIGTERM, and serve.mjs now handles it: listener closed, the
+  // scheduler's sqlite handle closed, then exit — instead of the process dying
+  // with schedule.db open (leaving WAL sidecars for the next start to recover).
+  // The log line is the only externally visible proof the handler ran at all.
+  const daemonLog = readFileSync(join(daemonConfigDir, 'console.log'), 'utf8');
+  assert(/shutting down/.test(daemonLog), `\`stop\` should go through the graceful shutdown handler:\n${daemonLog}`);
+
+  console.log(`smoke ok (daemon supersede + graceful SIGTERM shutdown): ${daemonPid1} -> ${daemonPid2}`);
 
   // --- systemd unit-file generation (Feature 2) ------------------------------
   // Pure text generation only — no systemctl calls, nothing installed, safe

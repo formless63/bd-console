@@ -5,10 +5,10 @@
 //     node scripts/smoke.mjs registry
 // Shared fixtures, isolation and helpers come from ./harness.mjs via ctx.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 export async function runRegistry(ctx) {
   const { assert, run, getPort, waitFor, tempRoot, repoDir, serverEntry, port, projectId, p, registryPath } = ctx;
@@ -217,6 +217,80 @@ export async function runRegistry(ctx) {
     } finally {
       registerServer.kill('SIGTERM');
       await new Promise((resolveP) => registerServer.once('exit', () => resolveP()));
+    }
+  }
+
+  // --- an unreadable registry.json is preserved, never swallowed ------------
+  // loadRegistry() used to answer a parse error with `{ projects: {} }` and no
+  // output: every project vanished from the hub, the dashboard looked like a
+  // fresh install, and the file that still held the truth was one truncated
+  // write away from being overwritten by the next `add`. Its own config dir,
+  // so nothing here can touch the main fixture registry.
+  {
+    const corruptDir = join(tempRoot, 'corrupt-registry-config');
+    mkdirSync(corruptDir, { recursive: true });
+    const corruptPath = join(corruptDir, 'registry.json');
+    // Exactly what a crash mid-write leaves behind: valid JSON, cut short.
+    const truncated = '{\n  "projects": {\n    "half-written": { "path": "/tmp/half';
+    writeFileSync(corruptPath, truncated);
+
+    const corruptEnv = { ...process.env, BD_CONSOLE_CONFIG_DIR: corruptDir };
+    const listed = spawnSync(process.execPath, [serverEntry, 'list'], {
+      cwd: process.cwd(), env: corruptEnv, encoding: 'utf8'
+    });
+    assert(listed.status === 0, `\`list\` must still work with a corrupt registry, got exit ${listed.status}: ${listed.stderr}`);
+    assert(/not valid JSON/.test(listed.stderr), `a corrupt registry must be reported loudly, got stderr: ${listed.stderr}`);
+    assert(/preserved at/.test(listed.stderr), `the warning must say where the unreadable file went: ${listed.stderr}`);
+
+    const preserved = readdirSync(corruptDir).filter((n) => n.startsWith('registry.json.corrupt-'));
+    assert(preserved.length === 1, `the corrupt file must be preserved beside itself, found: ${JSON.stringify(readdirSync(corruptDir))}`);
+    assert(readFileSync(join(corruptDir, preserved[0]), 'utf8') === truncated, 'the preserved copy must be the original bytes, unmodified');
+    assert(!existsSync(corruptPath), 'the corrupt registry.json must be moved aside, not left for the next writer to clobber');
+
+    // And the hub is usable again immediately: a fresh add writes a valid
+    // registry through the tmp-file+rename path, leaving no .tmp debris.
+    const added = spawnSync(process.execPath, [serverEntry, 'add', repoDir], {
+      cwd: process.cwd(), env: corruptEnv, encoding: 'utf8'
+    });
+    assert(added.status === 0, `add after a corrupt registry should succeed, got exit ${added.status}: ${added.stderr}`);
+    const rebuilt = JSON.parse(readFileSync(corruptPath, 'utf8'));
+    assert(Object.values(rebuilt.projects).some((pr) => pr.path === repoDir), `the rebuilt registry should hold the added repo: ${JSON.stringify(rebuilt)}`);
+    assert(!readdirSync(corruptDir).some((n) => n.endsWith('.tmp')), `saveRegistry must not leave tmp files behind: ${JSON.stringify(readdirSync(corruptDir))}`);
+
+    console.log('smoke ok (corrupt registry.json: preserved to a .corrupt-* sibling, loudly reported, hub still usable)');
+  }
+
+  // --- a registered project whose directory is gone -------------------------
+  // execFile raises ENOENT both for "no bd on PATH" and for "cwd doesn't
+  // exist"; the wrapper used to report the first unconditionally, so a deleted
+  // or unmounted project turned into a red "install bd" banner that described
+  // the wrong machine-wide problem.
+  {
+    const ghostConfigDir = join(tempRoot, 'ghost-config');
+    mkdirSync(ghostConfigDir, { recursive: true });
+    const goneRepo = join(tempRoot, 'deleted-project'); // deliberately never created
+    writeFileSync(
+      join(ghostConfigDir, 'registry.json'),
+      JSON.stringify({ projects: { ghost: { path: goneRepo } } }, null, 2)
+    );
+    const ghostPort = await getPort();
+    const ghostServer = spawn(process.execPath, [serverEntry, '--host', '127.0.0.1', '--port', String(ghostPort)], {
+      cwd: process.cwd(),
+      env: { ...process.env, BD_CONSOLE_CONFIG_DIR: ghostConfigDir },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    try {
+      await waitFor(`http://127.0.0.1:${ghostPort}/api/meta`);
+      const ghostMeta = await fetch(`http://127.0.0.1:${ghostPort}/api/p/ghost/meta`).then((r) => r.json());
+      const ghostErrors = (ghostMeta.health && ghostMeta.health.errors) || [];
+      assert(ghostMeta.health && ghostMeta.health.status === 'err', `a project whose directory is gone should be an error: ${JSON.stringify(ghostMeta.health)}`);
+      assert(ghostErrors.some((e) => /no longer exists/.test(e)), `health should name the missing directory, got: ${JSON.stringify(ghostErrors)}`);
+      assert(ghostErrors.some((e) => e.includes(goneRepo)), `health should quote the path it looked for, got: ${JSON.stringify(ghostErrors)}`);
+      assert(!ghostErrors.some((e) => /binary not found/.test(e)), `a deleted directory must NOT be diagnosed as a missing bd binary: ${JSON.stringify(ghostErrors)}`);
+      console.log('smoke ok (deleted project directory: reported as a missing directory, not as a missing bd binary)');
+    } finally {
+      ghostServer.kill('SIGTERM');
+      await new Promise((resolveP) => ghostServer.once('exit', () => resolveP()));
     }
   }
 }

@@ -18,6 +18,8 @@ import {
 // therefore importable here exactly like relationships.js above.
 import { buildGraph } from '../../public/ui/console2/graphModel.js';
 import { LINK_TYPES as SERVER_LINK_TYPES } from '../../lib/bd.mjs';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 export async function runIssues(ctx) {
   const { assert, run, trimLastLine, repoDir, p, fixtures } = ctx;
@@ -328,6 +330,71 @@ export async function runIssues(ctx) {
   await editJson({ id: owned, op: 'set-assignee', assignee: '' });
 
   console.log(`smoke ok (set-assignee: reassign + clear removes the field + validation): ${owned}`);
+
+  // --- add-label / set-defer: the other free-text values that reach the CLI --
+  // Same rule, same reason as set-assignee above: `bd label add <id> --json`
+  // takes "--json" as a literal LABEL, and `--defer` took whatever string the
+  // request carried with no validation at all. A leading '-' is the shape that
+  // matters; a hyphen in the middle is ordinary and must keep working.
+  const tagged = trimLastLine(run('bd', ['create', '--silent', '--type', 'task', '-p', '2', '--title', 'Label + defer target'], { cwd: repoDir }));
+  const labelsOf = async (issueId) => (await issuesNow()).find((i) => i.id === issueId)?.labels || [];
+
+  for (const label of ['smoke-ok', 'needs.design', 'doc:docs-plan.md']) {
+    const added = await editJson({ id: tagged, op: 'add-label', label });
+    assert(added.status === 200, `add-label must accept ${label}, got ${added.status}: ${JSON.stringify(added.body)}`);
+    assert((await labelsOf(tagged)).includes(label), `add-label did not persist ${label}`);
+    assert((await editJson({ id: tagged, op: 'remove-label', label })).status === 200, `remove-label must accept ${label}`);
+  }
+
+  for (const bad of ['--json', '-p', '-triage', 'has space', 'semi;colon', '']) {
+    assert((await editJson({ id: tagged, op: 'add-label', label: bad })).status === 400,
+      `add-label must reject ${JSON.stringify(bad)} — a flag-shaped label reaches 'bd label add <id> <label>' as a flag`);
+    assert((await editJson({ id: tagged, op: 'remove-label', label: bad })).status === 400,
+      `remove-label must reject ${JSON.stringify(bad)} too — one rule, both directions`);
+  }
+
+  const deferOf = async (issueId) => (await issuesNow()).find((i) => i.id === issueId)?.defer_until;
+  const deferred = await editJson({ id: tagged, op: 'set-defer', defer: '+2d' });
+  assert(deferred.status === 200, `set-defer '+2d' should be accepted: ${JSON.stringify(deferred.body)}`);
+  assert(await deferOf(tagged), 'set-defer did not persist a defer_until');
+  assert((await editJson({ id: tagged, op: 'set-defer', defer: '' })).status === 200, 'an empty defer must CLEAR the deferral, not 400');
+  assert(!(await deferOf(tagged)), 'clearing the deferral did not remove defer_until');
+
+  for (const bad of ['-2d', '--json', 'now\nrm -rf /', 'a'.repeat(65), '$(touch x)']) {
+    assert((await editJson({ id: tagged, op: 'set-defer', defer: bad })).status === 400,
+      `set-defer must reject ${JSON.stringify(bad)} rather than pass it through as a --defer value`);
+  }
+
+  console.log(`smoke ok (add-label/remove-label/set-defer validation: leading '-' rejected, mid-word hyphen kept): ${tagged}`);
+
+  // --- concurrent writes serialize the export (bd-console-974.1) ------------
+  // Every write route ends with ensureIssuesExportFresh({force:true}), so two
+  // writes landing together ran two `bd export` processes over the SAME
+  // .beads/issues.jsonl while getIssues() was reading it — and getIssues skips
+  // lines it can't parse, so a torn export shows up as issues that briefly do
+  // not exist rather than as an error. Four at once, all of which must report
+  // their own label back through the export they each waited for.
+  {
+    const concurrentLabels = ['conc-a', 'conc-b', 'conc-c', 'conc-d'];
+    const results = await Promise.all(concurrentLabels.map((label) => editJson({ id: tagged, op: 'add-label', label })));
+    results.forEach((r, i) => {
+      assert(r.status === 200 && r.body.ok, `concurrent add-label ${concurrentLabels[i]} failed: ${JSON.stringify(r.body)}`);
+      assert(r.body.issue, `a concurrent write must still echo the issue it read back: ${JSON.stringify(r.body)}`);
+    });
+    const concurrentAfter = await labelsOf(tagged);
+    for (const label of concurrentLabels) {
+      assert(concurrentAfter.includes(label), `concurrent writes lost ${label}: ${JSON.stringify(concurrentAfter)}`);
+    }
+    // A torn export is invisible to labelsOf() (unparseable lines are skipped),
+    // so the file itself is checked: every line must be valid JSON.
+    const exportText = readFileSync(join(repoDir, '.beads', 'issues.jsonl'), 'utf8');
+    const badLines = exportText.split('\n').filter((l) => l.trim()).filter((l) => {
+      try { JSON.parse(l); return false; } catch { return true; }
+    });
+    assert(badLines.length === 0, `${badLines.length} unparseable line(s) in the export after concurrent writes — two exports raced`);
+
+    console.log(`smoke ok (concurrent writes: 4 simultaneous edits, one export at a time, no torn JSONL): ${tagged}`);
+  }
 
   // --- Phase 2: MapView edge-model split (layoutEdges vs overlayEdges) -----
   // Pure, fixture-driven — buildGraph() is signal/store-free (a plain issues

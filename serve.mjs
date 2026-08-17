@@ -68,7 +68,7 @@ import { dirname } from 'node:path';
 
 import { REGISTRY_PATH, LOG_PATH, PID_PATH } from './lib/paths.mjs';
 import { loadRegistry, addProject, removeProject, listProjects } from './lib/registry.mjs';
-import { resolveSettings } from './lib/config.mjs';
+import { resolveSettings, parsePort } from './lib/config.mjs';
 import {
   daemonStart, daemonStop, daemonStatus, hostLabel, dashboardUrls,
   PortConflictError, tailStartupLog
@@ -76,31 +76,55 @@ import {
 import { runUpdate, DirtyWorkTreeError } from './lib/update.mjs';
 import { createRequestHandler } from './lib/routes.mjs';
 import { maybeFirstRunSetup, runSettingsCommand } from './lib/settings.mjs';
-import { startSchedulerLoop } from './lib/schedule.mjs';
+import { startSchedulerLoop, stopScheduler } from './lib/schedule.mjs';
 
 // --- args -------------------------------------------------------------------
 const COMMANDS = new Set(['start', 'stop', 'status', 'add', 'remove', 'list', 'update', 'settings']);
 
+// A bad --port/--host is reported, never absorbed. `--port abc` used to become
+// NaN and quietly bind the DEFAULT port; a trailing `--port` with no value
+// pushed `undefined` into forwardArgs, which the daemon child then received as
+// the literal string "undefined". Both now stop the command with a message
+// naming what was wrong. Collected as `out.error` rather than exiting in here so
+// parseArgs stays a pure function.
 function parseArgs(argv) {
-  const out = { command: null, positional: [], port: null, host: null, forward: [], dryRun: false };
+  const out = { command: null, positional: [], port: null, host: null, forward: [], dryRun: false, error: null };
+  const shown = (v) => (v === undefined ? 'nothing' : `'${v}'`);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (!out.command && COMMANDS.has(a)) {
       out.command = a;
     } else if (a === '--port') {
-      out.port = Number(argv[++i]);
-      out.forward.push('--port', argv[i]);
+      const raw = argv[++i];
+      const port = parsePort(raw);
+      if (port === null) {
+        out.error = out.error || `--port needs an integer between 1 and 65535 (got ${shown(raw)})`;
+        continue;
+      }
+      out.port = port;
+      out.forward.push('--port', String(port));
     } else if (a === '--host') {
-      out.host = argv[++i];
-      out.forward.push('--host', argv[i]);
+      const raw = argv[++i];
+      if (raw === undefined || !String(raw).trim() || String(raw).startsWith('-')) {
+        out.error = out.error || `--host needs an address or hostname (got ${shown(raw)})`;
+        continue;
+      }
+      out.host = raw;
+      out.forward.push('--host', raw);
     } else if (a === '--dry-run') {
       out.dryRun = true;
     } else if (
       (out.command === null || out.command === 'start' || out.command === 'stop' || out.command === 'status')
       && /^\d+$/.test(a)
     ) {
-      out.port = Number(a);
-      out.forward.push(a); // bare port, back-compat
+      // Bare port, back-compat — held to the same range as --port.
+      const port = parsePort(a);
+      if (port === null) {
+        out.error = out.error || `port must be an integer between 1 and 65535 (got '${a}')`;
+        continue;
+      }
+      out.port = port;
+      out.forward.push(a);
     } else {
       out.positional.push(a);
     }
@@ -108,6 +132,11 @@ function parseArgs(argv) {
   return out;
 }
 const ARGS = parseArgs(process.argv.slice(2));
+
+if (ARGS.error) {
+  console.error(`bd-console: ${ARGS.error}`);
+  process.exit(1);
+}
 
 // Unknown words must never silently fall through to "run the server in the
 // foreground" — that's how `bd-console update` on a pre-update-command
@@ -337,6 +366,37 @@ server.listen(PORT, HOST, () => {
 // BD_CONSOLE_SCHED_INTERVAL overrides the default tick interval — used by
 // scripts/smoke.mjs so it doesn't have to wait 15s for a job to fire.
 const SCHED_INTERVAL_MS = Number(process.env.BD_CONSOLE_SCHED_INTERVAL) || 15000;
-startSchedulerLoop({ intervalMs: SCHED_INTERVAL_MS }).catch((err) => {
+let schedulerHandle = null;
+
+// --- shutdown -------------------------------------------------------------
+// `bd-console stop`, systemd, and Ctrl-C all arrive as a signal, and without a
+// handler the process died with the listener still open and schedule.db never
+// closed (leaving its WAL sidecars for the next start to recover). Deliberately
+// minimal: stop accepting, drop idle keep-alive sockets, close the scheduler's
+// sqlite handle, exit. The timer is the backstop for a request still in flight —
+// callers (daemon.mjs, the smoke suite) allow a few seconds for the exit, not
+// forever, so a wedged connection must not outlast that.
+const SHUTDOWN_GRACE_MS = 1500;
+let shuttingDown = false;
+
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`bd-console: ${signal} — shutting down.`);
+  stopScheduler(schedulerHandle);
+  const done = () => process.exit(0);
+  server.close(done);
+  if (typeof server.closeIdleConnections === 'function') server.closeIdleConnections();
+  setTimeout(done, SHUTDOWN_GRACE_MS).unref();
+}
+
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  process.on(signal, () => shutdown(signal));
+}
+
+startSchedulerLoop({ intervalMs: SCHED_INTERVAL_MS }).then((handle) => {
+  schedulerHandle = handle;
+  if (shuttingDown) stopScheduler(schedulerHandle); // the signal beat the open
+}).catch((err) => {
   console.warn(`bd-console: scheduler loop failed to start — ${err.message}`);
 });
