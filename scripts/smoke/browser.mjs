@@ -250,6 +250,18 @@ export async function launchChrome(chromePath) {
   // if it were the foreground window.
   await page.send('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {});
 
+  // Chrome does NOT die with its parent: if this process is killed mid-run
+  // (a harness timeout SIGTERM, Ctrl-C), ctx.onCleanup never fires and the
+  // browser lives on at full CPU. 49 of them once accumulated on this box and
+  // their load made the rest of the suite flake — a self-amplifying failure.
+  // `exit` is the sync last-resort (kill only, no awaiting); the signal
+  // handlers cover the polite-termination path and then re-raise.
+  const reap = () => { try { child.kill('SIGKILL'); } catch { /* gone */ } };
+  const onSignal = (sig) => { reap(); process.removeListener(sig, onSignal); process.kill(process.pid, sig); };
+  process.once('exit', reap);
+  process.on('SIGTERM', onSignal);
+  process.on('SIGINT', onSignal);
+
   return {
     page,
     async close() {
@@ -258,6 +270,9 @@ export async function launchChrome(chromePath) {
       // Give it a beat to release the profile dir, then reap regardless.
       for (let i = 0; i < 20 && child.exitCode === null; i++) await sleep(50);
       if (child.exitCode === null) { try { child.kill('SIGKILL'); } catch { /* ignore */ } }
+      process.removeListener('exit', reap);
+      process.removeListener('SIGTERM', onSignal);
+      process.removeListener('SIGINT', onSignal);
       rmSync(userDataDir, { recursive: true, force: true });
     },
   };
