@@ -77,6 +77,7 @@ import { runUpdate, DirtyWorkTreeError } from './lib/update.mjs';
 import { createRequestHandler } from './lib/routes.mjs';
 import { maybeFirstRunSetup, runSettingsCommand } from './lib/settings.mjs';
 import { startSchedulerLoop } from './lib/schedule.mjs';
+import { shutdownEvents } from './lib/events.mjs';
 
 // --- args -------------------------------------------------------------------
 const COMMANDS = new Set(['start', 'stop', 'status', 'add', 'remove', 'list', 'update', 'settings']);
@@ -312,6 +313,29 @@ function isLocalOnlyHost(host) {
 const handler = createRequestHandler({ host: HOST, port: PORT, token: TOKEN, argsHost: ARGS.host, argsPort: ARGS.port });
 const server = createServer(handler);
 
+// Node's default keep-alive window is 5 SECONDS, which is shorter than almost
+// every real gap between this dashboard's requests — and short enough to lose a
+// race that has already cost real failures:
+//
+//   a client parks an idle pooled connection, the server closes it at 5s, and a
+//   request the client sends at that same instant dies with ECONNRESET. It is
+//   most likely when the CLIENT can't process the server's FIN promptly — a
+//   browser tab in a background throttle, or (reproduced exactly, which is how
+//   this was found) scripts/smoke's own fetch pool while `execFileSync('bd')`
+//   blocks its event loop for seconds at a time. Same shape as the front of a
+//   reverse proxy: Cloudflare/Pangolin idle timeouts are far longer than 5s, so
+//   the proxy is the party holding a connection the origin has already dropped.
+//
+// The standard fix is a keep-alive window LONGER than any idle gap the fronting
+// party allows, with headersTimeout above it (Node requires that ordering, or a
+// still-idle connection can be reaped as a slow-header attack). 65s/70s is the
+// widely used pair for exactly this class of bug.
+//
+// This does NOT slow shutdown: Node >= 19 closes idle connections on
+// server.close(), and shutdown() below has its own grace window regardless.
+server.keepAliveTimeout = 65_000;
+server.headersTimeout = 70_000;
+
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
     console.error(`bd-console: port ${PORT} is already in use — a daemon is likely running.`);
@@ -340,3 +364,28 @@ const SCHED_INTERVAL_MS = Number(process.env.BD_CONSOLE_SCHED_INTERVAL) || 15000
 startSchedulerLoop({ intervalMs: SCHED_INTERVAL_MS }).catch((err) => {
   console.warn(`bd-console: scheduler loop failed to start — ${err.message}`);
 });
+
+// --- shutdown ---------------------------------------------------------------
+// The /api/events SSE streams (lib/events.mjs) are responses that never end by
+// design, which makes them open sockets that no browser has any reason to
+// close. Before this, exit was immediate because nothing held the process open;
+// now a stop MUST hang the streams up itself, or `bd-console stop` (and
+// systemd's SIGTERM) would wait on tabs.
+//
+// Deliberately blunt: close the streams, stop accepting, exit as soon as the
+// server reports itself closed, and exit anyway after a short grace window so a
+// wedged in-flight request can never turn a stop into a hang. Node >= 22's
+// server.close() also closes idle keep-alive connections, which is what makes
+// the fast path fast.
+const SHUTDOWN_GRACE_MS = 2000;
+let shuttingDown = false;
+function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  shutdownEvents();
+  server.close(() => process.exit(0));
+  const failsafe = setTimeout(() => process.exit(0), SHUTDOWN_GRACE_MS);
+  failsafe.unref();
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);

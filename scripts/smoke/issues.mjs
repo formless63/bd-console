@@ -18,9 +18,10 @@ import {
 // therefore importable here exactly like relationships.js above.
 import { buildGraph } from '../../public/ui/console2/graphModel.js';
 import { LINK_TYPES as SERVER_LINK_TYPES } from '../../lib/bd.mjs';
+import { openEventStream, sleep } from './sse.mjs';
 
 export async function runIssues(ctx) {
-  const { assert, run, trimLastLine, repoDir, p, fixtures } = ctx;
+  const { assert, run, trimLastLine, repoDir, p, projectId, port, fixtures } = ctx;
 
   // --- rich issue creation + epic targets (Feature 2) ------------------------
   // The "Smoke epic" is a shared fixture (harness.mjs) because the settings
@@ -447,5 +448,185 @@ export async function runIssues(ctx) {
       `molecule rollup blocked/open mismatch: ${roll.blocked}/${roll.open}`);
 
     console.log('smoke ok (molecule containment: molecule root groups its 4 steps, rollup 1/4 closed 25%)');
+  }
+
+  // --- ETag / 304 on GET /api/p/<id>/issues (bd-console-974.3) --------------
+  // The issue list is the largest thing the dashboard fetches and every open
+  // tab re-fetches it on every change event, so "nothing moved" has to be
+  // answerable without the body. The validator is the export file's mtime+size,
+  // which means a WRITE must invalidate it — that second half is the one that
+  // would rot silently (a constant ETag also passes a 304 test).
+  {
+    const first = await fetch(p('/issues'));
+    const etag = first.headers.get('etag');
+    assert(first.status === 200, `/issues should 200, got ${first.status}`);
+    assert(etag && /^"\d+-\d+"$/.test(etag), `/issues must serve a strong mtime-size ETag, got ${JSON.stringify(etag)}`);
+    // no-cache, not no-store: no-store forbids the stored copy a conditional
+    // request revalidates, which would make the ETag decorative.
+    assert(first.headers.get('cache-control') === 'no-cache',
+      `/issues must be no-cache so the ETag can function, got ${first.headers.get('cache-control')}`);
+    const body = await first.json();
+
+    const conditional = await fetch(p('/issues'), { headers: { 'if-none-match': etag } });
+    assert(conditional.status === 304, `a conditional GET with the current ETag must 304, got ${conditional.status}`);
+    assert(conditional.headers.get('etag') === etag, '304 must echo the ETag');
+    assert((await conditional.text()) === '', '304 must have an empty body');
+    // Weak-prefixed and list-valued forms are legal on the wire.
+    assert((await fetch(p('/issues'), { headers: { 'if-none-match': `W/${etag}` } })).status === 304,
+      'a weak-prefixed If-None-Match must still match');
+    assert((await fetch(p('/issues'), { headers: { 'if-none-match': `"nope-0", ${etag}` } })).status === 304,
+      'If-None-Match is a LIST — a match anywhere in it must 304');
+    assert((await fetch(p('/issues'), { headers: { 'if-none-match': '"0-0"' } })).status === 200,
+      'a stale If-None-Match must serve the full 200');
+
+    // A write must move the validator, or a client would sit on a 304 forever.
+    const written = await fetch(p('/quick'), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'ETag invalidation probe' }),
+    }).then((r) => r.json());
+    assert(written.ok, `quick create failed: ${JSON.stringify(written)}`);
+    const after = await fetch(p('/issues'), { headers: { 'if-none-match': etag } });
+    assert(after.status === 200, `after a write the old ETag must NOT 304, got ${after.status}`);
+    const newEtag = after.headers.get('etag');
+    assert(newEtag && newEtag !== etag, `a write must produce a new ETag; still ${newEtag}`);
+    const afterBody = await after.json();
+    assert(afterBody.issues.length === body.issues.length + 1, 'the 200 after a write must carry the new issue');
+
+    console.log(`smoke ok (issues ETag: ${etag} -> 304, write -> ${newEtag} -> 200)`);
+  }
+
+  // --- GET /api/p/<id>/stats (bd-console-974.3) ------------------------------
+  // The hub used to download every issue of every project to render five counts
+  // per card. This route does that arithmetic server-side, and the ONE thing
+  // that matters about it is that its numbers match what the client derives
+  // from the full list — so the expectation below is computed here from
+  // /api/p/<id>/issues using the same pure blockersOf() the browser uses, not
+  // from a transcription of the server's code.
+  //
+  // The fixture is whatever this domain has already created (blocked pairs, a
+  // superseded issue, a closed duplicate, epics, molecules) plus a deliberately
+  // deferred issue, which is the bucket most likely to be mishandled: `bd
+  // update --defer` moves an issue OUT of open without closing it.
+  {
+    const deferId = trimLastLine(run('bd', ['create', '--silent', '--type', 'task', '-p', '2', '--title', 'Deferred work'], { cwd: repoDir }));
+    const deferred = await fetch(p('/edit'), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: deferId, op: 'set-defer', defer: '+30d' }),
+    }).then((r) => r.json());
+    assert(deferred.ok, `set-defer failed: ${JSON.stringify(deferred)}`);
+
+    const issues = (await fetch(p('/issues')).then((r) => r.json())).issues;
+    const stats = await fetch(p('/stats')).then((r) => r.json());
+
+    // Independent tally, mirroring public/ui/store.js's loadProjectStats() +
+    // the deferred lane from public/ui/console2/derive.js.
+    const now = Date.now();
+    const openIds = new Set(issues.filter((i) => i.status !== 'closed').map((i) => i.id));
+    const expect = {
+      open: 0, in_progress: 0, blocked: 0, closed: 0, deferred: 0,
+      ready: 0, total: issues.length, openTotal: 0, triage: 0, closed7d: 0, openBugs: 0,
+    };
+    for (const i of issues) {
+      if (i.status !== 'closed') {
+        expect.openTotal++;
+        if ((i.labels || []).includes('triage')) expect.triage++;
+        if (i.issue_type === 'bug') expect.openBugs++;
+      }
+      const isBlocked = i.status === 'open' && blockersOf(i).some((b) => openIds.has(b));
+      const isDeferred = i.status === 'deferred'
+        || (i.status === 'open' && !isBlocked && !!i.defer_until && new Date(i.defer_until).getTime() > now);
+      if (i.status === 'closed') {
+        expect.closed++;
+        const ts = i.closed_at ? new Date(i.closed_at).getTime() : (i.updated_at ? new Date(i.updated_at).getTime() : 0);
+        if (ts && ts >= now - 7 * 86400000) expect.closed7d++;
+      } else if (i.status === 'in_progress') expect.in_progress++;
+      else if (isBlocked) expect.blocked++;
+      else if (isDeferred) expect.deferred++;
+      else if (i.status === 'open') { expect.open++; expect.ready++; }
+    }
+    for (const key of Object.keys(expect)) {
+      assert(stats[key] === expect[key],
+        `/stats ${key} disagrees with the client-side derivation over /issues: got ${stats[key]}, expected ${expect[key]}`);
+    }
+
+    // The fixture has to actually exercise the interesting buckets, or the
+    // agreement above is agreement about zeroes.
+    const deferRec = issues.find((i) => i.id === deferId);
+    assert(deferRec, 'the deferred fixture is missing from the export');
+    assert(deferRec.status === 'deferred' || (deferRec.defer_until && new Date(deferRec.defer_until).getTime() > now),
+      `set-defer must produce a deferred issue; got status=${deferRec.status} defer_until=${deferRec.defer_until}`);
+    assert(stats.deferred >= 1, 'the deferred fixture must land in the deferred bucket');
+    assert(stats.blocked >= 1, 'this domain created a blocked issue — the blocked bucket must see it');
+    assert(stats.closed >= 1 && stats.closed7d >= 1, 'this domain closed issues seconds ago — closed/closed7d must see them');
+    assert(stats.in_progress >= 1, 'the baseline claimed the seed issue — in_progress must see it');
+    assert(stats.openBugs >= 1, 'this domain created open bugs — openBugs must see them');
+    // Deferred work is NOT pickable: the whole point of the bucket.
+    assert(!blockersOf(deferRec).length, 'precondition: the deferred fixture has no blockers, so only the defer can exclude it');
+    assert(stats.ready === stats.open,
+      `ready must equal the open-and-unblocked count (${stats.open}), got ${stats.ready}`);
+    assert(stats.total === issues.length && stats.openTotal + stats.closed === stats.total,
+      `stats must partition the export: ${stats.openTotal} open + ${stats.closed} closed != ${stats.total}`);
+    // Card numbers are exactly as old as the export they came from.
+    assert(stats.generatedAt === stats.export.exportedAt && stats.generatedAt > 0,
+      `generatedAt must be the export mtime, got ${stats.generatedAt} vs ${stats.export.exportedAt}`);
+
+    console.log(`smoke ok (/stats: ${stats.total} total = ${stats.ready} ready + ${stats.in_progress} wip + ${stats.blocked} blocked + ${stats.deferred} deferred + ${stats.closed} closed, ${stats.closed7d} closed in 7d, ${stats.openBugs} open bugs)`);
+  }
+
+  // --- the change feed actually fires for issue writes (bd-console-974.3) ---
+  // Both detectors are exercised, in the order that makes each one the ONLY
+  // possible explanation for the event observed:
+  //
+  //   1. a write made OUTSIDE the daemon (`bd create` + `bd export` in a
+  //      terminal, i.e. how most issues on this machine are really filed) —
+  //      only the 2s mtime sweep can see that;
+  //   2. a write through a route, after the sweeper's baseline has been
+  //      re-seeded — and then a further 2.5s of silence, which is what pins the
+  //      de-duplication: the route emits immediately AND the sweeper sees the
+  //      same new mtime a moment later, so a broken dedupe shows up as two
+  //      events for one write.
+  {
+    const stream = await openEventStream(`http://127.0.0.1:${port}/api/events`);
+    try {
+      const hello = await stream.waitFor((f) => f.event === 'hello', { timeoutMs: 3000 });
+      assert(hello, 'no hello frame on the shared fixture server');
+
+      // (1) filesystem detection. The sweeper seeds its baseline on connect, so
+      // this write is unambiguously "changed since we started watching".
+      run('bd', ['create', '--silent', '--type', 'task', '-p', '3', '--title', 'Filed from a terminal'], { cwd: repoDir });
+      run('bd', ['export', '-o', '.beads/issues.jsonl'], { cwd: repoDir });
+      const swept = await stream.waitFor((f) => f.event === 'change', { timeoutMs: 6000 });
+      assert(swept, `a write made outside the daemon must be detected by the mtime sweeper; raw stream was ${JSON.stringify(stream.raw)}`);
+      assert(swept.frame.data && swept.frame.data.kind === 'issues' && swept.frame.data.project === projectId,
+        `change frame must name the project: got ${JSON.stringify(swept.frame.raw_data)}, expected project ${projectId}`);
+      assert(typeof swept.frame.data.ts === 'number' && swept.frame.data.ts > 0,
+        `change frame must carry a ts: ${JSON.stringify(swept.frame.raw_data)}`);
+      assert(Object.keys(swept.frame.data).sort().join(',') === 'kind,project,ts',
+        `an issues change frame carries exactly kind/project/ts, got ${JSON.stringify(swept.frame.raw_data)}`);
+
+      // Clear the 2s debounce window (and let any trailing emit land) so the
+      // next assertion counts events caused by the next write only.
+      await sleep(2400);
+      const mark = stream.frames.length;
+
+      // (2) in-process detection, via a route that forces an export.
+      const created = await fetch(p('/quick'), {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'Filed through the API' }),
+      }).then((r) => r.json());
+      assert(created.ok, `quick create failed: ${JSON.stringify(created)}`);
+      const emitted = await stream.waitFor((f) => f.event === 'change', { timeoutMs: 4000, from: mark });
+      assert(emitted, `a write through a route must produce a change event; raw stream was ${JSON.stringify(stream.raw)}`);
+      assert(emitted.frame.data.project === projectId, `route-emitted change named the wrong project: ${JSON.stringify(emitted.frame.raw_data)}`);
+
+      await sleep(2600);
+      const changes = stream.frames.slice(mark).filter((f) => f.event === 'change');
+      assert(changes.length === 1,
+        `one write must produce exactly ONE change event (the route emit re-stamps the file so the sweeper does not re-announce it); got ${changes.length}: ${JSON.stringify(changes.map((c) => c.raw_data))}`);
+
+      console.log(`smoke ok (change feed: terminal write detected by the 2s sweeper, route write emitted once, no double-report)`);
+    } finally {
+      stream.close();
+    }
   }
 }

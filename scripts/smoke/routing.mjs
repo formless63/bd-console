@@ -5,8 +5,11 @@
 //     node scripts/smoke.mjs routing
 // Shared fixtures, isolation and helpers come from ./harness.mjs via ctx.
 
-import { existsSync, readFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import http from 'node:http';
 import { join, resolve } from 'node:path';
+import { openEventStream } from './sse.mjs';
 import { LINK_TYPES as UI_LINK_TYPES } from '../../public/ui/relationships.js';
 // Progressive-discoverability engine (public/ui/learn.js) — same import-free
 // contract as relationships.js, precisely so its lifecycle rules ("shows
@@ -23,7 +26,7 @@ import {
 import { legacyProjectHash, parseRoute } from '../../public/ui/routing.js';
 
 export async function runRouting(ctx) {
-  const { assert } = ctx;
+  const { assert, getPort, waitFor, childEnv, tempRoot, repoDir, serverEntry } = ctx;
 
   // --- progressive discoverability: learn.js lifecycle (pure) --------------
   // The whole promise of this layer is "never nags": a nudge appears in ONE
@@ -257,12 +260,19 @@ export async function runRouting(ctx) {
   {
     const routesSrc = readFileSync(resolve(join(process.cwd(), 'lib', 'routes.mjs')), 'utf8');
     const apiSrc = readFileSync(resolve(join(process.cwd(), 'public', 'ui', 'api.js')), 'utf8');
+    // /api/events is exempt from the "must be declared in HUB_PATHS" half of
+    // this check (bd-console-974.3): it is a hub-level route, but the ONLY way
+    // to consume it is an EventSource against the absolute path — it never goes
+    // through the prefixing apiGet/apiPost that HUB_PATHS exists to protect, so
+    // declaring it there is optional rather than load-bearing. It is NOT exempt
+    // from the reverse half: if api.js does list it, it must still be served.
+    const NOT_VIA_API_HELPERS = new Set(['/api/events']);
     const served = new Set([...routesSrc.matchAll(/originalPath === '(\/api\/[^']+)'/g)].map((m) => m[1]));
     const block = apiSrc.match(/export const HUB_PATHS = new Set\(\[([\s\S]*?)\]\)/);
     assert(block, 'public/ui/api.js must export a HUB_PATHS set');
     const declared = new Set([...block[1].matchAll(/'(\/api\/[^']+)'/g)].map((m) => m[1]));
     assert(served.size > 0 && declared.size > 0, 'hub-route contract check found nothing to compare — the source scrape has drifted');
-    const undeclared = [...served].filter((x) => !declared.has(x));
+    const undeclared = [...served].filter((x) => !declared.has(x) && !NOT_VIA_API_HELPERS.has(x));
     const stale = [...declared].filter((x) => !served.has(x));
     assert(undeclared.length === 0,
       `lib/routes.mjs serves ${undeclared.join(', ')} on the unprefixed path, but HUB_PATHS in public/ui/api.js doesn't list it — add it there, or the first project-scoped view that calls it through apiGet/apiPost will 404 silently (bd-console-xsv)`);
@@ -294,5 +304,108 @@ export async function runRouting(ctx) {
     assert(modalFocus.length >= 2,
       `Detail.js must focus with { preventScroll: true } when it moves focus into the panel and when it restores focus on close — found ${modalFocus.length} such call(s); without it the browser scrolls the shell to reveal a control that is still animating into place (bd-console-clb)`);
     console.log('smoke ok (detail slide-over: .c2 clips without scrolling, focus moves never scroll the shell)');
+  }
+
+  // --- GET /api/events: the endpoint contract (bd-console-974.3) -----------
+  // The frame grammar and the response headers are what the browser is built
+  // against, so they are pinned here rather than left implied by the change
+  // events the issues/scheduler domains assert. What this section owns:
+  // status/headers, the immediate `hello`, and a REAL heartbeat observed on the
+  // wire (not a source-level guess about the interval).
+  //
+  // On its OWN server, for two reasons: the heartbeat needs a 25s interval
+  // shortened to a quarter of a second (BD_CONSOLE_SSE_HEARTBEAT), and the
+  // `missing: true` assertion below needs a registry entry pointing at a
+  // directory that does not exist — neither belongs anywhere near the shared
+  // fixture registry every other domain reads (see the reasoning in
+  // scripts/smoke/registry.mjs's POST /api/register section).
+  {
+    const eventsConfigDir = join(tempRoot, 'events-config');
+    mkdirSync(eventsConfigDir, { recursive: true });
+    // A directory that existed, was registered, and is now gone — the exact
+    // shape of a renamed/unmounted/deleted project.
+    const goneDir = join(tempRoot, 'events-gone-project');
+    mkdirSync(join(goneDir, '.beads'), { recursive: true });
+    rmSync(goneDir, { recursive: true, force: true });
+    writeFileSync(
+      join(eventsConfigDir, 'registry.json'),
+      JSON.stringify({ projects: { repo: { path: repoDir }, gone: { path: goneDir } } }, null, 2),
+    );
+
+    const eventsPort = await getPort();
+    const eventsServer = spawn(
+      process.execPath, [serverEntry, '--host', '127.0.0.1', '--port', String(eventsPort)],
+      {
+        cwd: process.cwd(),
+        env: childEnv({ configDir: eventsConfigDir, BD_CONSOLE_SSE_HEARTBEAT: '250' }),
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    let stream = null;
+    try {
+      await waitFor(`http://127.0.0.1:${eventsPort}/api/meta`);
+
+      stream = await openEventStream(`http://127.0.0.1:${eventsPort}/api/events`);
+      assert(stream.status === 200, `/api/events should 200, got ${stream.status}`);
+      assert(/^text\/event-stream/.test(stream.headers['content-type'] || ''),
+        `/api/events content-type must be text/event-stream, got ${stream.headers['content-type']}`);
+      assert(stream.headers['cache-control'] === 'no-store',
+        `/api/events must be no-store, got ${stream.headers['cache-control']}`);
+
+      // hello, immediately — this is how a client tells "connected" from
+      // "connecting" without waiting a whole heartbeat interval.
+      const hello = await stream.waitFor((f) => f.event === 'hello', { timeoutMs: 3000 });
+      assert(hello, `no hello frame arrived; raw stream was ${JSON.stringify(stream.raw)}`);
+      assert(hello.index === 0, `hello must be the FIRST frame, got index ${hello.index}`);
+      assert(hello.frame.data && typeof hello.frame.data.ts === 'number' && hello.frame.data.ts > 0,
+        `hello data must be {"ts":<ms>}, got ${JSON.stringify(hello.frame.raw_data)}`);
+
+      // A heartbeat is a COMMENT line (`: hb`), not an event: a client must not
+      // have to filter it out of its change handling, and a proxy must see
+      // bytes. Two of them proves it repeats rather than being a one-off.
+      const hb = await stream.waitFor((f) => f.comment !== undefined, { timeoutMs: 3000 });
+      assert(hb, `no heartbeat arrived within 3s at a 250ms interval; raw stream was ${JSON.stringify(stream.raw)}`);
+      assert(hb.frame.comment === ' hb', `heartbeat must be the comment "hb", got ${JSON.stringify(hb.frame.comment)}`);
+      assert(stream.raw.includes(': hb\n\n'), `heartbeat must be sent as ": hb\\n\\n"; raw stream was ${JSON.stringify(stream.raw)}`);
+      const twice = await stream.waitFor(
+        (f) => f.comment !== undefined, { timeoutMs: 3000, from: hb.index + 1 },
+      );
+      assert(twice, 'the heartbeat must repeat, not fire once');
+
+      // Same server, unrelated route: a registry entry whose directory is gone
+      // must be FLAGGED, so the UI can say "directory gone" instead of
+      // rendering a card whose every read fails for unexplained reasons.
+      const projects = await fetch(`http://127.0.0.1:${eventsPort}/api/projects`).then((r) => r.json());
+      assert(projects.projects.gone && projects.projects.gone.missing === true,
+        `a registered directory that no longer exists must report missing:true, got ${JSON.stringify(projects.projects.gone)}`);
+      assert(projects.projects.repo && projects.projects.repo.missing === false,
+        `a live project must report missing:false, got ${JSON.stringify(projects.projects.repo)}`);
+      assert(projects.projects.gone.path === goneDir, 'the missing flag must not disturb the stored path');
+
+      // The keep-alive window the server ADVERTISES, read off the wire (`fetch`
+      // hides it; node:http does not). Node's 5s default loses a race that has
+      // already bitten this suite: while `execFileSync('bd')` blocks the
+      // suite's event loop for seconds, the server closes an idle pooled
+      // connection and the next fetch dies with ECONNRESET — the same shape a
+      // reverse proxy with a longer idle timeout produces in production. See
+      // serve.mjs's keepAliveTimeout for the full note. Pinned because the
+      // symptom is an intermittent "fetch failed" nobody would trace back here.
+      const keepAlive = await new Promise((resolveP, reject) => {
+        const req = http.get(`http://127.0.0.1:${eventsPort}/api/meta`, (res) => {
+          res.resume();
+          resolveP(res.headers['keep-alive'] || '');
+        });
+        req.on('error', reject);
+      });
+      const advertised = Number(/timeout=(\d+)/.exec(keepAlive)?.[1] || 0);
+      assert(advertised >= 60,
+        `the server must advertise a keep-alive window well above Node's 5s default (got ${JSON.stringify(keepAlive)}) — a short one races idle pooled connections into ECONNRESET`);
+
+      console.log(`smoke ok (/api/events contract: hello first, ${stream.heartbeats().length} heartbeat comment(s), no-store; /api/projects missing:true for a deleted dir; keep-alive timeout=${advertised}s)`);
+    } finally {
+      if (stream) stream.close();
+      eventsServer.kill('SIGTERM');
+      await new Promise((resolveP) => eventsServer.once('exit', () => resolveP()));
+    }
   }
 }
