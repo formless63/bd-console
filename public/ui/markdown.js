@@ -7,6 +7,33 @@ export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
 ));
 
+// Bead/doc text is agent-authored, and the rendered output here goes straight
+// into dangerouslySetInnerHTML (Docs2.js, Detail.js) — `esc()` only neutralizes
+// HTML metacharacters, it does nothing about the URL *scheme* itself, so
+// `[click me](javascript:...)` or a `data:` URL would otherwise survive into a
+// real, clickable href. Allow only schemes/forms that can't execute script in
+// this context: http(s), mailto, protocol-relative `//host/...`, absolute
+// `/path`, ordinary relative references (`docs/x.md`, `./x`, `../x`), and
+// `#fragment`. Everything else (javascript:, data:, vbscript:, file:, a bare
+// unknown scheme) is refused. Returns null for "refused" so callers can fall
+// back to plain text instead of a neutered link.
+export function sanitizeUrl(raw) {
+  const h = String(raw ?? '').trim();
+  if (h === '') return '';
+  // Strip ASCII control chars/whitespace *inside* the string before checking
+  // the scheme — browsers ignore them when parsing a URL, which is exactly
+  // how "java\tscript:alert(1)" bypasses a naive `^javascript:` check.
+  const stripped = h.replace(/[\x00-\x20]+/g, '');
+  if (/^#/.test(stripped)) return stripped;
+  if (/^\/\//.test(stripped)) return stripped;
+  if (/^\//.test(stripped)) return stripped;
+  if (/^(https?|mailto):/i.test(stripped)) return stripped;
+  // Any other explicit scheme is refused outright rather than guessed at.
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(stripped)) return null;
+  // No scheme at all — an ordinary relative reference. Safe as-is.
+  return stripped;
+}
+
 export function renderMarkdown(md) {
   const lines = String(md || '').replace(/\r\n/g, '\n').split('\n');
   let html = '';
@@ -15,7 +42,13 @@ export function renderMarkdown(md) {
     .replace(/`([^`]+)`/g, (_, c) => `<code>${c}</code>`)
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, txt, href) => `<a href="${esc(href)}" target="_blank" rel="noopener">${txt}</a>`);
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, txt, href) => {
+      const safe = sanitizeUrl(href);
+      // Refused scheme: keep the link text on the page (it's already been
+      // through esc() above) but drop the anchor entirely rather than emit a
+      // clickable-but-neutered href="#", which would silently swallow taps.
+      return safe == null ? txt : `<a href="${esc(safe)}" target="_blank" rel="noopener">${txt}</a>`;
+    });
 
   while (i < lines.length) {
     const line = lines[i];

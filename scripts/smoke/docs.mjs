@@ -14,6 +14,10 @@ import { docGroup, groupDocs, starterDocs } from '../../public/ui/console2/docsM
 // "New doc" derivations (bd-console-09n) — same import-free contract as
 // relationships.js; docCreate.js's own header calls this out by name.
 import { newDocName, newDocPath, docFolders, newDocProblem, newDocTemplate } from '../../public/ui/docCreate.js';
+// DOM-free plain ESM (public/ui/markdown.js's own header calls this out) —
+// importable and assertable straight in Node, same contract as the
+// derivations above.
+import { renderMarkdown, sanitizeUrl } from '../../public/ui/markdown.js';
 
 export async function runDocs(ctx) {
   const { assert, tempRoot, p } = ctx;
@@ -173,4 +177,35 @@ export async function runDocs(ctx) {
       'document start page should prioritize a repository README');
     console.log('smoke ok (large-project map scopes + grouped/searchable docs navigation)');
   }
+
+  // --- markdown link-scheme sanitization (bd-console-974.2) -----------------
+  // Bead/doc text is agent-authored and renderMarkdown's output lands in
+  // dangerouslySetInnerHTML (Docs2.js, Detail.js) — a javascript:/data: href
+  // must never survive into that HTML.
+  assert(sanitizeUrl('javascript:alert(1)') === null, 'javascript: URLs must be refused');
+  assert(sanitizeUrl('  javascript:alert(1)') === null, 'a leading-whitespace javascript: URL must still be refused');
+  assert(sanitizeUrl('java\tscript:alert(1)') === null, 'whitespace-obfuscated javascript: schemes must still be refused');
+  assert(sanitizeUrl('data:text/html,<script>alert(1)</script>') === null, 'data: URLs must be refused');
+  assert(sanitizeUrl('vbscript:msgbox(1)') === null, 'vbscript: URLs must be refused');
+  assert(sanitizeUrl('https://example.com/x?a=1&b=2') === 'https://example.com/x?a=1&b=2', 'https: URLs must survive unchanged');
+  assert(sanitizeUrl('http://example.com') === 'http://example.com', 'http: URLs must survive unchanged');
+  assert(sanitizeUrl('mailto:a@b.com') === 'mailto:a@b.com', 'mailto: URLs must survive unchanged');
+  assert(sanitizeUrl('//example.com/x') === '//example.com/x', 'protocol-relative URLs must survive unchanged');
+  assert(sanitizeUrl('/docs/plan.md') === '/docs/plan.md', 'absolute paths must survive unchanged');
+  assert(sanitizeUrl('docs/plan.md') === 'docs/plan.md', 'relative paths must survive unchanged');
+  assert(sanitizeUrl('../plan.md') === '../plan.md', 'parent-relative paths must survive unchanged');
+  assert(sanitizeUrl('#section') === '#section', 'fragments must survive unchanged');
+
+  const jsLinkHtml = renderMarkdown('[click me](javascript:alert(1))');
+  assert(!/javascript:/i.test(jsLinkHtml), `rendered markdown must not carry a javascript: href: ${jsLinkHtml}`);
+  assert(!/<a /.test(jsLinkHtml) && /click me/.test(jsLinkHtml), `a refused-scheme link must fall back to plain text: ${jsLinkHtml}`);
+
+  const dataLinkHtml = renderMarkdown('[x](data:text/html,evil)');
+  assert(!/data:/i.test(dataLinkHtml), `rendered markdown must not carry a data: href: ${dataLinkHtml}`);
+
+  const httpLinkHtml = renderMarkdown('[bd-console](https://example.com/repo)');
+  assert(/<a href="https:\/\/example\.com\/repo" target="_blank" rel="noopener">bd-console<\/a>/.test(httpLinkHtml),
+    `an ordinary http(s) link must render as a real, safe anchor: ${httpLinkHtml}`);
+
+  console.log('smoke ok (markdown link-scheme sanitization: javascript:/data:/vbscript: neutralized, http(s)/mailto/relative/fragment links survive)');
 }
