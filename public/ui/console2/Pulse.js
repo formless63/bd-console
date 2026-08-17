@@ -60,6 +60,20 @@ function PriorityBars({ dist }) {
 }
 
 export function PulseBar() {
+  // First load (or a project switch) for the active project: store.issues is
+  // still empty and every stat below would render as a real, if misleading,
+  // zero. Gate on issuesLoading AND !c2.ready — c2.ready latches true after
+  // the FIRST successful load and resets only on a project switch, so a
+  // background refresh (SSE or the poll fallback), which flips
+  // issuesLoading too, never re-triggers this once the project has loaded
+  // once — exactly the "refreshes must not re-trigger loading" contract.
+  const bootLoading = store.issuesLoading.value && !c2.ready.value;
+  if (bootLoading) {
+    return html`
+      <section class="c2-pulsebar-wrap" aria-busy="true">
+        <div class="c2-pulsebar"><span class="c2-lane-empty">Loading pulse…</span></div>
+      </section>`;
+  }
   const p = pulse.value;
   const open = c2.pulseOpen.value;
   const collapsed = c2.pulseBarCollapsed.value;
