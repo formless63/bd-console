@@ -2,7 +2,7 @@
 // it. Everything reactive lives here; components read signals and call actions.
 
 import { signal, computed } from '@preact/signals';
-import { apiGet, apiGetRaw, apiPost, apiPostRaw, AuthError } from './api.js';
+import { apiGet, apiGetRaw, apiPost, apiPostRaw, AuthError, isNetworkError } from './api.js';
 import {
   blockersOf, BLOCKING_DEP_TYPES, LINK_TYPES, LINK_LABEL, linkLabel,
   RELATED_DEP_TYPES, SUPERSEDE_DEP_TYPE, DUPLICATE_DEP_TYPE,
@@ -17,7 +17,7 @@ import { legacyProjectHash, parseRoute } from './routing.js';
 // Server text for the 501 the scheduler routes return when node:sqlite isn't
 // available (Node < 22) — used to tell "feature unavailable" apart from a
 // real network/server error without threading HTTP status through apiGetRaw.
-const SCHED_UNAVAILABLE_MSG = 'scheduler requires Node >= 22';
+export const SCHED_UNAVAILABLE_MSG = 'scheduler requires Node >= 22';
 
 const lsGet = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* ignore */ } };
@@ -85,6 +85,17 @@ export const store = {
   projects: signal({}),          // hub registry
   projectId: signal(null),
 
+  // True when the most recent loadHub()/loadBootMeta() call failed with a
+  // NETWORK-ish error (the daemon didn't answer at all — see
+  // api.js's isNetworkError) rather than an HTTP error status. Distinct from
+  // "no projects registered": that's projects === {} with this flag false,
+  // and gets the onboarding empty state; this is projects === {} (or stale)
+  // with the daemon unreachable, and gets a "can't reach the server" state
+  // instead (see HubView.js) plus the app-level banner (app.js) once the SSE
+  // stream also isn't confirmed live. Cleared by any response that actually
+  // reaches the server, success or not.
+  hubUnreachable: signal(false),
+
   // issues
   issues: signal([]),
   issuesLoading: signal(false),
@@ -123,6 +134,12 @@ export const store = {
 
   // tmux (hub-level)
   tmuxAvailable: signal(true),
+  // WHY the last /api/tmux call didn't produce sessions — set on a fetch
+  // failure (network/401/500/older-route-missing; see unavailableReason()
+  // below) even though tmuxAvailable itself is left alone in that case (a
+  // transient error shouldn't relabel a host that DOES have tmux as one that
+  // doesn't — see loadTmux()'s comment). null once a call succeeds.
+  tmuxAvailableReason: signal(null),
   tmuxSessions: signal([]),
   tmuxLoading: signal(false),
   // Host memory + OOM headroom (bd-console-oic), served alongside the session
@@ -133,6 +150,7 @@ export const store = {
 
   // scheduler (hub-level)
   scheduleAvailable: signal(true),
+  scheduleAvailableReason: signal(null),
   scheduleJobs: signal([]),
   scheduleLoading: signal(false),
   // set by TmuxView's "Schedule a prompt here" before navigating to
@@ -150,15 +168,18 @@ export const store = {
   // settings (#/settings)
   settings: signal(null),
   settingsAvailable: signal(true),
+  settingsAvailableReason: signal(null),
   settingsLoading: signal(false),
 
   // saved prompts (hub-level, backs the schedule create form)
   prompts: signal([]),
   promptsAvailable: signal(true),
+  promptsAvailableReason: signal(null),
 
   // hub restyle: per-project git insights (GET /api/projects?git=1)
   projectsGit: signal({}),
   projectsGitAvailable: signal(true),
+  projectsGitAvailableReason: signal(null),
 
   // provider usage (hub-level; GET /api/usage — Claude Code + Codex quotas,
   // plus Kimi Code stack info: server up/down, version, sessions, tokens —
@@ -173,6 +194,7 @@ export const store = {
   // charts independently of the live-quota band.
   usageHistory: signal(null),
   usageHistoryAvailable: signal(true),
+  usageHistoryAvailableReason: signal(null),
   usageHistoryLoading: signal(false),
   usageHistoryDays: signal(30),
 
@@ -387,6 +409,25 @@ export function toggleHubSection(id) {
 }
 
 // ---------------------------------------------------------------------------
+// "Why is this feature hiding?" (bd-console-974.7)
+// ---------------------------------------------------------------------------
+// A human-readable reason for the ~6 hub-level "…Available" degrade signals
+// below (settings/prompts/projectsGit/schedule/tmux/usageHistory) — a 500, an
+// expired/incorrect write token, and a server too old for the route were all
+// previously indistinguishable (every one just meant "don't render this").
+// AuthError gets its own copy per bd-console-974.7's spec — "feature
+// unsupported" is actively wrong for a 401, which means the feature exists
+// and is simply locked. A network-ish failure (isNetworkError — the fetch
+// itself never got a response) also gets its own wording, distinct from an
+// HTTP error status the server actually returned.
+export function unavailableReason(e) {
+  if (e instanceof AuthError) return 'write token required/incorrect — see Settings';
+  if (isNetworkError(e)) return 'server unreachable';
+  if (e && e.status === 404) return "not supported by this server yet";
+  return (e && e.message) || 'unknown error';
+}
+
+// ---------------------------------------------------------------------------
 // Data loading
 // ---------------------------------------------------------------------------
 export async function loadBootMeta() {
@@ -394,14 +435,28 @@ export async function loadBootMeta() {
     const m = await apiGetRaw('/api/meta');
     store.mode.value = m.mode || 'hub';
     store.meta.value = m;
-  } catch (e) { /* server unreachable */ }
+    store.hubUnreachable.value = false;
+  } catch (e) {
+    // A response that just isn't JSON/ok still means the server answered —
+    // only a network-ish failure (no response at all) marks the hub
+    // unreachable; see store.hubUnreachable's own doc and app.js's banner.
+    store.hubUnreachable.value = isNetworkError(e);
+  }
 }
 
 export async function loadHub() {
   try {
     const data = await apiGetRaw('/api/projects');
     store.projects.value = data.projects || {};
-  } catch (e) { toast('Failed to load projects: ' + e.message, 'err'); }
+    store.hubUnreachable.value = false;
+  } catch (e) {
+    if (isNetworkError(e)) {
+      store.hubUnreachable.value = true;
+    } else {
+      store.hubUnreachable.value = false;
+      toast('Failed to load projects: ' + e.message, 'err');
+    }
+  }
 }
 
 // Per-project git insights for hub cards (branch, last commit, ahead/behind,
@@ -415,8 +470,10 @@ export async function loadProjectsGit() {
     for (const [id, p] of Object.entries(projects)) git[id] = p.git ?? null;
     store.projectsGit.value = git;
     store.projectsGitAvailable.value = true;
+    store.projectsGitAvailableReason.value = null;
   } catch (e) {
     store.projectsGitAvailable.value = false;
+    store.projectsGitAvailableReason.value = unavailableReason(e);
     store.projectsGit.value = {};
     console.warn('Project git insights unavailable: ' + e.message);
   }
@@ -602,9 +659,22 @@ export async function loadTmux() {
   try {
     const data = await apiGetRaw('/api/tmux');
     store.tmuxAvailable.value = !!data.available;
+    // A real "no tmux binary on this host" answer carries no reason beyond
+    // that fact itself — TmuxView's own copy says so. Only a FAILED call
+    // (below) gets a reason string.
+    store.tmuxAvailableReason.value = null;
     store.tmuxSessions.value = data.sessions || [];
     store.tmuxHost.value = (data.host && data.host.memory) || null;
-  } catch (e) { toast('Failed to load tmux sessions: ' + e.message, 'err'); }
+  } catch (e) {
+    // Deliberately does NOT flip tmuxAvailable here: a transient 500/network
+    // blip on a host that DOES have tmux must not relabel it as "tmux isn't
+    // available on this host" (wrong advice — that copy tells the user to
+    // install tmux). The reason alone lets TmuxView show a small "last
+    // refresh failed" note beside the still-stale-but-real session list
+    // instead of replacing it with a misleading empty state.
+    store.tmuxAvailableReason.value = unavailableReason(e);
+    toast('Failed to load tmux sessions: ' + e.message, 'err');
+  }
   finally { store.tmuxLoading.value = false; }
 }
 
@@ -628,10 +698,21 @@ export async function loadSchedule() {
   try {
     const data = await apiGetRaw('/api/schedule');
     store.scheduleAvailable.value = true;
+    store.scheduleAvailableReason.value = null;
     store.scheduleJobs.value = data.jobs || [];
   } catch (e) {
-    if (e.message === SCHED_UNAVAILABLE_MSG) { store.scheduleAvailable.value = false; store.scheduleJobs.value = []; }
-    else toast('Failed to load schedule: ' + e.message, 'err');
+    if (e.message === SCHED_UNAVAILABLE_MSG) {
+      store.scheduleAvailable.value = false;
+      store.scheduleAvailableReason.value = SCHED_UNAVAILABLE_MSG;
+      store.scheduleJobs.value = [];
+    } else {
+      // Same reasoning as loadTmux(): a transient failure doesn't mean the
+      // scheduler stopped existing, so scheduleAvailable itself is untouched
+      // — only the reason is recorded, for ScheduleView to note beside the
+      // (possibly stale) job list it still has.
+      store.scheduleAvailableReason.value = unavailableReason(e);
+      toast('Failed to load schedule: ' + e.message, 'err');
+    }
   } finally {
     store.scheduleLoading.value = false;
   }
@@ -665,8 +746,10 @@ export async function loadPrompts() {
     const data = await apiGetRaw('/api/prompts');
     store.prompts.value = data.prompts || [];
     store.promptsAvailable.value = true;
+    store.promptsAvailableReason.value = null;
   } catch (e) {
     store.promptsAvailable.value = false;
+    store.promptsAvailableReason.value = unavailableReason(e);
     store.prompts.value = [];
     console.warn('Saved prompts unavailable: ' + e.message);
   }
@@ -731,8 +814,10 @@ export async function loadUsageHistory(days = store.usageHistoryDays.value) {
     const data = await apiGetRaw('/api/usage/history?days=' + encodeURIComponent(days));
     store.usageHistory.value = data;
     store.usageHistoryAvailable.value = true;
+    store.usageHistoryAvailableReason.value = null;
   } catch (e) {
     store.usageHistoryAvailable.value = false;
+    store.usageHistoryAvailableReason.value = unavailableReason(e);
     store.usageHistory.value = null;
     console.warn('Usage history unavailable: ' + e.message);
   } finally {
@@ -785,8 +870,10 @@ export async function loadSettings() {
     const data = await apiGetRaw('/api/settings');
     store.settings.value = data;
     store.settingsAvailable.value = true;
+    store.settingsAvailableReason.value = null;
   } catch (e) {
     store.settingsAvailable.value = false;
+    store.settingsAvailableReason.value = unavailableReason(e);
     store.settings.value = null;
     console.warn('Settings endpoint unavailable: ' + e.message);
   } finally {

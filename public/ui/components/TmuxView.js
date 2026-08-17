@@ -271,6 +271,15 @@ export function TmuxView() {
 
       <${HostMemoryBar} host=${store.tmuxHost.value} />
 
+      ${/* A load FAILURE (network/401/500 — see loadTmux()'s comment) never
+            flips tmuxAvailable itself, so it shows up here instead: a small
+            note beside whatever sessions are already on screen (stale, but
+            real) rather than replacing them with the "tmux isn't available"
+            copy, which would tell the user to go install tmux for a problem
+            that has nothing to do with tmux. */ ''}
+      ${store.tmuxAvailableReason.value && store.tmuxAvailable.value && html`
+        <p class="muted small">Last refresh failed: ${store.tmuxAvailableReason.value} — showing the last known sessions.</p>`}
+
       ${!store.tmuxAvailable.value
         ? html`<div class="empty-state">
             <div class="empty-icon">⌁</div>

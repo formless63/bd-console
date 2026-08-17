@@ -298,7 +298,7 @@ function ServerTokenPanel() {
         The token the <em>server</em> requires on writes (<code>POST /api/settings</code>). Setting this here is
         equivalent to <code>bd-console settings set token …</code> on the host.
       </p>
-      ${!available && html`<p class="form-warn">Settings endpoint not available on this server yet — this control is disabled until it lands.</p>`}
+      ${!available && html`<p class="form-warn">Settings unavailable: ${store.settingsAvailableReason.value || "endpoint not available on this server yet"} — this control is disabled until it's reachable.</p>`}
       <div class="settings-form-row">
         <input class="field" type="password" placeholder="new server token…" value=${value} disabled=${!available}
           onInput=${(e) => setValue(e.target.value)}
@@ -404,7 +404,9 @@ function TermixPanel() {
         terminal. bd-console composes the link and never sends the credential to your browser; the only
         request it makes to Termix is the host lookup below, when you click it.
       </p>
-      ${!available && html`<p class="form-warn">This server doesn't expose Termix settings yet (<code>GET /api/settings</code> has no <code>termix</code> block).</p>`}
+      ${!available && html`<p class="form-warn">${store.settingsAvailable.value
+        ? "This server doesn't expose Termix settings yet (GET /api/settings has no termix block)."
+        : `Settings unavailable: ${store.settingsAvailableReason.value || "endpoint not available on this server yet"}.`}</p>`}
       <div class="settings-kv">
         <div class="settings-row">
           <span class="settings-k">Base URL</span>
@@ -623,7 +625,7 @@ export function SettingsView() {
           ? html`<${ServerSettingsPanel} />`
           : loading
             ? html`<section class="settings-card"><p class="muted small">Loading…</p></section>`
-            : html`<section class="settings-card"><p class="muted small">Server settings endpoint isn't available on this server yet (<code>GET /api/settings</code> 404s). Showing browser-only controls below.</p></section>`}
+            : html`<section class="settings-card"><p class="muted small">Server settings unavailable: ${store.settingsAvailableReason.value || "endpoint isn't available on this server yet"}. Showing browser-only controls below.</p></section>`}
         <${AppearancePanel} />
         <${LearningPanel} />
         <${BdVersionPanel} />

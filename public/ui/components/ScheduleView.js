@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import {
   store, loadSchedule, loadTmux, scheduleCreate, scheduleCancel,
   loadPrompts, savePrompt, deletePrompt, markPromptUsed, loadUsage,
-  toast, requireToken,
+  toast, requireToken, SCHED_UNAVAILABLE_MSG,
 } from '../store.js';
 import { apiPostRaw, AuthError } from '../api.js';
 import { useVisiblePoll } from '../poll.js';
@@ -186,7 +186,14 @@ function SavedPrompts({ prompt, onPick }) {
     return () => document.removeEventListener('mousedown', onDocClick);
   }, []);
 
-  if (!available) return null;
+  if (!available) {
+    // Previously rendered nothing at all — indistinguishable from "there is
+    // no such feature". A muted one-liner at least says whether it's worth
+    // retrying (a network blip / an expired token) or just an older server.
+    return html`<span class="muted small" title="Saved prompts">
+      unavailable${store.promptsAvailableReason.value ? `: ${store.promptsAvailableReason.value}` : ''}
+    </span>`;
+  }
 
   const pick = async (p) => {
     onPick(p.prompt);
@@ -470,7 +477,9 @@ export function ScheduleView() {
       ${!store.scheduleAvailable.value
         ? html`<div class="empty-state">
             <div class="empty-icon">⏱</div>
-            <p>The scheduler needs Node ≥ 22 (node:sqlite) on the server host.</p>
+            <p>${store.scheduleAvailableReason.value === SCHED_UNAVAILABLE_MSG || !store.scheduleAvailableReason.value
+              ? 'The scheduler needs Node ≥ 22 (node:sqlite) on the server host.'
+              : `Scheduler unavailable: ${store.scheduleAvailableReason.value}`}</p>
           </div>`
         : html`
           <div class="sched-layout">

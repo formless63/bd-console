@@ -8,6 +8,14 @@
    are opt-in via the theme switcher.
    ========================================================================== */
 
+/* --text-faint contrast (bd-console-974.7): every faint token below is tuned
+   to hit >=4.5:1 (WCAG AA for the sub-12px text it's actually used at — e.g.
+   .hub-radar-legend/.tmux-head-label at 10px, .hub-card-path/.tmux-cell-age
+   at 11.5px) against BOTH --bg and --surface, the two backgrounds faint text
+   actually sits on. Only lightness was nudged, never hue, so each preset's
+   faint token stays visibly "the quiet one" relative to --text-dim (still
+   lower contrast than --text-dim in every theme) without going invisible. */
+
 /* ---- Palette: SYNERGY (initial default) -----------------------------------
    "Bio-Synthetic Synergy" — void-black/near-white surfaces with neon green
    (primary) and electric purple (secondary) accents. Source: 3153D's
@@ -31,7 +39,7 @@
 [data-theme="synergy"][data-scheme="light"] {
   --bg: #f7faf5; --surface: #eef4ea; --surface-2: #e2ebdc; --elevated: #ffffff;
   --border: #cfdbc7; --border-2: #b3c4a6;
-  --text: #12160f; --text-dim: #4b5a43; --text-faint: #7c8a73;
+  --text: #12160f; --text-dim: #4b5a43; --text-faint: #66725e;
   --accent: #107100; --accent-ink: #f2fff0;
   --green: #095300; --amber: #8a5a00; --red: #93000a; --purple: #6b00b0;
   --shadow-rgb: 18 22 15;
@@ -51,7 +59,7 @@
 [data-theme="default"][data-scheme="dark"] {
   --bg: #0e1116; --surface: #151a22; --surface-2: #1c232e; --elevated: #212a36;
   --border: #262e3a; --border-2: #33404f;
-  --text: #dbe2ec; --text-dim: #9aa6b6; --text-faint: #6b7688;
+  --text: #dbe2ec; --text-dim: #9aa6b6; --text-faint: #7c8696;
   --accent: #5b9dff; --accent-ink: #0b1220;
   --green: #54b07f; --amber: #e0a93c; --red: #e06673; --purple: #b48ae8;
   --shadow-rgb: 0 0 0;
@@ -59,7 +67,7 @@
 [data-theme="default"][data-scheme="light"] {
   --bg: #ffffff; --surface: #f5f7fa; --surface-2: #eaeef3; --elevated: #ffffff;
   --border: #dbe1e8; --border-2: #c6cfda;
-  --text: #1c2530; --text-dim: #586575; --text-faint: #8493a5;
+  --text: #1c2530; --text-dim: #586575; --text-faint: #667280;
   --accent: #2563eb; --accent-ink: #ffffff;
   --green: #1a7f4b; --amber: #b4690e; --red: #c2333d; --purple: #7c3aed;
   --shadow-rgb: 30 41 59;
@@ -69,7 +77,7 @@
 [data-theme="dracula"][data-scheme="dark"] {
   --bg: #282a36; --surface: #21222c; --surface-2: #343746; --elevated: #3a3d4e;
   --border: #44475a; --border-2: #565a72;
-  --text: #f8f8f2; --text-dim: #b3b7cc; --text-faint: #7f849c;
+  --text: #f8f8f2; --text-dim: #b3b7cc; --text-faint: #8e92a7;
   --accent: #bd93f9; --accent-ink: #21222c;
   --green: #50fa7b; --amber: #ffb86c; --red: #ff5555; --purple: #ff79c6;
   --shadow-rgb: 0 0 0;
@@ -77,7 +85,7 @@
 [data-theme="dracula"][data-scheme="light"] {
   --bg: #f7f7f2; --surface: #ffffff; --surface-2: #eceadf; --elevated: #ffffff;
   --border: #d8d5c6; --border-2: #c3bfab;
-  --text: #282a36; --text-dim: #5b5f75; --text-faint: #8a8ea3;
+  --text: #282a36; --text-dim: #5b5f75; --text-faint: #6c6f80;
   --accent: #7c3fd6; --accent-ink: #ffffff;
   --green: #197d3f; --amber: #a65e0a; --red: #cf2d47; --purple: #b02a8f;
   --shadow-rgb: 40 42 54;
@@ -87,7 +95,7 @@
 [data-theme="nord"][data-scheme="dark"] {
   --bg: #2e3440; --surface: #3b4252; --surface-2: #434c5e; --elevated: #4c566a;
   --border: #4c566a; --border-2: #5c677d;
-  --text: #eceff4; --text-dim: #aeb8ca; --text-faint: #7b869c;
+  --text: #eceff4; --text-dim: #aeb8ca; --text-faint: #a9b0be;
   --accent: #88c0d0; --accent-ink: #2e3440;
   --green: #a3be8c; --amber: #ebcb8b; --red: #bf616a; --purple: #b48ead;
   --shadow-rgb: 0 0 0;
@@ -95,7 +103,7 @@
 [data-theme="nord"][data-scheme="light"] {
   --bg: #eceff4; --surface: #e5e9f0; --surface-2: #dce1eb; --elevated: #ffffff;
   --border: #c9d1de; --border-2: #b3bdcf;
-  --text: #2e3440; --text-dim: #4c566a; --text-faint: #7986a0;
+  --text: #2e3440; --text-dim: #4c566a; --text-faint: #5f697d;
   --accent: #5e81ac; --accent-ink: #ffffff;
   --green: #5c7a45; --amber: #a37b2b; --red: #bf616a; --purple: #9d7495;
   --shadow-rgb: 46 52 64;
@@ -105,7 +113,7 @@
 [data-theme="gruvbox"][data-scheme="dark"] {
   --bg: #282828; --surface: #32302f; --surface-2: #3c3836; --elevated: #504945;
   --border: #504945; --border-2: #665c54;
-  --text: #ebdbb2; --text-dim: #bdae93; --text-faint: #928374;
+  --text: #ebdbb2; --text-dim: #bdae93; --text-faint: #a5988b;
   --accent: #83a598; --accent-ink: #282828;
   --green: #b8bb26; --amber: #fabd2f; --red: #fb4934; --purple: #d3869b;
   --shadow-rgb: 0 0 0;
@@ -113,7 +121,7 @@
 [data-theme="gruvbox"][data-scheme="light"] {
   --bg: #fbf1c7; --surface: #f2e5bc; --surface-2: #ebdbb2; --elevated: #ffffff;
   --border: #d5c4a1; --border-2: #bdae93;
-  --text: #3c3836; --text-dim: #665c54; --text-faint: #928374;
+  --text: #3c3836; --text-dim: #665c54; --text-faint: #6f6458;
   --accent: #076678; --accent-ink: #fbf1c7;
   --green: #79740e; --amber: #b57614; --red: #9d0006; --purple: #8f3f71;
   --shadow-rgb: 60 56 54;
@@ -123,7 +131,7 @@
 [data-theme="tokyo-night"][data-scheme="dark"] {
   --bg: #1a1b26; --surface: #1f2335; --surface-2: #292e42; --elevated: #2f344a;
   --border: #3b4261; --border-2: #4a5178;
-  --text: #c0caf5; --text-dim: #8b93b8; --text-faint: #626890;
+  --text: #c0caf5; --text-dim: #8b93b8; --text-faint: #8489a8;
   --accent: #7aa2f7; --accent-ink: #1a1b26;
   --green: #9ece6a; --amber: #e0af68; --red: #f7768e; --purple: #bb9af7;
   --shadow-rgb: 0 0 0;
@@ -131,7 +139,7 @@
 [data-theme="tokyo-night"][data-scheme="light"] {
   --bg: #e6e7ed; --surface: #eceef4; --surface-2: #d6dae6; --elevated: #ffffff;
   --border: #b9bfd0; --border-2: #a3abc4;
-  --text: #343b58; --text-dim: #5a628a; --text-faint: #8189ac;
+  --text: #343b58; --text-dim: #5a628a; --text-faint: #616781;
   --accent: #2e7de9; --accent-ink: #ffffff;
   --green: #587539; --amber: #8f6c31; --red: #f52a65; --purple: #7847bd;
   --shadow-rgb: 52 59 88;
@@ -939,6 +947,12 @@ span.usage-update-chip { cursor: help; }
 
 .empty-state { text-align: center; padding: 4rem 1rem; color: var(--text-dim); display: flex; flex-direction: column; gap: 8px; align-items: center; }
 .empty-icon { font-size: 2rem; opacity: 0.5; }
+/* Server-down state (bd-console-974.7, HubView.js): distinct from the
+   onboarding empty state it replaces when the daemon can't be reached —
+   the icon carries the warning color (never color-alone: the copy above it
+   already says "can't reach") and the Retry button is a real affordance,
+   not decoration. */
+.hub-unreachable-state .empty-icon { color: var(--red); opacity: 0.85; }
 
 /* ---- Hub chip row (ops strip) ----------------------------------------------
    One consolidated, uniformly-styled row: tmux sessions · scheduled prompts ·
@@ -990,15 +1004,6 @@ span.usage-update-chip { cursor: help; }
 
 /* ---- Badges -------------------------------------------------------------- */
 .badge { display: inline-flex; align-items: center; justify-content: center; padding: 2px 8px; border-radius: var(--radius-pill); font-size: 11px; font-weight: 600; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); white-space: nowrap; }
-.badge.st-open { background: color-mix(in srgb, var(--green) 15%, transparent); color: var(--green); border-color: color-mix(in srgb, var(--green) 25%, transparent); }
-.badge.st-in_progress { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 25%, transparent); }
-.badge.st-blocked { background: color-mix(in srgb, var(--red) 15%, transparent); color: var(--red); border-color: color-mix(in srgb, var(--red) 25%, transparent); }
-.badge.st-closed { background: color-mix(in srgb, var(--purple) 15%, transparent); color: var(--purple); border-color: color-mix(in srgb, var(--purple) 25%, transparent); }
-.badge.pri { font-variant-numeric: tabular-nums; }
-.badge.pri-0 { background: color-mix(in srgb, var(--red) 16%, transparent); color: var(--red); border-color: color-mix(in srgb, var(--red) 26%, transparent); }
-.badge.pri-1 { background: color-mix(in srgb, var(--amber) 16%, transparent); color: var(--amber); border-color: color-mix(in srgb, var(--amber) 26%, transparent); }
-.badge.pri-2 { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 24%, transparent); }
-.badge.pri-3, .badge.pri-4 { color: var(--text-dim); }
 
 /* ---- Form primitives (settings cards, create dialog, schedule form) ------- */
 .edit-block { display: flex; flex-direction: column; gap: 7px; }
@@ -1050,7 +1055,6 @@ input.edit-input { flex: 1; min-width: 120px; }
 }
 .intent-chip:hover { border-color: var(--border-2); color: var(--text); }
 .intent-chip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
-.dialog-select { width: 100%; }
 .chip.auto { opacity: 0.7; cursor: default; background: var(--surface-2); }
 .epic-field > span { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .btn-inline-new {
@@ -1255,6 +1259,22 @@ input.edit-input { flex: 1; min-width: 120px; }
    ========================================================================== */
 .toast-stack { position: fixed; bottom: 20px; right: 20px; z-index: 200; display: flex; flex-direction: column; gap: 8px; max-width: min(92vw, 380px); }
 .toast-stack .toast { --sl-panel-background-color: var(--elevated); }
+
+/* "Can't reach the bd-console server" banner (bd-console-974.7, app.js) —
+   plain DOM (see app.js's comment for why), so it's styled by tag-independent
+   class alone rather than any component's scoping. Sits above every view,
+   including Console 2.0's own full-viewport chrome (highest z-index there is
+   50) and the toast stack (200), but below app.js's own stale-asset bar
+   (99999, inline-styled) — the two are independent failure modes that could
+   in principle both be true at once, and the stale-asset one is the more
+   actionable of the two if so. */
+.bd-unreachable-banner {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 9000;
+  padding: 8px 14px; text-align: center;
+  background: var(--red); color: white;
+  font: 600 13px/1.4 var(--font-ui, system-ui, sans-serif);
+  box-shadow: var(--shadow-lg);
+}
 
 /* ==========================================================================
    Mobile / responsive

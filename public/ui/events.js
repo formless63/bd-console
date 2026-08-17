@@ -30,6 +30,20 @@ import { store, loadIssues, loadSchedule } from './store.js';
 // session. Consumers (Console2's poll fallback) read `.value` directly.
 export const eventsAvailable = signal(null);
 
+// Distinct from eventsAvailable above on purpose (bd-console-974.7):
+// eventsAvailable is a one-way "has this server EVER proven it supports the
+// route" flag — once a `hello` lands it stays `true` forever, even through a
+// dropped connection mid-backoff, because that staleness is exactly what lets
+// a brief network blip stay invisible instead of flipping Console2 into its
+// poll fallback for no reason. But app.js's "can't reach the server" banner
+// needs the OPPOSITE question answered — "is the stream connected RIGHT NOW"
+// — since a live page whose connection just died is precisely the case that
+// banner exists for. `eventsConnected` tracks that moment-to-moment: true
+// only from a received `hello` until the next disconnect/retry, false the
+// instant a fetch/read fails and reconnect is scheduled. Never permanent
+// either way — it flips back to true on the very next successful `hello`.
+export const eventsConnected = signal(false);
+
 const BASE_BACKOFF_MS = 1000;
 const MAX_BACKOFF_MS = 30000;
 
@@ -88,6 +102,7 @@ function parseFrame(raw) {
   }
   if (event === 'hello') {
     eventsAvailable.value = true;
+    eventsConnected.value = true;
     backoff = BASE_BACKOFF_MS; // a live server proved itself — drop back to the fast retry floor
     return;
   }
@@ -126,6 +141,7 @@ async function connect() {
     });
   } catch (e) {
     if (abortController.signal.aborted) return; // superseded by a newer connect() — not a failure
+    eventsConnected.value = false;
     scheduleReconnect();
     return;
   }
@@ -133,10 +149,12 @@ async function connect() {
     // Permanent: this server predates /api/events. Don't retry — Console2's
     // useVisiblePoll fallback takes over for the rest of this page load.
     eventsAvailable.value = false;
+    eventsConnected.value = false;
     try { res.body?.cancel(); } catch { /* ignore */ }
     return;
   }
   if (!res.ok || !res.body) {
+    eventsConnected.value = false;
     scheduleReconnect();
     return;
   }
@@ -146,6 +164,7 @@ async function connect() {
     if (abortController.signal.aborted) return;
   }
   if (abortController.signal.aborted) return; // deliberate close, not a drop
+  eventsConnected.value = false;
   scheduleReconnect();
 }
 
