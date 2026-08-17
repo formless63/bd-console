@@ -17,10 +17,11 @@ import {
   openDistillDialog,
 } from './molecules.js';
 import { renderMarkdown } from '../markdown.js';
+import { apiGet } from '../api.js';
 import {
   actClaim, actStart, actClose, actReopen, actPriority, actDefer,
   actAddLabel, actRemoveLabel, actSetParent, actAddBlocker, actRemoveBlocker,
-  actSetAssignee,
+  actSetAssignee, actResolveGate,
   delegateNow, delegateSchedule,
 } from './actions.js';
 import { TypeGlyph, Pip, PRI_LABEL, StatusGlyph, glyphStatus } from './ui.js';
@@ -68,6 +69,51 @@ function RelChip(id) {
   if (!i) return html`<button class="c2-rel unknown" disabled>${id}</button>`;
   return html`<button class=${'c2-rel st-' + glyphStatus(i)} onClick=${() => selectIssue(id)} title=${i.title}>
     ${StatusGlyph(i)}${TypeGlyph(i.issue_type)}<span class="c2-rel-id">${id}</span><span class="c2-rel-t">${i.title}</span>
+  </button>`;
+}
+
+// ---------------------------------------------------------------------------
+// Gates (bd-console-974.8). A gate is an ordinary bead (issue_type: "gate",
+// plus an `await_type` field) that a `blocks` dependency points at, so it
+// arrives through the SAME issues export every other blocker does — no
+// separate fetch needed to know a blocker is a gate, just byId + a type
+// check. `bd gate create --blocks <id> --reason "…"` writes the reason into
+// the gate's own description as a trailing "Reason: …" line (verified
+// against bd v1.1.0: there is no dedicated `reason` field on the exported
+// issue), so that's where it's read back from for display.
+// ---------------------------------------------------------------------------
+function isOpenGate(i) {
+  return !!i && i.issue_type === 'gate' && i.status !== 'closed';
+}
+function gateReasonOf(gate) {
+  const m = /Reason:\s*([\s\S]*)$/.exec(gate?.description || '');
+  return m ? m[1].trim() : '';
+}
+function gateLabel(gate) {
+  const reason = gateReasonOf(gate);
+  return `gate: ${gate.await_type || 'human'}${reason ? ` — ${reason}` : ''}`;
+}
+
+// Only `human`-type gates resolve manually (`bd gate resolve`) — the other
+// types (timer, gh:run, gh:pr, bead) close themselves once their condition is
+// met, and posting a manual resolve to one of those would fight whatever is
+// watching it. `await_type` is absent on gates created before bd started
+// stamping it, which bd itself treats as "human" (its own default), so the
+// button applies the same fallback.
+function isHumanGate(gate) {
+  return isOpenGate(gate) && (gate.await_type || 'human') === 'human';
+}
+
+function ResolveGateButton({ gate }) {
+  const [busy, setBusy] = useState(false);
+  const resolve = async () => {
+    const reason = prompt(`Resolve gate ${gate.id} — reason (optional):`, '');
+    if (reason == null) return;
+    setBusy(true);
+    try { await actResolveGate(gate.id, reason.trim()); } catch {} finally { setBusy(false); }
+  };
+  return html`<button class="c2-mini accent" disabled=${busy} onClick=${resolve} title=${'bd gate resolve ' + gate.id}>
+    ${busy ? 'resolving…' : 'Resolve gate'}
   </button>`;
 }
 
@@ -295,7 +341,8 @@ function Comments({ id }) {
           : comments.map((c, n) => html`
             <div key=${n} class="c2-comment">
               <div class="c2-comment-meta"><b>${c.author || 'someone'}</b><span>${timeAgo(c.created_at)}</span></div>
-              <div class="c2-comment-text">${c.text}</div>
+              <div class="c2-comment-text markdown c2-md"
+                dangerouslySetInnerHTML=${{ __html: renderMarkdown(c.text || '') }}></div>
             </div>`)}
       <div class="c2-comment-add">
         <textarea placeholder="Add a comment…  (⌘/Ctrl+Enter)" value=${text}
@@ -304,6 +351,68 @@ function Comments({ id }) {
         <button class="c2-mini accent" disabled=${busy} onClick=${submit}>comment</button>
       </div>
     </div>`;
+}
+
+// A history value can be an arbitrary field (a long description, a null, an
+// object) — kept short and safe for a one-line diff row. Not markdown: a
+// history row is a raw field value, not narrative text.
+function fmtHistVal(v) {
+  if (v === null || v === undefined || v === '') return '—';
+  const s = typeof v === 'object' ? JSON.stringify(v) : String(v);
+  const oneLine = s.replace(/\s+/g, ' ').trim();
+  return oneLine.length > 90 ? oneLine.slice(0, 87) + '…' : oneLine;
+}
+
+// History (bd-console-974.8) — GET /api/p/<id>/history?issue=<id>, wrapping
+// `bd history <id> --json`. Loaded LAZILY, only when the <details> is opened
+// — every other Detail section loads with the panel, but history is the one
+// call that's O(commits touching this issue) rather than O(1), and most
+// opens of Detail never look at it. `unavailable` (a 501 — this bd predates
+// `bd history`) collapses the section to nothing rather than an inert
+// disclosure triangle nobody can open.
+function HistorySection({ id }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [entries, setEntries] = useState(null); // null = not loaded yet
+  const [unavailable, setUnavailable] = useState(false);
+
+  const load = () => {
+    if (entries !== null || loading || unavailable) return; // already loaded/loading/known-absent
+    setLoading(true);
+    setError(null);
+    apiGet('/api/history?issue=' + encodeURIComponent(id))
+      .then((data) => setEntries(Array.isArray(data.history) ? data.history : []))
+      .catch((e) => {
+        if (e.status === 501) setUnavailable(true);
+        else setError(e.message || 'failed to load history');
+      })
+      .finally(() => setLoading(false));
+  };
+
+  if (unavailable) return null;
+
+  return html`
+    <details class="c2-narrative" onToggle=${(e) => { if (e.target.open) load(); }}>
+      <summary><span>History</span></summary>
+      <div class="c2-narrative-body">
+        ${loading && html`<div class="c2-lane-empty">loading…</div>`}
+        ${error && html`<div class="c2-lane-empty">History unavailable (${error}).</div>`}
+        ${entries && entries.length === 0 && html`<div class="c2-lane-empty">No history recorded yet.</div>`}
+        ${entries && entries.length > 0 && html`<div class="c2-history">
+          ${entries.map((h, n) => html`
+            <div key=${n} class="c2-history-row">
+              <div class="c2-history-meta"><b>${h.actor || 'someone'}</b><span>${timeAgo(h.timestamp)}</span></div>
+              ${h.created
+                ? html`<div class="c2-history-created muted">created</div>`
+                : (h.changes && h.changes.length > 0
+                  ? html`<ul class="c2-history-changes">
+                      ${h.changes.map((c, i) => html`<li key=${i}><b>${c.field}</b>: ${fmtHistVal(c.old)} → ${fmtHistVal(c.new)}</li>`)}
+                    </ul>`
+                  : html`<div class="muted">no tracked field changes</div>`)}
+            </div>`)}
+        </div>`}
+      </div>
+    </details>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -662,6 +771,15 @@ export function Detail() {
             }
             const ob = openBlockersOf(issue);
             if (issue.status !== 'closed' && ob.length > 0) {
+              // Name the gate instead of the generic count when a blocker IS
+              // one — "blocked by gate: human — needs design review" tells
+              // the reader what to go DO, where "blocked by 1 open issue"
+              // sends them hunting through Connections for the same fact.
+              const gates = ob.map((bid) => byId.value.get(bid)).filter(isOpenGate);
+              if (gates.length > 0) {
+                const rest = ob.length - gates.length;
+                return html`<div class="c2-banner blocked">⛔ Blocked by ${gates.map(gateLabel).join('; ')}${rest > 0 ? `, and ${rest} other open ${rest === 1 ? 'issue' : 'issues'}` : ''}</div>`;
+              }
               return html`<div class="c2-banner blocked">⛔ Blocked by ${ob.length} open ${ob.length === 1 ? 'issue' : 'issues'}</div>`;
             }
             return isReady(issue) && !isContainer(issue) ? html`<div class="c2-banner ready">✓ Ready — no open blockers</div>` : null;
@@ -671,7 +789,12 @@ export function Detail() {
             const b = openBlockersOf(issue);
             return b.length ? html`<div class="c2-blocker-summary">
               <span class="c2-hud-label">Resolve first</span>
-              <div class="c2-rels">${b.map(RelChip)}</div>
+              <div class="c2-rels">${b.map((bid) => {
+                const bi = byId.value.get(bid);
+                return isHumanGate(bi)
+                  ? html`<div key=${bid} class="c2-rel-wrap">${RelChip(bid)}<${ResolveGateButton} gate=${bi} /></div>`
+                  : RelChip(bid);
+              })}</div>
             </div>` : null;
           })()}
 
@@ -747,6 +870,7 @@ export function Detail() {
                 <span>Updated</span><span>${new Date(issue.updated_at).toLocaleString()}</span>
                 ${issue.closed_at ? html`<span>Closed</span><span>${new Date(issue.closed_at).toLocaleString()}</span>` : ''}
               </div>`)}
+              <${HistorySection} id=${id} />
             </section>
 
             <section class="c2-detail-section" id="c2-detail-panel-manage" role="tabpanel" tabIndex="0" aria-labelledby="c2-detail-tab-manage"
