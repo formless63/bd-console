@@ -6,7 +6,7 @@ import { html } from 'htm/preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import {
   store, byId, parentOf, blockersOf, openBlockersOf, childrenOf, blocksList,
-  effStatus, isReady, selectIssue, addComment, loadTmux,
+  effStatus, isReady, selectIssue, addComment, loadTmux, loadIssues,
   LINK_TYPES, relatedOf, linkSectionsOf, retiredState,
   addLink, removeLink, supersedeIssue, markDuplicate,
   isContainer, isMolecule, moleculeRootFor, moleculeRollupFor,
@@ -498,7 +498,31 @@ function Delegate({ issue }) {
 
 export function Detail() {
   const id = store.selectedId.value;
-  const issue = id ? byId.value.get(id) : null;
+  const liveIssue = id ? byId.value.get(id) : null;
+
+  // Last-known-good snapshot of the selected issue. A live refresh (SSE
+  // change event, the fallback poll, or any write elsewhere) that drops this
+  // id out of store.issues — closed and aged out of the export, deleted by
+  // another agent, or just a slow/partial re-export — must never unmount
+  // this panel out from under whatever the user is doing in it: a comment
+  // being typed, an in-progress Edit field, mid-scroll through Connections.
+  // The snapshot resets ONLY when the SELECTION itself changes (a different
+  // id, or none); a refresh that still resolves the same id just updates it
+  // in place, which is also what keeps the read-only sections (title,
+  // labels, description, …) current without touching anything the user is
+  // mid-edit on — Edit/Comments/Delegate below hold their own local state
+  // that is never re-derived from this prop on a re-render, only on mount.
+  const snapshotRef = useRef({ id: null, issue: null });
+  if (snapshotRef.current.id !== id) {
+    snapshotRef.current = { id, issue: liveIssue || null };
+  } else if (liveIssue) {
+    snapshotRef.current = { id, issue: liveIssue };
+  }
+  const issue = snapshotRef.current.issue;
+  // True once this selection resolved a real issue and a later refresh no
+  // longer carries it — as opposed to `id` simply never resolving at all
+  // (e.g. a stale deep link), which stays un-open exactly as before.
+  const vanished = !!id && !liveIssue && !!issue;
   const open = !!issue;
   const [section, setSection] = useState('overview');
   const dialogRef = useRef(null);
@@ -598,6 +622,17 @@ export function Detail() {
           </div>
           <h2 class="c2-detail-title" id="c2-detail-title">${issue.title}</h2>
           ${(issue.labels || []).length > 0 && html`<div class="c2-detail-labels">${(issue.labels || []).map((l) => html`<span key=${l} class=${'c2-chip' + (l === 'triage' ? ' triage' : '')}>${l}</span>`)}</div>`}
+
+          ${/* Data went stale under the user's feet — say so, but keep
+                rendering the last snapshot rather than unmounting; see
+                `vanished` above. Sits above every other banner because it is
+                about whether the REST of this panel can be trusted, not
+                about the issue's own state. */ ''}
+          ${vanished && html`
+            <div class="c2-banner vanished" role="status">
+              <span>⟳ ${id} no longer appears in the latest export — it may have changed or been removed elsewhere.</span>
+              <button class="c2-mini" onClick=${() => loadIssues({ force: true })}>refresh</button>
+            </div>`}
 
           ${/* Molecule identity, above everything else: what this thing IS
                 comes before what state it's in. */ ''}

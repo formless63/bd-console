@@ -1,7 +1,9 @@
 // App.js — root component. Chooses the view from the route signal and mounts the
 // persistent chrome (top bar, toasts, dialogs).
 import { html } from 'htm/preact';
+import { useEffect } from 'preact/hooks';
 import { store } from '../store.js';
+import { startEventStream } from '../events.js';
 import { TopBar } from './TopBar.js';
 import { HubView } from './HubView.js';
 import { TmuxView } from './TmuxView.js';
@@ -22,6 +24,11 @@ function CurrentView(route) {
 
 export function App() {
   const route = store.route.value;
+
+  // App-lifetime, route-independent: one connection for the whole session,
+  // started once here rather than per-view, so switching projects or
+  // navigating away from Console 2.0 never tears it down and reconnects it.
+  useEffect(() => { startEventStream(); }, []);
 
   // #/learn — the concepts reference. Handled here rather than in store.js's
   // parseHash (which another agent owns and which falls back to the hub for

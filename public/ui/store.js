@@ -349,6 +349,24 @@ export async function loadProjectsGit() {
 // semantics used elsewhere. Also folds in the small extra metrics the hub
 // restyle wants: closed7d (a velocity signal) and openBugs.
 export async function loadProjectStats(id) {
+  // Server-computed shortcut, if this server has it: same shape this
+  // function returns (open/in_progress/blocked/closed/total/openTotal/
+  // triage/closed7d/openBugs), computed without shipping every issue in the
+  // project down to the browser just to fold it into eight numbers. 404 on
+  // an older server (or any other failure) falls straight through to the
+  // full-fetch path below — the same "…Available" degrade every other
+  // optional route in this file uses, just without a persistent signal
+  // since callers already retry this per project on every hub load.
+  try {
+    const stats = await apiGetRaw('/api/p/' + encodeURIComponent(id) + '/stats');
+    if (stats && typeof stats === 'object') {
+      return {
+        open: 0, in_progress: 0, blocked: 0, closed: 0, total: 0,
+        openTotal: 0, triage: 0, closed7d: 0, openBugs: 0,
+        ...stats,
+      };
+    }
+  } catch (e) { /* older server without the route — fall back below */ }
   const data = await apiGetRaw('/api/p/' + encodeURIComponent(id) + '/issues');
   const issues = data.issues || [];
   const t = { open: 0, in_progress: 0, blocked: 0, closed: 0, total: issues.length, openTotal: 0, triage: 0, closed7d: 0, openBugs: 0 };
@@ -397,6 +415,10 @@ export async function loadProjectMeta() {
   } catch (e) { /* keep prior meta */ }
 }
 
+// For loadIssues specifically, overlap is no longer the rare case: every SSE
+// `change` event calls it again, and the most dangerous overlap is across a
+// PROJECT SWITCH, where a slow response for the OLD project landing late
+// would splice one project's issues into another's.
 let issuesSeq = 0;
 export async function loadIssues({ force = false } = {}) {
   const seq = ++issuesSeq;
@@ -405,6 +427,9 @@ export async function loadIssues({ force = false } = {}) {
   try {
     const data = await apiGet('/api/issues' + (force ? '?refresh=1' : ''));
     if (seq !== issuesSeq) return; // a newer request already won
+    // Swap in place, never through []: a live refresh must not blank the
+    // list (and therefore every card/lane mid-interaction) for even one
+    // frame while the new data is in flight.
     store.issues.value = data.issues || [];
     store.generatedAt.value = data.generatedAt;
     if (store.meta.value) store.meta.value = { ...store.meta.value, export: data.export };

@@ -29,7 +29,12 @@ const POLL_MS = 5000;
 // of those was a live OAuth call. Match the hub's cadence instead — same
 // number, same reason (see USAGE_POLL_MS in HubView.js).
 const USAGE_POLL_MS = 5 * 60000;
-const STATUS_LABEL = { pending: 'pending', sent: 'sent', failed: 'failed', cancelled: 'cancelled' };
+// 'firing' is the transient window between a job being claimed off the
+// pending queue and send-keys actually landing (lib/schedule.mjs) — short by
+// design, but real, so it needs its own label/style rather than falling
+// through to the raw status-string default (STATUS_LABEL[status] || status)
+// below every other row already guards against.
+const STATUS_LABEL = { pending: 'pending', firing: 'firing', sent: 'sent', failed: 'failed', cancelled: 'cancelled' };
 
 function pad(n) { return String(n).padStart(2, '0'); }
 function toLocalInputValue(d) {

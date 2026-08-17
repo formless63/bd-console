@@ -8,6 +8,8 @@ import { effect } from '@preact/signals';
 import {
   store, navigate, loadProjectMeta, loadIssues, loadDocs, loadTmux, selectIssue,
 } from '../store.js';
+import { eventsAvailable } from '../events.js';
+import { useVisiblePoll } from '../poll.js';
 
 // app.js's syncRoute() resets store.projectId to null on every non-console2
 // route (its "not a project" branch). This synchronous signals effect re-pins
@@ -188,6 +190,17 @@ function Nudges() {
 export function Console2() {
   const route = store.route.value;
   const pid = route.projectId;
+
+  // Live refresh's fallback path: /api/events (started once in App.js) is
+  // the primary mechanism, but on a server that predates it (a clean 404 —
+  // see events.js) eventsAvailable latches false and this becomes the only
+  // thing keeping issues current. Reads eventsAvailable.value and
+  // store.projectId.value fresh on every tick (per poll.js's own contract)
+  // rather than closing over `pid`, which this effect does not re-run for on
+  // every project switch. A no-op once the stream is live.
+  useVisiblePoll(() => {
+    if (eventsAvailable.value === false && store.projectId.value) loadIssues();
+  }, 15000);
 
   // Bootstrap: this route isn't handled by app.js syncRoute (which only loads
   // for #/p/<id>), so Console 2.0 owns loading its own project data.

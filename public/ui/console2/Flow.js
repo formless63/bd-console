@@ -337,6 +337,12 @@ export function Flow() {
   const focusSet = focusedIds.value;
   const epic = c2.epicGroup.value;
   const pid = store.projectId.value;
+  // See Pulse.js's identical bootLoading — first load (or a project switch)
+  // for this project, not a background refresh, which never re-triggers it
+  // once c2.ready has latched for this project. Without this every lane
+  // rendered its full "nothing here yet" teaching copy against a list that
+  // simply hadn't arrived yet.
+  const bootLoading = store.issuesLoading.value && !c2.ready.value;
   return html`
     <div class="c2-flow">
       <div class="c2-flow-bar">
@@ -346,10 +352,12 @@ export function Flow() {
         <${ConceptDot} k="epic" />
         ${focus && html`<button class="c2-clearfocus" title="Clear focus" onClick=${() => (c2.laneFocus.value = null)}>focus: ${LANE_LABEL[focus] || focus} <span aria-hidden="true">✕</span></button>`}
       </div>
-      ${epic
-        ? html`<${EpicRows} focusSet=${focusSet} />`
-        : html`<div class="c2-lanes">
-            ${LANES.map(([key, title, cls]) => html`<${Lane} key=${key} laneKey=${key} title=${title} cls=${cls} items=${L[key]} focus=${focus} focusSet=${focusSet} />`)}
-          </div>`}
+      ${bootLoading
+        ? html`<div class="c2-lane-empty" aria-busy="true">Loading…</div>`
+        : epic
+          ? html`<${EpicRows} focusSet=${focusSet} />`
+          : html`<div class="c2-lanes">
+              ${LANES.map(([key, title, cls]) => html`<${Lane} key=${key} laneKey=${key} title=${title} cls=${cls} items=${L[key]} focus=${focus} focusSet=${focusSet} />`)}
+            </div>`}
     </div>`;
 }

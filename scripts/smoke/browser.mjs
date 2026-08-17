@@ -322,6 +322,14 @@ function createPage(client, sessionId) {
       await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...common });
       await send('Input.dispatchKeyEvent', { type: 'keyUp', ...common });
     },
+
+    // IME-style text insertion into whatever currently has focus — used for
+    // the comment-composer draft below. Simpler and faster than a per-
+    // character key-event sequence, and just as real from the page's point
+    // of view (it lands through the same input pipeline a real IME would).
+    async type(text) {
+      await send('Input.insertText', { text });
+    },
   };
 }
 
@@ -582,6 +590,74 @@ export async function runBrowser(ctx) {
     await waitStable(page, closedProbe, 'the mobile Detail panel to close');
   }
 
+  // --- live refresh must never clobber in-progress state (bd-console-974.4) --
+  // A background data refresh (SSE change event, the poll fallback, or any
+  // write) replaces store.issues.value wholesale with fresh objects carrying
+  // the same ids — that's exactly what loadIssues() does. Simulated here via
+  // window.__BD_CONSOLE_TEST_HOOKS__ (app.js) rather than a real server round
+  // trip, because Node structurally can't observe the thing actually at risk:
+  // whether the Detail panel and an in-progress comment draft survive a
+  // Preact re-render triggered by that swap, which is exactly this domain's
+  // reason to exist.
+  {
+    await gotoProject();
+    await openFirstCard();
+
+    // Comments live under the Activity tab, hidden by default (Detail opens
+    // on Overview) — hit-tested like every other click above.
+    const tab = await waitStable(page, `(() => {
+      const b = document.querySelector('#c2-detail-tab-activity');
+      if (!b) return { ok: false, why: 'no Activity tab' };
+      const r = b.getBoundingClientRect();
+      const x = Math.round(r.x + r.width / 2), y = Math.round(r.y + r.height / 2);
+      const hit = document.elementFromPoint(x, y);
+      return { ok: r.width > 0 && !!hit && hit.closest('#c2-detail-tab-activity') === b, x, y };
+    })()`, 'the Detail panel\'s Activity tab to render and be hit-testable');
+    await page.clickAt(tab.x, tab.y);
+
+    const ta = await waitStable(page, `(() => {
+      const t = document.querySelector('.c2-comment-add textarea');
+      if (!t) return { ok: false, why: 'no comment composer textarea' };
+      const r = t.getBoundingClientRect();
+      return { ok: r.width > 0 && r.height > 0, x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+    })()`, 'the comment composer textarea to render');
+    await page.clickAt(ta.x, ta.y);
+    const draft = 'smoke draft ' + Date.now();
+    await page.type(draft);
+
+    const typed = await waitStable(page, `(() => {
+      const t = document.querySelector('.c2-comment-add textarea');
+      return { ok: !!t && t.value.length > 0, value: t ? t.value : null };
+    })()`, 'the typed comment draft to land in the textarea');
+    assert(typed.value === draft, `browser: comment draft mismatch before the simulated refresh (expected "${draft}", got "${typed.value}")`);
+
+    const dispatched = await page.evaluate(`(() => {
+      const hooks = window.__BD_CONSOLE_TEST_HOOKS__;
+      if (!hooks) return { ok: false, why: 'no __BD_CONSOLE_TEST_HOOKS__ — app.js hook missing' };
+      const s = hooks.store;
+      s.issues.value = s.issues.value.map((i) => ({ ...i })); // fresh objects, same ids — what loadIssues() does
+      s.generatedAt.value = Date.now();
+      return { ok: true };
+    })()`);
+    assert(dispatched && dispatched.ok, `browser: could not dispatch a simulated live refresh (${dispatched && dispatched.why})`);
+
+    const after = await waitStable(page, `(() => {
+      const t = document.querySelector('.c2-comment-add textarea');
+      const d = document.querySelector('.c2-detail');
+      return {
+        ok: !!t && !!d,
+        value: t ? t.value : null,
+        open: !!d && d.classList.contains('open'),
+        focusInside: !!(document.activeElement && document.activeElement.closest('.c2-detail')),
+      };
+    })()`, 'the panel to settle after a simulated background refresh');
+    assert(after.open, 'browser: a background data refresh closed the Detail panel — live refresh must never unmount it (bd-console-974.4)');
+    assert(after.value === draft, `browser: a background data refresh lost the in-progress comment draft (expected "${draft}", got "${after.value}") — bd-console-974.4`);
+
+    await page.press('Escape');
+    await waitStable(page, closedProbe, 'the Detail panel to close after the live-refresh state-preservation check');
+  }
+
   await chromeHandle.close();
-  console.log('smoke browser ok: modal contract, bd-console-clb close paths, route overflow @1280+390, mobile hit-testing');
+  console.log('smoke browser ok: modal contract, bd-console-clb close paths, route overflow @1280+390, mobile hit-testing, live-refresh state preservation');
 }

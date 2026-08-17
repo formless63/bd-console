@@ -21,7 +21,13 @@ const INTENTS = [
   { id: 'chore', label: 'Chore', type: 'chore', labels: [] },
 ];
 
-const LABEL_RE = /^[A-Za-z0-9_.:-]+$/;
+// Mirrors the server's own validation (lib/routes.mjs) exactly: a label may
+// contain letters, numbers, underscore, dot, colon and dash, but must START
+// with a letter or number. Without the anchored first character, a
+// flag-shaped label like "-x" or "--force" passed client-side validation
+// here and then 400'd at the server — this now rejects it before the round
+// trip.
+const LABEL_RE = /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/;
 
 export function CreateIssueDialog() {
   const ref = useRef(null);
@@ -116,7 +122,7 @@ export function CreateIssueDialog() {
   const addLabel = () => {
     const v = labelInput.trim();
     if (!v) return;
-    if (!LABEL_RE.test(v)) { setErr(`Bad label "${v}" — use letters, numbers, _ . : -`); return; }
+    if (!LABEL_RE.test(v)) { setErr(`Bad label "${v}" — start with a letter or number, then letters, numbers, _ . : -`); return; }
     setErr('');
     if (!labels.includes(v)) setLabels([...labels, v]);
     setLabelInput('');
