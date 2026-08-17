@@ -719,6 +719,12 @@
    relationship chip, hence flex rather than the plain text banners above. */
 .c2-banner.retired { display: flex; flex-direction: column; gap: 6px; background: color-mix(in srgb, var(--purple) 12%, transparent); color: var(--purple); border: 1px solid color-mix(in srgb, var(--purple) 35%, var(--border)); }
 .c2-banner.retired .c2-rel { background: transparent; }
+/* Live-refresh dropped this issue from the latest export while it was still
+   open in the panel (see Detail.js's `vanished`) — a data-trust notice, not
+   a status like blocked/ready/retired, so it gets the neutral amber "heads
+   up" tone the rest of the app already uses for that register rather than
+   red/green/purple. */
+.c2-banner.vanished { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: color-mix(in srgb, var(--amber) 12%, transparent); color: var(--amber); border: 1px solid color-mix(in srgb, var(--amber) 35%, var(--border)); }
 .c2-field { display: flex; flex-direction: column; gap: 6px; }
 .c2-rels { display: flex; flex-direction: column; gap: 5px; }
 /* Bidirectional "Related" reads as a chip row rather than a stack — these are
