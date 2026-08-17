@@ -6,7 +6,12 @@
 // Shared fixtures, isolation and helpers come from ./harness.mjs via ctx.
 
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { connect as netConnect } from 'node:net';
 import { join, resolve } from 'node:path';
+
+// Statuses that mean "the scheduler has not finished with this row yet":
+// 'pending' (not claimed) and 'firing' (claimed, send in flight).
+const PENDING_OR_FIRING = new Set(['pending', 'firing']);
 
 export async function runScheduler(ctx) {
   const { assert, run, trimLastLine, tempRoot, port } = ctx;
@@ -83,7 +88,9 @@ export async function runScheduler(ctx) {
     for (let i = 0; i < 30; i++) {
       const list = await fetch(`http://127.0.0.1:${port}/api/schedule`).then((r) => r.json());
       const job = list.jobs.find((j) => j.id === dueJobId);
-      if (job && job.status !== 'pending') { finalJob = job; break; }
+      // 'firing' is the transient claimed-but-not-yet-reported state (see the
+      // claim test below) — an outcome, not a status to settle on.
+      if (job && !PENDING_OR_FIRING.has(job.status)) { finalJob = job; break; }
       await new Promise((r) => setTimeout(r, 200));
     }
     assert(finalJob, 'scheduler did not process the due job within the expected window');
@@ -142,7 +149,7 @@ export async function runScheduler(ctx) {
     let refailed = null;
     for (let i = 0; i < 30; i++) {
       const job = await jobById(dueJobId);
-      if (job && job.status !== 'pending') { refailed = job; break; }
+      if (job && !PENDING_OR_FIRING.has(job.status)) { refailed = job; break; }
       await new Promise((r) => setTimeout(r, 200));
     }
     assert(refailed, 'the requeued job was never processed by the scheduler');
@@ -212,6 +219,56 @@ console.log(JSON.stringify({ before, retried }));
     assert(migrateOut.retried.job.status === 'pending' && migrateOut.retried.job.error === null, 'a retried migrated row must be pending with a cleared error');
 
     console.log('smoke ok (schedule.db migration: additive ALTERs on a pre-existing db, legacy job retryable)');
+
+    // --- the claim is EXCLUSIVE (bd-console-974.1) ---------------------------
+    // The tick loop was SELECT-then-send-then-UPDATE behind a process-local
+    // `ticking` flag, which serializes nothing across processes: two
+    // bd-consoles on one schedule.db (a leftover daemon plus a foreground run)
+    // both saw the same due row and both typed the prompt into the live tmux
+    // session someone was watching. Two claims on one row must now produce one
+    // winner — asserted directly rather than by racing two tick loops, so the
+    // test can't pass by luck.
+    //
+    // Its own child process on its own BD_CONSOLE_CONFIG_DIR for the same
+    // reason as the migration test above: CONFIG_DIR is resolved at module
+    // load, so importing lib/schedule.mjs here would open the developer's real
+    // ~/.config/bd-console.
+    const claimDir = join(tempRoot, 'sched-claim');
+    const claimScript = join(tempRoot, 'sched-claim.mjs');
+    writeFileSync(claimScript, `
+import { mkdirSync } from 'node:fs';
+mkdirSync(process.env.BD_CONSOLE_CONFIG_DIR, { recursive: true });
+
+const sched = await import(process.argv[2]);
+const created = await sched.createJob({ prompt: 'claimed exactly once', session: 'claim-smoke', runAt: Date.now() + 60 * 60 * 1000 });
+const first = await sched.claimJobForFiring(created.job.id);
+const second = await sched.claimJobForFiring(created.job.id);
+const claimed = (await sched.listJobs()).find((j) => j.id === created.job.id);
+
+// A row that is being sent RIGHT NOW must survive the reaper's real window...
+const reapedFresh = await sched.reapStaleFiringJobs();
+// ...while one whose sender died is put back as 'failed' (the retryable state).
+await new Promise((r) => setTimeout(r, 10));
+const reapedStale = await sched.reapStaleFiringJobs({ olderThanMs: 5 });
+const after = (await sched.listJobs()).find((j) => j.id === created.job.id);
+
+console.log(JSON.stringify({ created, first, second, claimed, reapedFresh, reapedStale, after }));
+`);
+    const claimOut = JSON.parse(trimLastLine(run(process.execPath, [claimScript, resolve(join(process.cwd(), 'lib', 'schedule.mjs'))], {
+      env: { ...process.env, BD_CONSOLE_CONFIG_DIR: claimDir },
+    })));
+    assert(claimOut.created.ok, `claim fixture job creation failed: ${JSON.stringify(claimOut.created)}`);
+    assert(claimOut.first.ok === true, `the first claim must win: ${JSON.stringify(claimOut.first)}`);
+    assert(claimOut.second.ok === false, `the second claim on the same row must LOSE — this is the double-send bug: ${JSON.stringify(claimOut.second)}`);
+    assert(/not pending/.test(claimOut.second.error || ''), `a lost claim should say why, got: ${claimOut.second.error}`);
+    assert(claimOut.claimed.status === 'firing', `a claimed row should be 'firing' while the send is in flight, got '${claimOut.claimed.status}'`);
+    assert(typeof claimOut.claimed.fired_at === 'number', 'the claim must stamp fired_at, which is what the reaper ages');
+    assert(claimOut.reapedFresh.reaped === 0, `the reaper must not touch a send that is still in flight: ${JSON.stringify(claimOut.reapedFresh)}`);
+    assert(claimOut.reapedStale.reaped === 1, `a stranded 'firing' row must be reaped: ${JSON.stringify(claimOut.reapedStale)}`);
+    assert(claimOut.after.status === 'failed', `a reaped row must land in 'failed' (the retryable state), got '${claimOut.after.status}'`);
+    assert(/being sent/.test(claimOut.after.error || ''), `a reaped row must record why it is failed, got: ${claimOut.after.error}`);
+
+    console.log('smoke ok (schedule claim: exclusive pending->firing, stranded firing rows reaped to failed)');
   }
 
   // --- saved prompts API ---------------------------------------------------------
@@ -267,6 +324,52 @@ console.log(JSON.stringify({ before, retried }));
       body: JSON.stringify({ name: '  ', prompt: 'x' })
     });
     assert(badCreate.status === 400, `prompt create with an empty name should 400, got ${badCreate.status}`);
+
+    // --- a multi-byte body split across chunk boundaries --------------------
+    // readBody() used to decode each socket chunk on its own (`data += c`), so
+    // a UTF-8 sequence straddling a boundary became U+FFFD on both sides — the
+    // boundary is wherever the socket happened to fill, not where a character
+    // ends. Saved prompts are the cheapest round-trip that stores request text
+    // verbatim and hands it straight back.
+    //
+    // fetch() gives no control over chunk boundaries, so this writes the
+    // request over a raw socket and deliberately splits it two bytes into an
+    // emoji, with a body big enough (>64KB) to span several socket reads on
+    // its own.
+    const chunkMarker = '😀';
+    const chunkPrompt = `${'x'.repeat(70000)}${chunkMarker}tail`;
+    const chunkBody = Buffer.from(JSON.stringify({ name: 'chunk-boundary', prompt: chunkPrompt }), 'utf8');
+    const splitAt = chunkBody.indexOf(Buffer.from(chunkMarker, 'utf8')) + 2;
+    assert(splitAt > 2, 'fixture error: the emoji should be findable in the encoded body');
+
+    const chunkStatus = await new Promise((resolveP, reject) => {
+      const socket = netConnect(port, '127.0.0.1', () => {
+        socket.write(
+          `POST /api/prompts HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\n`
+          + `Content-Type: application/json\r\nContent-Length: ${chunkBody.length}\r\n`
+          + 'Connection: close\r\n\r\n'
+        );
+        socket.write(chunkBody.subarray(0, splitAt));
+        // Second write a tick later so it is a separate segment (and so the
+        // server has already consumed the first half): the boundary lands
+        // inside the emoji rather than wherever the kernel felt like.
+        setTimeout(() => socket.end(chunkBody.subarray(splitAt)), 25);
+      });
+      let raw = '';
+      socket.setEncoding('utf8');
+      socket.on('data', (c) => { raw += c; });
+      socket.on('error', reject);
+      socket.on('end', () => resolveP(Number(raw.split(' ')[1] || 0)));
+    });
+    assert(chunkStatus === 200, `a chunk-split body should still be accepted, got HTTP ${chunkStatus}`);
+
+    const chunkStored = (await fetch(`http://127.0.0.1:${port}/api/prompts`).then((r) => r.json()))
+      .prompts.find((x) => x.name === 'chunk-boundary');
+    assert(chunkStored, 'the chunk-split prompt was not stored at all');
+    assert(!chunkStored.prompt.includes('�'), 'the body was decoded per-chunk: a multi-byte character came back as U+FFFD');
+    assert(chunkStored.prompt === chunkPrompt, `the stored prompt must be byte-identical to what was sent (length ${chunkStored.prompt.length} vs ${chunkPrompt.length})`);
+
+    console.log('smoke ok (readBody: a 70KB body with a multi-byte character split across chunks round-trips intact)');
 
     const deleteP2 = await fetch(`http://127.0.0.1:${port}/api/prompts/delete`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
