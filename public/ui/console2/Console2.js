@@ -37,6 +37,10 @@ import { ThemeSwitch } from './ThemeSwitch.js';
 import { WorkflowGuide } from './WorkflowGuide.js';
 import { NudgeRail } from '../components/ConceptTip.js';
 import { learnContext } from '../learn.js';
+import { FilterBar } from './FilterBar.js';
+import { loadDefaultView } from './filters.js';
+import { useConsole2Keyboard, openHelp } from './keyboardNav.js';
+import { HelpOverlay } from './HelpOverlay.js';
 
 const MODES = [['flow', 'Flow'], ['map', 'Map'], ['docs', 'Docs']];
 
@@ -97,6 +101,9 @@ function Header() {
           <a class="c2-learnlink" href="#/learn" title="Guide and concepts — learn the project workflow">
             <span aria-hidden="true">?</span><span class="c2-btn-label"> Guide</span>
           </a>
+          <button class="c2-learnlink" type="button" title="Keyboard shortcuts (?)" onClick=${openHelp}>
+            <span aria-hidden="true">⌨</span><span class="c2-btn-label"> Shortcuts</span>
+          </button>
           <div class="c2-themesw-header"><${ThemeSwitch} /></div>
           ${/* Console 2.0 shipped with no route to #/settings at all: the only
                 ways in were a detour through the (now retired) classic view's
@@ -146,6 +153,9 @@ function Canvas() {
               chooseMode(MODES[next][0]);
             }}>${label}</button>`)}
       </nav>
+      ${/* Docs is issue-free — filtering the issue list has nothing to say
+            there, so FilterBar only mounts for the two issue-driven modes. */ ''}
+      ${mode !== 'docs' && html`<${FilterBar} />`}
       <div class="c2-canvas-body" id="c2-view-panel" role="tabpanel"
         aria-labelledby=${'c2-view-tab-' + mode} tabIndex="0">
         ${mode === 'flow' ? html`<${Flow} />` : mode === 'map' ? html`<${MapView} />` : html`<${Docs2} />`}
@@ -191,6 +201,11 @@ export function Console2() {
   const route = store.route.value;
   const pid = route.projectId;
 
+  // j/k card cursor, [ / ] lane jump, ?-help — scoped to exactly as long as
+  // this route is mounted (own module, see keyboardNav.js's header comment
+  // for why app.js isn't the owner here).
+  useConsole2Keyboard();
+
   // Live refresh's fallback path: /api/events (started once in App.js) is
   // the primary mechanism, but on a server that predates it (a clean 404 —
   // see events.js) eventsAvailable latches false and this becomes the only
@@ -215,6 +230,10 @@ export function Console2() {
     c2.bootError.value = null;
     c2.laneFocus.value = null;
     c2.epicGroup.value = loadEpicGroupPref(pid);
+    // FilterBar (bd-console-974.6): a "default" saved view (if any) applies
+    // on project open; otherwise start from a clean, unfiltered slate. Never
+    // carries the PREVIOUS project's filter combination across a switch.
+    loadDefaultView(pid);
     // Cancellation guard: navigating away (or to another project) mid-bootstrap
     // must not let a stale pid's follow-on loads fire or flip ready.
     let cancelled = false;
@@ -250,6 +269,7 @@ export function Console2() {
             as well, not only from the empty state that motivated them. */ ''}
       <${DistillDialog} />
       <${FormulaEditorDialog} />
+      <${HelpOverlay} />
       ${detailOpen && html`<div class="c2-scrim" aria-hidden="true" onClick=${() => selectIssue(null)}></div>`}
       ${/* The escape hatch here used to be "open the classic view instead".
             That view is retired (and #/p/<id> now redirects straight back

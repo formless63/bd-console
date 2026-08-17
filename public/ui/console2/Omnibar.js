@@ -216,6 +216,15 @@ export function Omnibar() {
 
   const modeTag = mode === 'cmd' ? 'COMMAND' : mode === 'capture' ? 'CAPTURE' : 'READY';
 
+  // ARIA combobox contract (bd-console-974.6): role, expanded/controls state
+  // and the active option all live on the INPUT (this is a combobox with an
+  // out-of-DOM-focus listbox, not a listbox that takes focus itself — arrow
+  // keys stay in onKeyDown below exactly as before, this only mirrors the
+  // resulting selection for assistive tech via aria-activedescendant). Every
+  // interaction behavior above (mode detection, arrow/Enter handling,
+  // dismissal) is unchanged — this block is additive attributes only.
+  const activeId = open && items[sel] ? 'c2-omni-opt-' + sel : undefined;
+
   return html`
     <div class=${'c2-omni' + (open ? ' open' : '')} ref=${rootRef}>
       <div class="c2-omni-field">
@@ -228,6 +237,12 @@ export function Omnibar() {
           value=${raw}
           spellcheck="false"
           autocomplete="off"
+          role="combobox"
+          aria-expanded=${open}
+          aria-haspopup="listbox"
+          aria-controls="c2-omni-listbox"
+          aria-autocomplete="list"
+          aria-activedescendant=${activeId}
           onInput=${(e) => { c2.omniValue.value = e.target.value; c2.omniOpen.value = true; }}
           onFocus=${() => { c2.omniOpen.value = true; }}
           onKeyDown=${onKeyDown}
@@ -235,18 +250,19 @@ export function Omnibar() {
         <span class=${'c2-omni-mode mode-' + mode}>${modeTag}</span>
       </div>
       ${open && html`
-        <div class="c2-omni-drop" role="listbox">
+        <div class="c2-omni-drop" id="c2-omni-listbox" role="listbox">
           ${mode === 'cmd' && items.length === 0 && html`<div class="c2-omni-empty">No command matches “${verb}”.</div>`}
           ${items.map((item, n) => {
             const active = n === sel;
+            const optId = 'c2-omni-opt-' + n;
             if (item.type === 'capture') {
-              return html`<button key="cap" role="option" class=${'c2-omni-row cap' + (active ? ' active' : '')} onMouseEnter=${() => setSel(n)} onClick=${() => run(item)}>
+              return html`<button key="cap" id=${optId} role="option" aria-selected=${active} class=${'c2-omni-row cap' + (active ? ' active' : '')} onMouseEnter=${() => setSel(n)} onClick=${() => run(item)}>
                 <span class="c2-omni-verb">⏎ capture</span>
                 <span class="c2-omni-desc">“${item.title}” → new triage bead</span>
               </button>`;
             }
             if (item.type === 'jump') {
-              return html`<button key=${item.issue.id} role="option" class=${'c2-omni-row jump' + (active ? ' active' : '')} onMouseEnter=${() => setSel(n)} onClick=${() => run(item)}>
+              return html`<button key=${item.issue.id} id=${optId} role="option" aria-selected=${active} class=${'c2-omni-row jump' + (active ? ' active' : '')} onMouseEnter=${() => setSel(n)} onClick=${() => run(item)}>
                 ${StatusGlyph(item.issue)}
                 ${TypeGlyph(item.issue.issue_type)}
                 <span class="c2-omni-desc">${item.issue.title}</span>
@@ -255,7 +271,7 @@ export function Omnibar() {
               </button>`;
             }
             const c = item.cmd;
-            return html`<button key=${c.name} role="option" class=${'c2-omni-row cmd' + (active ? ' active' : '')} onMouseEnter=${() => setSel(n)} onClick=${() => run(item)}>
+            return html`<button key=${c.name} id=${optId} role="option" aria-selected=${active} class=${'c2-omni-row cmd' + (active ? ' active' : '')} onMouseEnter=${() => setSel(n)} onClick=${() => run(item)}>
               <span class="c2-omni-verb">${c.name}${c.arg ? html` <span class="c2-omni-arg">${c.arg}</span>` : ''}</span>
               <span class="c2-omni-desc">${c.hint}</span>
               <span class=${'c2-omni-kind k-' + c.kind}>${c.kind}</span>
