@@ -55,6 +55,20 @@ import { App } from './ui/components/App.js';
 import { initTheme } from './ui/theme.js';
 import { store, parseHash, loadBootMeta, loadHub } from './ui/store.js';
 
+// A narrow, explicitly-named escape hatch for scripts/smoke/browser.mjs (the
+// opt-in real-Chrome domain): it needs to simulate a background live-refresh
+// (store.issues replaced with fresh objects, same ids — exactly what
+// loadIssues() does on an SSE-triggered reload) WITHOUT a real server round
+// trip, to assert state-preservation invariants (an open Detail panel, an
+// in-progress comment draft) survive it. Not used by any application code —
+// only ever read from a headless Chrome the test suite itself launched
+// against a scratch fixture. Exposing the live `store` object grants no
+// capability a user's own devtools console didn't already have over their
+// own page; it's just a named handle instead of a closure to break on.
+if (typeof window !== 'undefined') {
+  window.__BD_CONSOLE_TEST_HOOKS__ = { store };
+}
+
 // --- routing: hash-based so deep links survive a static-file server ----------
 function syncRoute() {
   const route = store.route.value;
