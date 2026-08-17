@@ -313,7 +313,8 @@ function Edit({ issue }) {
         <button class="c2-mini danger" disabled=${!dupeId.trim()} title=${'bd duplicate ' + id + ' --of … — closes ' + id}
           onClick=${run(() => actDuplicate(id, dupeId.trim()).then(() => setDupeId('')))}>duplicate → closes ${id}</button>
       </div>
-      <div class="c2-edit-note">Supersede and duplicate are state transitions, not links: bd closes ${id} immediately.</div>
+      <div class="c2-edit-note">Supersede and duplicate are state transitions, not links: bd closes ${id} immediately.
+        There is no delete here on purpose — closing (or retiring) keeps history intact; if you really need to remove a bead, that's <code>bd delete</code> on the CLI.</div>
 
       <div class="c2-edit-row">
         <span class="c2-edit-k">Defer</span>
