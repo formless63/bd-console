@@ -9,6 +9,7 @@ import { useState } from 'preact/hooks';
 import { store, navigate, toast, loadHub, requireToken } from '../../store.js';
 import { apiPostRaw, AuthError } from '../../api.js';
 import { timeAgo } from '../common.js';
+import { AddFilesDialog } from '../AddFilesDialog.js';
 
 const METRICS_META = [
   ['open', 'Ready', 'green'],
@@ -28,6 +29,11 @@ function GitLinkIcon() {
 function BranchIcon() {
   return html`<svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true"><path fill="currentColor" d="M5 2.5a1.5 1.5 0 113 0 1.5 1.5 0 01-3 0zm.5 2.45v6.1a1.5 1.5 0 11-1 0V4.95a1.5 1.5 0 111 0zM11 12a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zm-2.5-1.5V9c0-1.1.9-2 2-2h.5a1.5 1.5 0 100-1H10.5A3 3 0 007.5 9v1.5"/></svg>`;
 }
+// Paperclip glyph for the per-card "Add files" affordance (bd-console-cox.4).
+function AddFilesIcon() {
+  return html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M9.5 1.5a2.5 2.5 0 0 1 2.5 2.5v6a4 4 0 1 1-8 0V5a.5.5 0 0 1 1 0v5a3 3 0 1 0 6 0V4a1.5 1.5 0 0 0-3 0v6a.5.5 0 0 1-1 0V4a2.5 2.5 0 0 1 2.5-2.5Z"/></svg>`;
+}
+
 // Official GitHub "mark" logo, inline so currentColor picks up the theme.
 function GitHubMarkIcon() {
   return html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>`;
@@ -83,6 +89,7 @@ function GitInsights({ git }) {
 
 export function ProjectCard({ id, project, stats, err }) {
   const git = store.projectsGit.value[id];
+  const [addFilesOpen, setAddFilesOpen] = useState(false);
   // Console 2.0 is the ONLY per-project destination now that the classic view
   // is retired — the card's whole click-through, and its CTA hint below, both
   // land on #/p2/<id> (as does the retired #/p/<id>, which redirects there;
@@ -94,8 +101,20 @@ export function ProjectCard({ id, project, stats, err }) {
     <div class="hub-card" role="button" tabIndex="0" onClick=${open} onKeyDown=${onKeyDown}>
       <div class="hub-card-top">
         <span class="hub-card-title">${id}</span>
-        ${stats && html`<span class="hub-card-total">${stats.openTotal} open · ${stats.total} lifetime</span>`}
+        <span class="hub-card-top-right">
+          ${stats && html`<span class="hub-card-total">${stats.openTotal} open · ${stats.total} lifetime</span>`}
+          ${/* Drop a spec/AGENTS.md/etc. into an already-registered project's
+                directory without leaving the hub (bd-console-cox.4) — reuses
+                the same POST /api/files/upload endpoint the new-session
+                dialog's file-attach step uses. stopPropagation so the click
+                doesn't also trigger the card's own onClick navigation. */ ''}
+          <button type="button" class="hub-card-addfiles" title="Add files to this project's directory"
+            aria-label="Add files to ${id}" onClick=${(e) => { e.stopPropagation(); setAddFilesOpen(true); }}>
+            <${AddFilesIcon} />
+          </button>
+        </span>
       </div>
+      <${AddFilesDialog} open=${addFilesOpen} onClose=${() => setAddFilesOpen(false)} dir=${project.path} label=${id} />
       <div class="hub-card-path">${project.path}</div>
       ${/* Registered, but the folder itself isn't there anymore (moved,
             renamed, or the disk/mount it lived on is gone) — `missing` on the

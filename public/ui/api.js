@@ -28,6 +28,8 @@ export const HUB_PATHS = new Set([
   '/api/tmux',
   '/api/tmux/preview',
   '/api/tmux/send',
+  '/api/tmux/create',
+  '/api/files/upload',
   '/api/termix/hosts',
   '/api/usage',
   '/api/usage/history',

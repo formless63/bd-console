@@ -6,6 +6,8 @@
 // Shared fixtures, isolation and helpers come from ./harness.mjs via ctx.
 
 import { execFileSync } from 'node:child_process';
+import { mkdirSync, existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 // Pure tmux agent-type/promptability classifier (bd-console-2gs) — importable
 // here because every I/O-shaped input (argv, kimi server pids) is gathered by
 // its caller, so the rules can be asserted against fixtures with no tmux
@@ -26,7 +28,7 @@ import {
 } from '../../lib/health.mjs';
 
 export async function runTmux(ctx) {
-  const { assert, port } = ctx;
+  const { assert, port, tempRoot } = ctx;
 
   // --- tmux sessions API (hub-level, not project-scoped) ---------------------
   let tmuxPresent = true;
@@ -483,5 +485,90 @@ export async function runTmux(ctx) {
     assert(tracker.observe('gone', [], t) === null, 'nothing measurable -> null, never a false negative dressed as a fact');
 
     console.log('smoke ok (idle-but-active: 18d silence + live CPU flags, attached/parked/recent-output/short-window do not, server-mode caveat, per-pid deltas survive child exit, sampler is bounded)');
+  }
+
+  // --- new code session launcher: POST /api/tmux/create (bd-console-cox.1) --
+  // Validation only — no real tmux session is created here, matching the
+  // "we never create/attach real sessions in smoke" rule at the top of this
+  // file. Actually launching tmux + `claude --remote-control` is exercised by
+  // hand (there is no fixture for "did a real shell come up"); this pins the
+  // request-shape contract the frontend flow depends on.
+  {
+    const create = (b) => fetch(`http://127.0.0.1:${port}/api/tmux/create`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b)
+    });
+
+    const badName = await create({ name: 'bad name!', dir: tempRoot });
+    assert(badName.status === 400, `/api/tmux/create with a bad session name should 400, got ${badName.status}`);
+    assert(/letters, numbers/.test((await badName.json()).error || ''), 'the 400 should explain the name rule');
+
+    const relDir = await create({ name: 'smoke-ok', dir: 'not/absolute' });
+    assert(relDir.status === 400, `/api/tmux/create with a relative dir should 400, got ${relDir.status}`);
+
+    const missingDir = join(tempRoot, 'does-not-exist-yet');
+    const noCreate = await create({ name: 'smoke-ok', dir: missingDir });
+    assert(noCreate.status === 400, `/api/tmux/create against a missing dir without createDir should 400, got ${noCreate.status}`);
+    assert(!existsSync(missingDir), 'without createDir:true, /api/tmux/create must not touch the filesystem');
+
+    console.log('smoke ok (tmux/create: bad name, relative dir, and missing-dir-without-createDir all 400 before touching tmux)');
+  }
+
+  // --- file upload: POST /api/files/upload (bd-console-cox.2) ---------------
+  // Full functional coverage (unlike the create-session block above): this
+  // route never touches tmux, so it's cheap to exercise for real. The
+  // path-traversal case is the one the epic calls out as the highest-risk
+  // regression here — every filename must be reduced to its basename before
+  // it touches a path, so a crafted "../../../etc/passwd" can only ever land
+  // INSIDE the target directory, under a flattened name.
+  {
+    const uploadDir = join(tempRoot, 'upload-target');
+    mkdirSync(uploadDir, { recursive: true });
+    const upload = (b) => fetch(`http://127.0.0.1:${port}/api/files/upload`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b)
+    });
+    const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
+
+    const missingDir = await upload({ dir: join(tempRoot, 'nope'), files: [{ name: 'a.txt', content: b64('hi') }] });
+    assert(missingDir.status === 400, `upload into a missing dir should 400, got ${missingDir.status}`);
+
+    // The traversal attempt: content lands as "passwd" inside uploadDir,
+    // never anywhere near the tempRoot's parent.
+    const traversal = await upload({
+      dir: uploadDir,
+      files: [{ name: '../../../../../../etc/passwd', content: b64('not actually /etc/passwd') }]
+    });
+    assert(traversal.status === 200, `traversal-named upload should still 200 (flattened, not rejected outright): ${traversal.status}`);
+    const traversalBody = await traversal.json();
+    assert(traversalBody.written.length === 1 && traversalBody.written[0] === 'passwd',
+      `traversal filename must be flattened to its basename: ${JSON.stringify(traversalBody)}`);
+    assert(existsSync(join(uploadDir, 'passwd')), 'the flattened file should land inside the target dir');
+    assert(readFileSync(join(uploadDir, 'passwd'), 'utf8') === 'not actually /etc/passwd', 'flattened file content mismatch');
+
+    // Two real files land with their given names, AGENTS.md-style.
+    const normal = await upload({
+      dir: uploadDir,
+      files: [
+        { name: 'AGENTS.md', content: b64('# Agents\n') },
+        { name: 'spec.txt', content: b64('spec body') }
+      ]
+    });
+    assert(normal.status === 200, `normal upload should 200, got ${normal.status}`);
+    const normalBody = await normal.json();
+    assert(normalBody.written.sort().join(',') === 'AGENTS.md,spec.txt', `unexpected written list: ${JSON.stringify(normalBody.written)}`);
+    assert(readFileSync(join(uploadDir, 'AGENTS.md'), 'utf8') === '# Agents\n', 'AGENTS.md content mismatch');
+
+    // Re-uploading without overwrite:true is a per-file skip, not a batch failure.
+    const collide = await upload({ dir: uploadDir, files: [{ name: 'AGENTS.md', content: b64('# Replaced\n') }] });
+    assert(collide.status === 200, `a collision without overwrite should still 200, got ${collide.status}`);
+    const collideBody = await collide.json();
+    assert(collideBody.written.length === 0 && collideBody.skipped.length === 1 && collideBody.skipped[0].name === 'AGENTS.md',
+      `a same-name upload without overwrite should be skipped, not written: ${JSON.stringify(collideBody)}`);
+    assert(readFileSync(join(uploadDir, 'AGENTS.md'), 'utf8') === '# Agents\n', 'AGENTS.md must be unchanged without overwrite:true');
+
+    const overwritten = await upload({ dir: uploadDir, files: [{ name: 'AGENTS.md', content: b64('# Replaced\n') }], overwrite: true });
+    assert(overwritten.status === 200 && (await overwritten.json()).written[0] === 'AGENTS.md', 'overwrite:true should replace the file');
+    assert(readFileSync(join(uploadDir, 'AGENTS.md'), 'utf8') === '# Replaced\n', 'AGENTS.md should be replaced with overwrite:true');
+
+    console.log('smoke ok (files/upload: missing dir 400, traversal filenames flattened to basename, normal write, skip-without-overwrite, overwrite:true)');
   }
 }

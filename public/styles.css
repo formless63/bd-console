@@ -362,6 +362,10 @@ textarea.field { resize: vertical; }
   -webkit-background-clip: text; background-clip: text; color: transparent;
 }
 .hub-header-tagline { margin: 0; font-size: 12px; color: var(--text-dim); flex-shrink: 1; min-width: 0; }
+/* Wraps h1+tagline+the "New code session" CTA as one natural-width cluster,
+   same as h1/tagline were before it existed — .hub-ops-wrap still gets the
+   remaining space (flex:1) and pushes its chips flush right, unchanged. */
+.hub-header-top { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
 
 /* Project radar sits above the host instrumentation: a dense switchboard,
    not a simplified landing page. It makes the information station more
@@ -431,6 +435,17 @@ textarea.field { resize: vertical; }
 .hub-card-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .hub-card-title { font-family: var(--font-heading); font-weight: 650; font-size: 1.1rem; letter-spacing: -0.01em; }
 .hub-card-total { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
+.hub-card-top-right { display: flex; align-items: center; gap: 8px; flex: none; }
+/* "Add files" (bd-console-cox.4) — a quiet icon button, not a full chip: it's
+   a utility action, not status like the metrics beside it, so it stays
+   understated until hovered/focused rather than competing with them. */
+.hub-card-addfiles {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; padding: 0; flex: none; cursor: pointer;
+  background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm);
+  color: var(--text-faint); transition: all 0.14s var(--ease);
+}
+.hub-card-addfiles:hover, .hub-card-addfiles:focus-visible { color: var(--accent); border-color: var(--border-2); background: var(--surface-2); }
 .hub-card-path { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* The whole card is already the click target (role="button"), so this reuses
    .hub-chip/.hub-chip-crit's color treatment without its pointer affordance. */
@@ -1040,6 +1055,10 @@ input.edit-input { flex: 1; min-width: 120px; }
 .dialog-head { margin: 0; font-family: var(--font-heading); font-size: 18px; font-weight: 650; letter-spacing: -0.01em; }
 .dialog-row { display: flex; gap: 14px; }
 .dialog-field { flex: 1; display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 500; color: var(--text-dim); }
+/* A dialog-field laid out as a single checkbox + label row instead of the
+   default label-above-control column — e.g. AddFilesDialog's "overwrite"
+   toggle. */
+.dialog-check-row { flex-direction: row; align-items: center; gap: 8px; }
 .dialog-actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-top: 4px; }
 .dialog[open] .dialog-body { animation: dialog-in 0.16s var(--ease); }
 @keyframes dialog-in { from { opacity: 0; transform: translateY(8px) scale(0.98); } }

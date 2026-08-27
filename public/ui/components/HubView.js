@@ -16,6 +16,7 @@ import { store, navigate, loadProjectStats, loadTmux, loadSchedule, loadProjects
 import { timeAgo, hostMemSummary, hostMemTip } from './common.js';
 import { ChevronIcon, ExternalLinkIcon, copyUpdateCommand } from './hub/shared.js';
 import { ProjectRadar, ProjectCard, AddProjectForm } from './hub/ProjectGrid.js';
+import { NewSessionDialog } from './hub/NewSessionDialog.js';
 import { QuotaSessionsRow, AttributionBand } from './hub/UsageSection.js';
 
 // One-shot (not polled) summary strip — cheap enough to fetch every time the
@@ -134,6 +135,7 @@ export function HubView() {
   const [statsById, setStatsById] = useState({});
   const [statErrors, setStatErrors] = useState(new Set());
   const [addOpen, setAddOpen] = useState(false);
+  const [newSessionOpen, setNewSessionOpen] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -153,10 +155,16 @@ export function HubView() {
   return html`
     <main class="hub">
       <div class="hub-header">
-        <h1>Global Hub</h1>
-        <p class="hub-header-tagline muted small">Select a project to manage its beads.</p>
+        <div class="hub-header-top">
+          <div>
+            <h1>Global Hub</h1>
+            <p class="hub-header-tagline muted small">Select a project to manage its beads.</p>
+          </div>
+          <button type="button" class="btn btn-accent" onClick=${() => setNewSessionOpen(true)}>+ New code session</button>
+        </div>
         ${OpsStrip()}
       </div>
+      <${NewSessionDialog} open=${newSessionOpen} onClose=${() => setNewSessionOpen(false)} />
 
       <${ProjectRadar} entries=${entries} statsById=${statsById} errors=${statErrors} />
 

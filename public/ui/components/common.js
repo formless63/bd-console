@@ -262,6 +262,38 @@ export async function copyToClipboard(text) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// File -> base64 payload, shared by the "New code session" file-attach step
+// (bd-console-cox.1/cox.3) and the "add files to a project" affordance
+// (bd-console-cox.2/cox.4) — both POST to the same JSON body shape
+// lib/uploads.mjs expects: { name, content } with content base64-encoded.
+// The browser has no Buffer, so FileReader.readAsDataURL is the standard way
+// to get there: it always yields a "data:<mime>;base64,<payload>" string, and
+// this strips everything before the comma.
+// ---------------------------------------------------------------------------
+function fileToBase64(file) {
+  return new Promise((resolveP, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      const comma = result.indexOf(',');
+      resolveP(comma === -1 ? '' : result.slice(comma + 1));
+    };
+    reader.onerror = () => reject(reader.error || new Error(`could not read ${file.name}`));
+    reader.readAsDataURL(file);
+  });
+}
+
+// filesToUploadPayload(files): a FileList/File[] -> [{name, content}], ready
+// to send as the `files` array on POST /api/files/upload or POST
+// /api/tmux/create. Rejects (throwing, so callers can surface one message)
+// if any single read fails — a partial attach silently missing one file
+// would be a worse surprise than the whole attach step failing loudly.
+export async function filesToUploadPayload(files) {
+  const list = Array.from(files || []);
+  return Promise.all(list.map(async (file) => ({ name: file.name, content: await fileToBase64(file) })));
+}
+
 export function CopyIcon() {
   return html`<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M4 1.5A1.5 1.5 0 0 0 2.5 3v7A1.5 1.5 0 0 0 4 11.5h1v-1H4a.5.5 0 0 1-.5-.5V3a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 .5.5v1h1V3A1.5 1.5 0 0 0 9 1.5H4Zm3 3A1.5 1.5 0 0 0 5.5 6v7A1.5 1.5 0 0 0 7 14.5h5a1.5 1.5 0 0 0 1.5-1.5V6A1.5 1.5 0 0 0 12 4.5H7ZM6.5 6a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 .5.5v7a.5.5 0 0 1-.5.5H7a.5.5 0 0 1-.5-.5V6Z"/></svg>`;
 }

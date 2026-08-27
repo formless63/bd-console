@@ -3,7 +3,7 @@
 // strip with the omnibar + CLI teaching flash, the Pulse rail, the segmented
 // Canvas (Flow / Map / Docs) and the Detail slide-over.
 import { html } from 'htm/preact';
-import { useEffect } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { effect } from '@preact/signals';
 import {
   store, navigate, loadProjectMeta, loadIssues, loadDocs, loadTmux, selectIssue,
@@ -36,6 +36,7 @@ import { mol, openMolDialog, loadFormulas } from './molecules.js';
 import { ThemeSwitch } from './ThemeSwitch.js';
 import { WorkflowGuide } from './WorkflowGuide.js';
 import { NudgeRail } from '../components/ConceptTip.js';
+import { AddFilesDialog } from '../components/AddFilesDialog.js';
 import { learnContext } from '../learn.js';
 import { FilterBar } from './FilterBar.js';
 import { loadDefaultView } from './filters.js';
@@ -67,6 +68,7 @@ function Header() {
   const molCount = mol.formulas.value.length;
   const exp = meta?.export;
   const syncState = !exp ? 'unknown' : exp.error ? 'error' : (!exp.exists || exp.stale) ? 'stale' : 'synced';
+  const [addFilesOpen, setAddFilesOpen] = useState(false);
   return html`
     <header class="c2-header">
       <div class="c2-header-top">
@@ -98,6 +100,16 @@ function Header() {
             <span aria-hidden="true">⚗</span><span class="c2-btn-label"> Templates</span>
             ${molCount > 0 && html`<span class="c2-molbtn-n">${molCount}</span>`}
           </button>
+          ${/* Drop a spec/AGENTS.md/etc. straight into this project's
+                directory without leaving the workspace (bd-console-cox.4) —
+                same POST /api/files/upload endpoint NewSessionDialog's
+                file-attach step uses on the hub. Only renders once meta has
+                loaded a workspace path to target. */ ''}
+          ${meta?.workspace && html`
+            <button class="c2-molbtn" title="Add files to this project's directory — a spec, AGENTS.md, whatever it needs next"
+              onClick=${() => setAddFilesOpen(true)}>
+              <span aria-hidden="true">📎</span><span class="c2-btn-label"> Add files</span>
+            </button>`}
           <a class="c2-learnlink" href="#/learn" title="Guide and concepts — learn the project workflow">
             <span aria-hidden="true">?</span><span class="c2-btn-label"> Guide</span>
           </a>
@@ -127,6 +139,7 @@ function Header() {
         </div>
       </div>
       <div class="c2-header-echo"><${CliFlash} /></div>
+      <${AddFilesDialog} open=${addFilesOpen} onClose=${() => setAddFilesOpen(false)} dir=${meta?.workspace} label=${meta?.name || pid} />
     </header>`;
 }
 
