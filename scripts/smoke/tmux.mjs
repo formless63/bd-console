@@ -28,7 +28,7 @@ import {
 } from '../../lib/health.mjs';
 
 export async function runTmux(ctx) {
-  const { assert, port, tempRoot } = ctx;
+  const { assert, port, tempRoot, repoDir } = ctx;
 
   // --- tmux sessions API (hub-level, not project-scoped) ---------------------
   let tmuxPresent = true;
@@ -505,10 +505,15 @@ export async function runTmux(ctx) {
     const relDir = await create({ name: 'smoke-ok', dir: 'not/absolute' });
     assert(relDir.status === 400, `/api/tmux/create with a relative dir should 400, got ${relDir.status}`);
 
-    const missingDir = join(tempRoot, 'does-not-exist-yet');
+    const missingDir = join(repoDir, 'does-not-exist-yet');
     const noCreate = await create({ name: 'smoke-ok', dir: missingDir });
     assert(noCreate.status === 400, `/api/tmux/create against a missing dir without createDir should 400, got ${noCreate.status}`);
     assert(!existsSync(missingDir), 'without createDir:true, /api/tmux/create must not touch the filesystem');
+
+    const outsideCreate = join(tempRoot, 'outside-session-dir');
+    const outsideCreateRes = await create({ name: 'smoke-outside', dir: outsideCreate, createDir: true });
+    assert(outsideCreateRes.status === 403, `tmux/create outside registered workspaces should 403, got ${outsideCreateRes.status}`);
+    assert(!existsSync(outsideCreate), 'rejected out-of-workspace createDir must not create a directory');
 
     console.log('smoke ok (tmux/create: bad name, relative dir, and missing-dir-without-createDir all 400 before touching tmux)');
   }
@@ -521,15 +526,24 @@ export async function runTmux(ctx) {
   // it touches a path, so a crafted "../../../etc/passwd" can only ever land
   // INSIDE the target directory, under a flattened name.
   {
-    const uploadDir = join(tempRoot, 'upload-target');
+    // File control routes are confined to registered workspace roots; keep
+    // this fixture inside the registered smoke repo while still exercising a
+    // nested upload directory.
+    const uploadDir = join(repoDir, 'upload-target');
     mkdirSync(uploadDir, { recursive: true });
     const upload = (b) => fetch(`http://127.0.0.1:${port}/api/files/upload`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b)
     });
     const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
 
-    const missingDir = await upload({ dir: join(tempRoot, 'nope'), files: [{ name: 'a.txt', content: b64('hi') }] });
+    const missingDir = await upload({ dir: join(repoDir, 'nope'), files: [{ name: 'a.txt', content: b64('hi') }] });
     assert(missingDir.status === 400, `upload into a missing dir should 400, got ${missingDir.status}`);
+
+    const outsideDir = join(tempRoot, 'outside-upload-target');
+    mkdirSync(outsideDir, { recursive: true });
+    const outside = await upload({ dir: outsideDir, files: [{ name: 'blocked.txt', content: b64('must not land') }] });
+    assert(outside.status === 403, `upload outside registered workspaces should 403, got ${outside.status}`);
+    assert(!existsSync(join(outsideDir, 'blocked.txt')), 'out-of-workspace upload must not write a file');
 
     // The traversal attempt: content lands as "passwd" inside uploadDir,
     // never anywhere near the tempRoot's parent.

@@ -9,13 +9,13 @@
 // produced exactly those bugs twice.
 import { html } from 'htm/preact';
 import { store, selectIssue, toast } from '../store.js';
-import { c2, setPulseBarCollapsed } from './state.js';
+import { c2, setPulseBarCollapsed, setCanvasMode } from './state.js';
 import { pulse, AGE_AMBER_H, AGE_RED_H, ageMs } from './derive.js';
 import { Corners, PRI_LABEL, StatusGlyph } from './ui.js';
 import { matchProject, cwdTail, agentName, agentTip, isServerMode, promptTip, TermixLink } from '../components/common.js';
 import { ThemeSwitch } from './ThemeSwitch.js';
 
-function focus(lane) { c2.canvasMode.value = 'flow'; c2.laneFocus.value = lane; }
+function focus(lane) { if (setCanvasMode('flow')) c2.laneFocus.value = lane; }
 
 function Tile({ label, value, tone, onClick, sub }) {
   return html`
@@ -51,7 +51,7 @@ function PriorityBars({ dist }) {
   return html`
     <div class="c2-pribars">
       ${dist.map((v, p) => html`
-        <button key=${p} class="c2-pribar" title=${`${v} open at ${PRI_LABEL[p]}`} onClick=${() => { c2.canvasMode.value = 'flow'; c2.laneFocus.value = null; }}>
+        <button key=${p} class="c2-pribar" title=${`${v} open at ${PRI_LABEL[p]}`} onClick=${() => { if (setCanvasMode('flow')) c2.laneFocus.value = null; }}>
           <span class="c2-pribar-k">${PRI_LABEL[p]}</span>
           <span class="c2-pribar-track"><span class=${'c2-pribar-fill pf-' + p} style=${`width:${(v / max) * 100}%`}></span></span>
           <span class="c2-pribar-v">${v}</span>

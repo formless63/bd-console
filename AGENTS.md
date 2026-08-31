@@ -142,8 +142,13 @@ docs/upgrading.md        upgrade + single-repo-era migration guide
   (changed from `127.0.0.1`), which is why first run on a TTY walks through
   an interactive LAN-vs-VPS prompt (`lib/settings.mjs`
   `maybeFirstRunSetup`/`runFirstRunInteractive`) rather than silently
-  applying that default. Static responses send `cache-control: no-cache` so
-  edits show on refresh.
+  applying that default. Tokenless LAN use stays frictionless: mutating browser
+  requests are protected by JSON + Origin/Host checks, while internet exposure
+  belongs behind an authenticating proxy such as Pangolin. A locally
+  terminating proxy works automatically; unusual proxy hostnames can be listed
+  in `BD_CONSOLE_TRUSTED_HOSTS`. Tokens are header-only, never accepted in a
+  query string. Static responses send `cache-control: no-cache` so edits show
+  on refresh.
 
 ## Frontend (public/app.js + public/ui/)
 
@@ -175,7 +180,7 @@ docs/upgrading.md        upgrade + single-repo-era migration guide
 - **Comments + quick capture + rich create** call the POST endpoints
   (`ui/api.js`, token-aware via `localStorage` `bd_token`, prompted through
   `TokenDialog.js`). Quick capture is bound to the `i` key.
-- **Themes:** 5 presets (Default, Dracula, Nord, Gruvbox, Tokyo Night) via
+- **Themes:** 6 presets (Synergy, Default, Dracula, Nord, Gruvbox, Tokyo Night) via
   `ui/theme.js`, each with light/dark/auto scheme — `data-theme` +
   `data-scheme` on `<html>`, applied before first paint by the `<head>`
   script in `index.html` (no flash of the wrong theme). Keep badge colors

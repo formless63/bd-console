@@ -18,6 +18,7 @@ import {
   termixHostsUrl, normalizeTermixHosts, describeTermixFailure, looksLikeTermixApiKey,
 } from '../../lib/termix.mjs';
 import { validateTermixHostId } from '../../lib/config.mjs';
+import { csrfSafe } from '../../lib/routes.mjs';
 
 export async function runSettings(ctx) {
   const { assert, tempRoot, configDir, serverEntry, port, projectId, fixtures } = ctx;
@@ -148,6 +149,26 @@ export async function runSettings(ctx) {
   assert(settingsGet0.configPath === join(configDir, 'config.json'), `settings configPath mismatch: ${settingsGet0.configPath}`);
   assert(/restart/i.test(settingsGet0.note || ''), 'settings note should mention restart');
 
+  // Tokenless LAN mode stays open to same-origin JSON clients, but browser
+  // shaped cross-site writes must not pass as a CSRF form/fetch.
+  const csrfForm = await fetch(`http://127.0.0.1:${port}/api/settings`, {
+    method: 'POST', headers: { 'content-type': 'text/plain' }, body: '{}'
+  });
+  assert(csrfForm.status === 403, `tokenless non-JSON write should be blocked by CSRF guard, got ${csrfForm.status}`);
+  const csrfOrigin = await fetch(`http://127.0.0.1:${port}/api/settings`, {
+    method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://evil.example' },
+    body: JSON.stringify({ token: 'must-not-save' })
+  });
+  assert(csrfOrigin.status === 403, `cross-origin JSON write should be blocked by CSRF guard, got ${csrfOrigin.status}`);
+  assert(!csrfSafe({
+    headers: { 'content-type': 'application/json', host: 'rebind.example', origin: 'http://rebind.example' },
+    socket: { remoteAddress: '192.168.1.44' },
+  }), 'matching attacker Origin/Host from a LAN peer must not bypass DNS-rebinding protection');
+  assert(csrfSafe({
+    headers: { 'content-type': 'application/json', host: 'beads.example.test', origin: 'https://beads.example.test' },
+    socket: { remoteAddress: '127.0.0.1' },
+  }), 'a locally terminating Pangolin/newt request should remain frictionless');
+
   const settingsBadKey = await fetch(`http://127.0.0.1:${port}/api/settings`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ host: '9.9.9.9' })
@@ -165,7 +186,7 @@ export async function runSettings(ctx) {
 
   const settingsGet1 = await fetch(`http://127.0.0.1:${port}/api/settings`).then((r) => r.json());
   assert(settingsGet1.settings.token.set === true, 'settings token.set should be true after POST');
-  assert(settingsGet1.settings.token.masked === 'sekr…', `settings token.masked mismatch: ${settingsGet1.settings.token.masked}`);
+  assert(settingsGet1.settings.token.masked === '••••••••', `settings token.masked must be opaque: ${settingsGet1.settings.token.masked}`);
 
   const settingsClearTok = await fetch(`http://127.0.0.1:${port}/api/settings`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
@@ -275,7 +296,7 @@ export async function runSettings(ctx) {
   const termixGet1 = JSON.parse(termixGet1Text);
   assert(termixGet1.termix.baseUrl.value === 'https://termix.example.com' && termixGet1.termix.baseUrl.source === 'config',
     `termix baseUrl round-trip mismatch: ${JSON.stringify(termixGet1.termix.baseUrl)}`);
-  assert(termixGet1.termix.token.set === true && termixGet1.termix.token.masked === 'term…',
+  assert(termixGet1.termix.token.set === true && termixGet1.termix.token.masked === '••••••••',
     `termix token should read back set + masked only: ${JSON.stringify(termixGet1.termix.token)}`);
 
   // A partial patch leaves the other key alone.
@@ -403,7 +424,7 @@ export async function runSettings(ctx) {
   const settingsListOut = runSettings(['list']);
   assert(settingsListOut.includes('10.1.2.3'), `settings list missing host round-trip:\n${settingsListOut}`);
   assert(settingsListOut.includes('9191'), `settings list missing port round-trip:\n${settingsListOut}`);
-  assert(/token\s+set \(sekr\.\.\.\)/.test(settingsListOut), `settings list did not mask the token:\n${settingsListOut}`);
+  assert(/token\s+set\s+config/.test(settingsListOut), `settings list did not report the token opaquely:\n${settingsListOut}`);
   assert(!settingsListOut.includes('sekret-token-value'), 'settings list leaked the full token value');
   assert(/persist\s+false/.test(settingsListOut), `settings list missing persist round-trip:\n${settingsListOut}`);
   assert(/\bconfig\b/.test(settingsListOut), `settings list did not report "config" as a source:\n${settingsListOut}`);
@@ -429,7 +450,7 @@ export async function runSettings(ctx) {
   assert(badSetFailed, 'settings set with an out-of-range port should fail');
 
   // termix.* takes the same CLI path, nested one level down in config.json,
-  // and its credential is masked in `list` exactly like the write token's.
+  // and its credential is reported as set without leaking even a prefix.
   runSettings(['set', 'termix.baseUrl', 'https://termix.example.com/']);
   runSettings(['set', 'termix.token', 'termix-cli-secret']);
   runSettings(['set', 'termix.hostId', '12']);
@@ -441,7 +462,7 @@ export async function runSettings(ctx) {
   const settingsListOut2 = runSettings(['list']);
   assert(/termix\.hostId\s+12/.test(settingsListOut2), `settings list missing termix.hostId:\n${settingsListOut2}`);
   assert(settingsListOut2.includes('https://termix.example.com'), `settings list missing termix.baseUrl:\n${settingsListOut2}`);
-  assert(/termix\.token\s+set \(term\.\.\.\)/.test(settingsListOut2), `settings list did not mask termix.token:\n${settingsListOut2}`);
+  assert(/termix\.token\s+set\s+config/.test(settingsListOut2), `settings list did not report termix.token opaquely:\n${settingsListOut2}`);
   assert(!settingsListOut2.includes('termix-cli-secret'), 'settings list leaked the full termix token value');
 
   runSettings(['unset', 'termix.token']);
@@ -465,5 +486,5 @@ export async function runSettings(ctx) {
   }
   assert(badHostIdSetFailed, 'settings set with a non-integer termix.hostId should fail');
 
-  console.log('smoke ok (settings set/list/unset round-trip, incl. nested termix.* + masked credential)');
+  console.log('smoke ok (settings set/list/unset round-trip, incl. nested termix.* + opaque credential state)');
 }

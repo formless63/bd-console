@@ -4,26 +4,13 @@
 // Canvas (Flow / Map / Docs) and the Detail slide-over.
 import { html } from 'htm/preact';
 import { useEffect, useState } from 'preact/hooks';
-import { effect } from '@preact/signals';
 import {
-  store, navigate, loadProjectMeta, loadIssues, loadDocs, loadTmux, selectIssue,
+  store, navigate, loadProjectMeta, loadIssues, loadDocs, loadTmux, selectIssue, transitionProject, setNavigationGuard,
 } from '../store.js';
 import { eventsAvailable } from '../events.js';
 import { useVisiblePoll } from '../poll.js';
 
-// app.js's syncRoute() resets store.projectId to null on every non-console2
-// route (its "not a project" branch). This synchronous signals effect re-pins
-// projectId whenever the console2 route is active, so api.js's
-// project-prefixing stays correct without touching app.js. Runs synchronously
-// on any conflicting write, so the null is never observable to an in-flight
-// fetch.
-effect(() => {
-  const r = store.route.value;
-  if (r.view === 'console2' && r.projectId && store.projectId.value !== r.projectId) {
-    store.projectId.value = r.projectId;
-  }
-});
-import { c2, loadEpicGroupPref } from './state.js';
+import { c2, loadEpicGroupPref, resetProjectUi, setCanvasMode, confirmDirtyDocLeave, discardDirtyDoc } from './state.js';
 import { Omnibar } from './Omnibar.js';
 import { PulseBar } from './Pulse.js';
 import { Flow } from './Flow.js';
@@ -32,7 +19,7 @@ import { Docs2 } from './Docs2.js';
 import { Detail } from './Detail.js';
 import { MoleculeDialog } from './MoleculeDialog.js';
 import { DistillDialog, FormulaEditorDialog } from './FormulaAuthor.js';
-import { mol, openMolDialog, loadFormulas } from './molecules.js';
+import { mol, openMolDialog, loadFormulas, resetFormulaState } from './molecules.js';
 import { ThemeSwitch } from './ThemeSwitch.js';
 import { WorkflowGuide } from './WorkflowGuide.js';
 import { NudgeRail } from '../components/ConceptTip.js';
@@ -146,7 +133,7 @@ function Header() {
 function Canvas() {
   const mode = c2.canvasMode.value;
   const chooseMode = (next) => {
-    c2.canvasMode.value = next;
+    if (!setCanvasMode(next)) return;
     setTimeout(() => document.querySelector('#c2-view-tab-' + next)?.focus(), 0);
   };
   return html`
@@ -156,7 +143,7 @@ function Canvas() {
           <button key=${m} class=${'c2-seg' + (mode === m ? ' on' : '')}
             id=${'c2-view-tab-' + m} role="tab" aria-selected=${mode === m}
             aria-controls="c2-view-panel" tabIndex=${mode === m ? '0' : '-1'}
-            onClick=${() => (c2.canvasMode.value = m)}
+            onClick=${() => chooseMode(m)}
             onKeyDown=${(e) => {
               if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
               e.preventDefault();
@@ -200,7 +187,7 @@ function Nudges() {
       case 'learn-links': navigate('#/learn/blocks'); break;
       case 'new-epic': store.createOpen.value = true; break;
       case 'open-molecules': openMolDialog(''); break;
-      case 'focus-stale': c2.canvasMode.value = 'flow'; c2.laneFocus.value = 'stale'; break;
+      case 'focus-stale': if (setCanvasMode('flow')) c2.laneFocus.value = 'stale'; break;
       default: break;
     }
   };
@@ -208,6 +195,14 @@ function Nudges() {
     <${WorkflowGuide} />
     <${NudgeRail} ctx=${ctx} onAction=${onAction} />
   </div>`;
+}
+
+async function bootstrapProject(pid) {
+  c2.ready.value = false;
+  const metaReady = await loadProjectMeta();
+  if (!metaReady || store.projectId.value !== pid) return;
+  await Promise.all([loadIssues(), loadDocs(), loadTmux(), loadFormulas()]);
+  if (store.projectId.value === pid && store.projectReady.value) c2.ready.value = true;
 }
 
 export function Console2() {
@@ -234,33 +229,32 @@ export function Console2() {
   // for #/p/<id>), so Console 2.0 owns loading its own project data.
   useEffect(() => {
     if (!pid) return;
-    store.projectId.value = pid;
-    store.issues.value = [];
-    store.selectedId.value = null;
-    store.selectedDocPath.value = null;
-    store.docContent.value = null;
-    c2.ready.value = false;
-    c2.laneFocus.value = null;
+    transitionProject(pid);
+    resetProjectUi();
+    resetFormulaState();
     c2.epicGroup.value = loadEpicGroupPref(pid);
     // FilterBar (bd-console-974.6): a "default" saved view (if any) applies
     // on project open; otherwise start from a clean, unfiltered slate. Never
     // carries the PREVIOUS project's filter combination across a switch.
     loadDefaultView(pid);
-    // Cancellation guard: navigating away (or to another project) mid-bootstrap
-    // must not let a stale pid's follow-on loads fire or flip ready.
-    let cancelled = false;
-    (async () => {
-      await loadProjectMeta();
-      if (cancelled) return;
-      // loadFormulas rides along with the bootstrap (rather than waiting for
-      // the pour dialog to be opened) for two reasons: the Molecules button
-      // can show a count, and the "this project has recipes you've never
-      // used" nudge can't be evaluated without knowing there are any. It
-      // never throws — molecules.js swallows into mol.formulasError.
-      await Promise.all([loadIssues(), loadDocs(), loadTmux(), loadFormulas()]);
-      if (!cancelled) c2.ready.value = true;
-    })();
-    return () => { cancelled = true; };
+    // Docs2 owns the editor while this route is mounted. Any route-level
+    // anchor (including the hub link) still passes through this callback so a
+    // dirty draft cannot disappear because hash navigation bypassed navigate.
+    // It also clears the draft after confirmation so a later route change
+    // does not ask the same question twice.
+    const guard = (nextHash) => {
+      if (!c2.docDirty.value) return true;
+      if (!confirmDirtyDocLeave()) return false;
+      discardDirtyDoc();
+      return true;
+    };
+    setNavigationGuard(guard);
+    // loadFormulas rides along with the bootstrap (rather than waiting for
+    // the pour dialog to be opened) so the button count and learning nudges
+    // are honest. Project/meta generation guards prevent stale responses from
+    // landing after navigation.
+    bootstrapProject(pid);
+    return () => { setNavigationGuard(null); };
   }, [pid]);
 
   const detailOpen = !!store.selectedId.value;
@@ -287,5 +281,6 @@ export function Console2() {
             That view is retired (and #/p/<id> now redirects straight back
             here), so the only honest offer left is a retry and the hub. */ ''}
       ${store.issuesError.value && html`<div class="c2-boot-err" role="alert">Failed to load issues: ${store.issuesError.value} · <a href="#" onClick=${(e) => { e.preventDefault(); loadIssues({ force: true }); }}>retry</a> · <a href="#/">hub</a></div>`}
+      ${store.projectMetaError.value && html`<div class="c2-boot-err" role="alert">Failed to load project: ${store.projectMetaError.value} · <a href="#" onClick=${(e) => { e.preventDefault(); bootstrapProject(pid); }}>retry</a> · <a href="#/">hub</a></div>`}
     </div>`;
 }

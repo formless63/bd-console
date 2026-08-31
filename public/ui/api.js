@@ -73,6 +73,12 @@ export function setToken(t) {
 
 // Raised on a 401 so the UI can surface the token prompt.
 export class AuthError extends Error {}
+// A project-scoped write attempted while a route transition is still loading
+// its metadata. It is intentionally separate from AuthError so callers don't
+// send the user to Settings for a transient, local bootstrap race.
+export class ProjectNotReadyError extends Error {
+  constructor() { super('Project is still loading; try again when its metadata appears.'); this.name = 'ProjectNotReadyError'; }
+}
 
 // True when `e` came from fetch() itself throwing (DNS failure, connection
 // refused, offline, CORS) rather than the server answering with a non-2xx
@@ -122,6 +128,7 @@ export async function apiGetRaw(path) {
 }
 
 export async function apiPost(path, body) {
+  if (store.projectId.value && !store.projectReady.value) throw new ProjectNotReadyError();
   const headers = { 'content-type': 'application/json' };
   const tokenRequired = store.meta.value?.tokenRequired;
   if (tokenRequired) headers['x-bd-token'] = getToken();

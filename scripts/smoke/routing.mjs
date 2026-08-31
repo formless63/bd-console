@@ -245,6 +245,14 @@ export async function runRouting(ctx) {
       + readFileSync(resolve(join(process.cwd(), 'public', 'ui', 'console2', 'Console2.js')), 'utf8');
     assert(!/['"`]#\/p\/|view === 'project'/.test(routedSrc),
       "nothing may link to #/p/<id> or branch on the retired 'project' view any more");
+    const appSrc = readFileSync(resolve(join(process.cwd(), 'public', 'ui', 'components', 'App.js')), 'utf8');
+    for (const file of ['TmuxView.js', 'ScheduleView.js', 'SettingsView.js', 'LearnView.js']) {
+      assert(!new RegExp(`import\\s+\\{[^}]*\\}\\s+from\\s+['\"](?:\\./|\\.\\./).*${file.replace('.', '\\.')}`).test(appSrc),
+        `route-only ${file} must not be eagerly imported by App.js`);
+      assert(appSrc.includes(`import('./${file}')`) || appSrc.includes(`import('../console2/${file}')`),
+        `route-only ${file} must be loaded through a native dynamic import`);
+    }
+    assert(appSrc.includes("import('../console2/Console2.js')"), 'Console2 must be loaded through a native dynamic import');
     console.log('smoke ok (bd-console-0nd: classic view retired — #/p/<id> and #/p/<id>/docs redirect to #/p2/<id>, hub routes intact)');
   }
 

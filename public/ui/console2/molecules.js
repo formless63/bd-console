@@ -8,7 +8,7 @@
 // the fetches.
 import { signal } from '@preact/signals';
 import { apiGet, apiPost, AuthError } from '../api.js';
-import { byId, childrenOf, toast, loadIssues, selectIssue, requireToken } from '../store.js';
+import { store, byId, childrenOf, toast, loadIssues, selectIssue, requireToken } from '../store.js';
 import {
   previewMode, previewVars,
   FORMULA_NAME_RE, formulaFileName, formulaStem, slugifyFormulaName,
@@ -20,6 +20,14 @@ import { learn } from '../learn.js';
 // A spawn creating this many beads at once earns an extra "are you sure" line
 // in the confirm step. Client-side heuristic only — bd imposes no limit.
 export const BIG_POUR_THRESHOLD = 25;
+
+let formulaProjectGeneration = 0;
+function projectScope() {
+  return { generation: formulaProjectGeneration, projectId: store.projectId.value };
+}
+function isCurrentProject(scope) {
+  return scope.generation === formulaProjectGeneration && scope.projectId === store.projectId.value;
+}
 
 // --- pour dialog ------------------------------------------------------------
 export const mol = {
@@ -56,7 +64,37 @@ export const mol = {
   pourPartial: signal(null),    // { verified, created: [{id,title}] } on failure
 };
 
+// Project-scoped formula dialogs can remain mounted across a route update.
+// Clear them with the same synchronous project transition as issues/docs so a
+// formula from the previous repo cannot be poured or edited in the next one.
+export function resetFormulaState() {
+  formulaProjectGeneration++;
+  previewSeq++;
+  clearPreviewTimer();
+  mol.open.value = false; mol.stage.value = 'browse'; mol.formulas.value = [];
+  mol.formulasLoading.value = false; mol.formulasError.value = null; mol.filter.value = '';
+  mol.formula.value = null; mol.formulaLoading.value = false; mol.formulaError.value = null;
+  mol.values.value = {};
+  mol.assignee.value = ''; mol.preview.value = null; mol.previewError.value = null;
+  mol.previewLoading.value = false; mol.dryRun.value = null; mol.dryRunError.value = null;
+  mol.dryRunLoading.value = false; mol.rawOpen.value = false; mol.pouring.value = false;
+  mol.pourError.value = null; mol.pourPartial.value = null;
+  distill.open.value = false; distill.epicId.value = null; distill.epicTitle.value = '';
+  distill.name.value = ''; distill.vars.value = []; distill.suggestions.value = [];
+  distill.titles.value = []; distill.preview.value = null; distill.previewLoading.value = false;
+  distill.previewError.value = null; distill.saving.value = false; distill.error.value = null;
+  distill.conflict.value = null;
+  fed.open.value = false; fed.files.value = []; fed.filesLoading.value = false;
+  fed.filesError.value = null; fed.name.value = ''; fed.draft.value = '';
+  fed.dirty.value = false; fed.isNew.value = false; fed.loading.value = false;
+  fed.loadError.value = null; fed.saving.value = false; fed.saveError.value = null;
+  molDetail.id.value = null; molDetail.data.value = null; molDetail.loading.value = false;
+  molDetail.error.value = null; molDetail.burnPreview.value = null; molDetail.burnLoading.value = false;
+  molDetail.burnError.value = null; molDetail.burning.value = false;
+}
+
 export function openMolDialog(prefill = '') {
+  const scope = projectScope();
   mol.open.value = true;
   mol.stage.value = 'browse';
   mol.filter.value = '';
@@ -72,6 +110,7 @@ export function openMolDialog(prefill = '') {
   mol.pourError.value = null;
   mol.pourPartial.value = null;
   loadFormulas().then(() => {
+    if (!isCurrentProject(scope)) return;
     // `> mol <name>` jumps straight into that formula's form when it resolves.
     if (prefill && mol.formulas.value.some((f) => f.name === prefill)) chooseFormula(prefill);
     else if (prefill) mol.filter.value = prefill;
@@ -84,20 +123,24 @@ export function closeMolDialog() {
 }
 
 export async function loadFormulas() {
+  const scope = projectScope();
   mol.formulasLoading.value = true;
   mol.formulasError.value = null;
   try {
     const data = await apiGet('/api/formulas');
+    if (!isCurrentProject(scope)) return;
     mol.formulas.value = data.formulas || [];
   } catch (e) {
+    if (!isCurrentProject(scope)) return;
     mol.formulas.value = [];
     mol.formulasError.value = e.message;
   } finally {
-    mol.formulasLoading.value = false;
+    if (isCurrentProject(scope)) mol.formulasLoading.value = false;
   }
 }
 
 export async function chooseFormula(name) {
+  const scope = projectScope();
   mol.stage.value = 'form';
   mol.formulaLoading.value = true;
   mol.formulaError.value = null;
@@ -107,12 +150,14 @@ export async function chooseFormula(name) {
   mol.previewError.value = null;
   try {
     const data = await apiGet('/api/formulas/' + encodeURIComponent(name));
+    if (!isCurrentProject(scope)) return;
     mol.formula.value = data.formula || null;
     refreshPreview();
   } catch (e) {
+    if (!isCurrentProject(scope)) return;
     mol.formulaError.value = e.message;
   } finally {
-    mol.formulaLoading.value = false;
+    if (isCurrentProject(scope)) mol.formulaLoading.value = false;
   }
 }
 
@@ -139,6 +184,7 @@ function schedulePreview() {
 }
 
 export async function refreshPreview() {
+  const scope = projectScope();
   const formula = mol.formula.value;
   if (!formula) return;
   const name = formula.formula;
@@ -152,14 +198,14 @@ export async function refreshPreview() {
   const qs = Object.entries(vars).map(([k, v]) => `var.${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
   try {
     const data = await apiGet('/api/formulas/' + encodeURIComponent(name) + '/preview' + (qs ? '?' + qs : ''));
-    if (seq !== previewSeq) return; // a newer keystroke already won
+    if (seq !== previewSeq || !isCurrentProject(scope)) return; // a newer keystroke/project already won
     mol.preview.value = data.preview || null;
     mol.previewMode.value = data.mode || mode;
   } catch (e) {
-    if (seq !== previewSeq) return;
+    if (seq !== previewSeq || !isCurrentProject(scope)) return;
     mol.previewError.value = e.message;
   } finally {
-    if (seq === previewSeq) mol.previewLoading.value = false;
+    if (seq === previewSeq && isCurrentProject(scope)) mol.previewLoading.value = false;
   }
 }
 
@@ -167,6 +213,7 @@ export async function refreshPreview() {
 // --dry-run`. Its output is opaque preview TEXT (bd ignores --json here), so
 // it is stored and rendered verbatim.
 export async function runDryRun() {
+  const scope = projectScope();
   const formula = mol.formula.value;
   if (!formula) return;
   mol.stage.value = 'confirm';
@@ -181,11 +228,13 @@ export async function runDryRun() {
     .join('&');
   try {
     const data = await apiGet('/api/molecules/pour-preview?' + qs);
+    if (!isCurrentProject(scope)) return;
     mol.dryRun.value = { preview: data.preview || '', command: data.command || '' };
   } catch (e) {
+    if (!isCurrentProject(scope)) return;
     mol.dryRunError.value = e.message;
   } finally {
-    mol.dryRunLoading.value = false;
+    if (isCurrentProject(scope)) mol.dryRunLoading.value = false;
   }
 }
 
@@ -202,6 +251,7 @@ function filledVars() {
 // dry-run rendered — there is deliberately no path from "open the dialog" to
 // "beads created" that skips the preview.
 export async function doPour() {
+  const scope = projectScope();
   const formula = mol.formula.value;
   if (!formula || mol.pouring.value) return;
   mol.pouring.value = true;
@@ -214,6 +264,7 @@ export async function doPour() {
       vars: filledVars(),
       ...(assignee ? { assignee } : {}),
     });
+    if (!isCurrentProject(scope)) return;
     flashCli(data.command || `bd mol pour ${formula.formula}`, 'pour');
     // They've poured. The "you have never used these recipes" nudge is done,
     // and the dialog's "what is a molecule?" explainer can rest collapsed —
@@ -234,6 +285,7 @@ export async function doPour() {
     }
     return data;
   } catch (e) {
+    if (!isCurrentProject(scope)) return;
     if (e instanceof AuthError) { requireToken('A write token is required to pour a molecule.'); closeMolDialog(); return; }
     mol.pourError.value = e.message;
     // The server's partial-failure report rides on the error payload (see
@@ -242,7 +294,7 @@ export async function doPour() {
     mol.pourPartial.value = e.payload?.partial || null;
     await loadIssues(); // whatever landed should be visible either way
   } finally {
-    mol.pouring.value = false;
+    if (isCurrentProject(scope)) mol.pouring.value = false;
   }
 }
 
@@ -378,6 +430,7 @@ export function distillNameProblem() {
 // the way `mol pour --dry-run` does (docs/molecules-design.md; re-verified on
 // v1.1.0), so it is rendered verbatim and never parsed.
 export async function runDistillPreview() {
+  const scope = projectScope();
   const epic = distill.epicId.value;
   const name = String(distill.name.value || '').trim();
   if (!epic || distillNameProblem() || distillVarProblems().length) return;
@@ -389,16 +442,19 @@ export async function runDistillPreview() {
     .join('&');
   try {
     const data = await apiGet('/api/formula-distill-preview?' + qs);
+    if (!isCurrentProject(scope)) return;
     distill.preview.value = { preview: data.preview || '', command: data.command || '', file: data.file || formulaFileName(name) };
   } catch (e) {
+    if (!isCurrentProject(scope)) return;
     distill.previewError.value = e.message;
   } finally {
-    distill.previewLoading.value = false;
+    if (isCurrentProject(scope)) distill.previewLoading.value = false;
   }
 }
 
 // THE write — one file, no beads. Only reachable once a dry run has rendered.
 export async function saveDistill({ overwrite = false } = {}) {
+  const scope = projectScope();
   const epic = distill.epicId.value;
   const name = String(distill.name.value || '').trim();
   if (!epic || distill.saving.value) return;
@@ -406,19 +462,21 @@ export async function saveDistill({ overwrite = false } = {}) {
   distill.error.value = null;
   try {
     const data = await apiPost('/api/formula-distill', { epic, name, vars: distillVarMap(), overwrite });
+    if (!isCurrentProject(scope)) return;
     flashCli(data.command || `bd mol distill ${epic} ${name}`, 'distill');
     await loadFormulas();
     closeDistillDialog();
     toast(`✓ Saved ${data.formula} — ${data.steps} step${data.steps === 1 ? '' : 's'}, ready to pour`, 'ok', 5000);
     return data;
   } catch (e) {
+    if (!isCurrentProject(scope)) return;
     if (e instanceof AuthError) { requireToken('A write token is required to save a template.'); closeDistillDialog(); return; }
     // 409 is not a failure, it's a question: distill OVERWRITES silently, so
     // the user gets told what they are about to replace before it happens.
     if (e.status === 409) { distill.conflict.value = { file: e.payload?.file || formulaFileName(name) }; return; }
     distill.error.value = e.message;
   } finally {
-    distill.saving.value = false;
+    if (isCurrentProject(scope)) distill.saving.value = false;
   }
 }
 
@@ -447,21 +505,25 @@ export const fed = {
 };
 
 export async function loadFormulaFiles() {
+  const scope = projectScope();
   fed.filesLoading.value = true;
   fed.filesError.value = null;
   try {
     const data = await apiGet('/api/formula-files');
+    if (!isCurrentProject(scope)) return;
     fed.dir.value = data.dir || '.beads/formulas';
     fed.files.value = data.files || [];
   } catch (e) {
+    if (!isCurrentProject(scope)) return;
     fed.files.value = [];
     fed.filesError.value = e.message;
   } finally {
-    fed.filesLoading.value = false;
+    if (isCurrentProject(scope)) fed.filesLoading.value = false;
   }
 }
 
 export function openFormulaEditor(name = '', { fresh = false } = {}) {
+  const scope = projectScope();
   fed.open.value = true;
   fed.saveError.value = null;
   fed.loadError.value = null;
@@ -472,6 +534,7 @@ export function openFormulaEditor(name = '', { fresh = false } = {}) {
     fed.isNew.value = false;
   }
   loadFormulaFiles().then(() => {
+    if (!isCurrentProject(scope)) return;
     if (fresh) { newFormula(); return; }
     if (!name) return;
     // Accept either a file basename or a formula name — the palette argument
@@ -496,6 +559,7 @@ export function backToFormulaList() {
 }
 
 export async function openFormulaFile(name) {
+  const scope = projectScope();
   fed.name.value = name;
   fed.isNew.value = false;
   fed.dirty.value = false;
@@ -505,13 +569,13 @@ export async function openFormulaFile(name) {
   fed.draft.value = '';
   try {
     const data = await apiGet('/api/formula-file?name=' + encodeURIComponent(name));
-    if (fed.name.value !== name) return;
+    if (!isCurrentProject(scope) || fed.name.value !== name) return;
     fed.draft.value = data.content || '';
   } catch (e) {
-    if (fed.name.value !== name) return;
+    if (!isCurrentProject(scope) || fed.name.value !== name) return;
     fed.loadError.value = e.message;
   } finally {
-    if (fed.name.value === name) fed.loading.value = false;
+    if (isCurrentProject(scope) && fed.name.value === name) fed.loading.value = false;
   }
 }
 
@@ -549,6 +613,7 @@ export function setFormulaDraft(text) {
 }
 
 export async function saveFormula() {
+  const scope = projectScope();
   const name = String(fed.name.value || '').trim();
   if (!name || fed.saving.value) return;
   const local = formulaSaveProblem(name, fed.draft.value);
@@ -557,6 +622,7 @@ export async function saveFormula() {
   fed.saveError.value = null;
   try {
     const data = await apiPost('/api/formula-file', { name, content: fed.draft.value });
+    if (!isCurrentProject(scope)) return;
     flashCli(`bd-console formula save ${name}`, 'formula');
     fed.dirty.value = false;
     fed.isNew.value = false;
@@ -564,12 +630,13 @@ export async function saveFormula() {
     toast(`✓ Saved ${data.formula} — ${data.steps} step${data.steps === 1 ? '' : 's'}`);
     return data;
   } catch (e) {
+    if (!isCurrentProject(scope)) return;
     if (e instanceof AuthError) { requireToken('A write token is required to save a formula.'); return; }
     // bd's own words. The server validated against a copy in a temp dir, so
     // NOTHING was written — the file on disk is still whatever it was.
     fed.saveError.value = e.message;
   } finally {
-    fed.saving.value = false;
+    if (isCurrentProject(scope)) fed.saving.value = false;
   }
 }
 
@@ -600,6 +667,7 @@ export const molDetail = {
 // loaded issues list, so this degrades to "it's a molecule, here are its
 // children" rather than blanking the panel.
 export async function loadMoleculeDetail(id, { force = false } = {}) {
+  const scope = projectScope();
   if (!id) { molDetail.id.value = null; molDetail.data.value = null; return; }
   if (!force && molDetail.id.value === id && molDetail.data.value) return;
   const sameMolecule = molDetail.id.value === id;
@@ -616,27 +684,30 @@ export async function loadMoleculeDetail(id, { force = false } = {}) {
   }
   try {
     const data = await apiGet('/api/molecules/' + encodeURIComponent(id) + '?parallel=1');
-    if (molDetail.id.value !== id) return;
+    if (!isCurrentProject(scope) || molDetail.id.value !== id) return;
     molDetail.data.value = data;
   } catch (e) {
-    if (molDetail.id.value !== id) return;
+    if (!isCurrentProject(scope) || molDetail.id.value !== id) return;
     molDetail.error.value = e.message;
   } finally {
-    if (molDetail.id.value === id) molDetail.loading.value = false;
+    if (isCurrentProject(scope) && molDetail.id.value === id) molDetail.loading.value = false;
   }
 }
 
 export async function requestBurnPreview(id) {
+  const scope = projectScope();
   molDetail.burnLoading.value = true;
   molDetail.burnError.value = null;
   molDetail.burnPreview.value = null;
   try {
     const data = await apiGet('/api/molecules/burn-preview?id=' + encodeURIComponent(id));
+    if (!isCurrentProject(scope)) return;
     molDetail.burnPreview.value = { preview: data.preview || '', command: data.command || '' };
   } catch (e) {
+    if (!isCurrentProject(scope)) return;
     molDetail.burnError.value = e.message;
   } finally {
-    molDetail.burnLoading.value = false;
+    if (isCurrentProject(scope)) molDetail.burnLoading.value = false;
   }
 }
 
@@ -646,11 +717,13 @@ export function cancelBurn() {
 }
 
 export async function confirmBurn(id) {
+  const scope = projectScope();
   if (molDetail.burning.value) return;
   molDetail.burning.value = true;
   molDetail.burnError.value = null;
   try {
     const data = await apiPost('/api/molecules/burn', { id });
+    if (!isCurrentProject(scope)) return;
     flashCli(data.command || `bd mol burn ${id} --force`, 'burn');
     molDetail.burnPreview.value = null;
     molDetail.id.value = null;
@@ -666,9 +739,10 @@ export async function confirmBurn(id) {
     );
     return data;
   } catch (e) {
+    if (!isCurrentProject(scope)) return;
     if (e instanceof AuthError) { requireToken('A write token is required to burn a molecule.'); return; }
     molDetail.burnError.value = e.message;
   } finally {
-    molDetail.burning.value = false;
+    if (isCurrentProject(scope)) molDetail.burning.value = false;
   }
 }

@@ -320,11 +320,15 @@ export function CopyIcon() {
 // diverge (e.g. an epic titled "Zebra" created first, hence a low id, still
 // sorts last) and the picker is correct regardless of what the backend
 // returns.
+let epicComboboxId = 0;
 export function EpicCombobox({ epics, value, onChange, placeholder = 'None' }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [hi, setHi] = useState(-1);
   const wrapRef = useRef(null);
+  const listIdRef = useRef(null);
+  if (!listIdRef.current) listIdRef.current = `epic-options-${++epicComboboxId}`;
+  const listId = listIdRef.current;
 
   const sorted = useMemo(
     () => (epics || []).slice().sort((a, b) => (a.title || '').toLowerCase().localeCompare((b.title || '').toLowerCase())),
@@ -353,8 +357,14 @@ export function EpicCombobox({ epics, value, onChange, placeholder = 'None' }) {
       setHi((i) => Math.min(i + 1, filtered.length));
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      if (!open) return;
-      setHi((i) => Math.max(i - 1, 0));
+      if (!open) { openMenu(); setHi(filtered.length); return; }
+      setHi((i) => i <= 0 ? filtered.length : i - 1);
+    } else if (e.key === 'Home' && open) {
+      e.preventDefault();
+      setHi(0);
+    } else if (e.key === 'End' && open) {
+      e.preventDefault();
+      setHi(filtered.length);
     } else if (e.key === 'Enter') {
       if (!open) return;
       e.preventDefault();
@@ -381,21 +391,24 @@ export function EpicCombobox({ epics, value, onChange, placeholder = 'None' }) {
 
   return html`
     <div class="combobox epic-combobox" ref=${wrapRef}>
-      <input class="field" placeholder=${placeholder} value=${displayValue} autocomplete="off"
+      <input class="field" role="combobox" aria-autocomplete="list" aria-haspopup="listbox"
+        aria-expanded=${open} aria-controls=${listId}
+        aria-activedescendant=${open && hi >= 0 ? (hi === 0 ? `${listId}-none` : `${listId}-${hi - 1}`) : undefined}
+        placeholder=${placeholder} value=${displayValue} autocomplete="off"
         onFocus=${openMenu}
         onClick=${openMenu}
         onInput=${(e) => { setQuery(e.target.value); setOpen(true); setHi(-1); }}
         onKeyDown=${onKeyDown} />
       ${open && html`
-        <ul class="combobox-menu" role="listbox">
-          <li role="option" aria-selected=${!value && hi <= 0}
+        <ul class="combobox-menu" id=${listId} role="listbox" aria-label="Open epics">
+          <li id=${`${listId}-none`} role="option" aria-selected=${!value && hi <= 0}
             class=${'combobox-opt epic-opt' + (hi <= 0 ? ' hi' : '')}
             onMouseDown=${(e) => { e.preventDefault(); pick(''); }}
             onMouseEnter=${() => setHi(0)}>
             <span class="combobox-opt-title">None</span>
           </li>
           ${filtered.map((e2, i) => html`
-            <li key=${e2.id} role="option" aria-selected=${hi === i + 1}
+            <li key=${e2.id} id=${`${listId}-${i}`} role="option" aria-selected=${hi === i + 1}
               class=${'combobox-opt epic-opt' + (hi === i + 1 ? ' hi' : '')}
               onMouseDown=${(ev) => { ev.preventDefault(); pick(e2.id); }}
               onMouseEnter=${() => setHi(i + 1)}>

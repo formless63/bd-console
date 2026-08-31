@@ -5,7 +5,7 @@
 //     node scripts/smoke.mjs docs
 // Shared fixtures, isolation and helpers come from ./harness.mjs via ctx.
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 // Pure MapView/docs derivations (docs/beads-coverage.md Phase 2) — signal-free
 // by design, so they can be asserted in Node instead of only in a browser.
@@ -18,6 +18,7 @@ import { newDocName, newDocPath, docFolders, newDocProblem, newDocTemplate } fro
 // importable and assertable straight in Node, same contract as the
 // derivations above.
 import { renderMarkdown, sanitizeUrl } from '../../public/ui/markdown.js';
+import { validateDocRoots } from '../../lib/docs.mjs';
 
 export async function runDocs(ctx) {
   const { assert, tempRoot, p } = ctx;
@@ -130,6 +131,24 @@ export async function runDocs(ctx) {
   });
   assert(docCreateTraversal.status === 400, `create:true traversal escape should 400, got ${docCreateTraversal.status}`);
   assert(!existsSync(join(tempRoot, 'outside-create.md')), 'create:true traversal must not have written outside the workspace');
+
+  // Lexically safe paths must not follow a document symlink out of the
+  // workspace. The target is outside the registered repo and both read/write
+  // paths must reject it before touching the target.
+  const symlinkTarget = join(tempRoot, 'outside-doc-secret.md');
+  const symlinkPath = join(tempRoot, 'repo', 'docs', 'outside-link.md');
+  writeFileSync(symlinkTarget, 'secret outside workspace\n');
+  try { symlinkSync(symlinkTarget, symlinkPath); } catch (e) { throw new Error(`could not create symlink fixture: ${e.message}`); }
+  const symlinkRead = await fetch(p(`/doc?path=${encodeURIComponent('docs/outside-link.md')}`));
+  assert(symlinkRead.status === 404, `doc read must reject symlink escapes, got ${symlinkRead.status}`);
+  const symlinkWrite = await fetch(p('/doc'), {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: 'docs/outside-link.md', content: 'must not overwrite', create: true })
+  });
+  assert(symlinkWrite.status === 400, `doc write must reject symlink escapes, got ${symlinkWrite.status}`);
+  assert(readFileSync(symlinkTarget, 'utf8') === 'secret outside workspace\n', 'outside symlink target was modified');
+  const roots = validateDocRoots(join(tempRoot, 'repo'), ['docs', '../', '/tmp', 'missing', 'docs']);
+  assert(roots.length === 1 && roots[0] === 'docs', `docRoots must keep only unique, existing workspace-relative roots, got ${JSON.stringify(roots)}`);
 
   console.log('smoke ok (create-only doc route: fresh-path success, existing-path 409 without overwrite, traversal still rejected)');
 

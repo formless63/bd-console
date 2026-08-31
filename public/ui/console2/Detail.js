@@ -321,6 +321,7 @@ function Comments({ id }) {
   const [busy, setBusy] = useState(false);
   const comments = store.comments.value;
   const loading = store.commentsLoading.value;
+  const error = store.commentsError.value;
   const submit = async () => {
     if (!text.trim()) return;
     setBusy(true);
@@ -329,6 +330,7 @@ function Comments({ id }) {
   return html`
     <div class="c2-comments">
       ${loading ? html`<div class="c2-lane-empty">loading…</div>`
+        : error ? html`<div class="c2-lane-empty c2-comments-error" role="alert">Could not load comments: ${error}</div>`
         : comments.length === 0 ? html`<div class="c2-lane-empty">No comments yet.</div>`
           : comments.map((c, n) => html`
             <div key=${n} class="c2-comment">

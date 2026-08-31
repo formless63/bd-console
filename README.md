@@ -237,6 +237,7 @@ All keys are optional; omit any you want left at its default.
 BD_CONSOLE_HOST             # overrides host
 BD_CONSOLE_PORT             # overrides port
 BD_CONSOLE_TOKEN            # overrides token
+BD_CONSOLE_TRUSTED_HOSTS     # optional comma-separated public/proxy hostnames
 BD_CONSOLE_PERSIST=0|1      # overrides persist
 BD_CONSOLE_CONFIG_DIR       # relocates ~/.config/bd-console entirely
 BD_CONSOLE_SCHED_INTERVAL   # scheduler poll interval in ms (default 15000)
@@ -378,12 +379,18 @@ Other invariants, unchanged from the original design:
 - Writes go through `bd` via `execFile` with an args array — no shell
   interpolation, ever.
 - Issue IDs and labels are format-validated before every write.
-- Doc reads are restricted to the workspace root and validated against path
-  traversal.
-- tmux pane previews (`/api/tmux/preview`) are token-gated the same as
-  writes, since pane contents can contain secrets.
-- `?token=` works for API calls; the browser UI itself stores the token in
-  `localStorage` and sends it via the `x-bd-token` header.
+- Browser writes must be same-origin JSON requests. Direct LAN hostnames,
+  interface addresses, and a locally terminating Pangolin/newt proxy work
+  without setup; unusual remote proxy topologies can add their public names
+  with `BD_CONSOLE_TRUSTED_HOSTS=name1,name2`.
+- File/session creation and doc/formula reads and writes are confined to
+  registered workspace roots using real-path checks, including symlinks.
+- Sensitive host reads (settings, scheduler prompts, saved prompts, tmux
+  inventory/previews, and usage details) are token-gated when an optional
+  token is configured. They remain open in the intentional tokenless LAN mode.
+- Tokens are accepted only through the `x-bd-token` header, never a query
+  string. The browser UI stores an optional token in `localStorage` and sends
+  that header automatically.
 
 ## Scheduler
 
@@ -428,11 +435,11 @@ prove.
 API surface, hub-level (not project-scoped):
 
 ```
-GET  /api/tmux                    list tmux sessions/panes on the hub's host
+GET  /api/tmux                    list tmux sessions/panes (token-gated when configured)
                                   (+ detected agent / mode / promptable)
-GET  /api/tmux/preview?session=&lines=   scrollback preview (token-gated)
+GET  /api/tmux/preview?session=&lines=   scrollback preview (token-gated when configured)
 POST /api/tmux/send                type a prompt now: {session, text, force?}
-GET  /api/schedule                 list jobs
+GET  /api/schedule                 list jobs (token-gated when configured)
 POST /api/schedule                 create a job: {prompt, session, runAt}
 POST /api/schedule/cancel          cancel a still-pending job: {id}
 ```

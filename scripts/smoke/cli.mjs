@@ -5,11 +5,11 @@
 //     node scripts/smoke.mjs cli
 // Shared fixtures, isolation and helpers come from ./harness.mjs via ctx.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import net from 'node:net';
-import { renderServiceUnit } from '../../lib/systemd.mjs';
+import { renderServiceUnit, persistedEnvironment } from '../../lib/systemd.mjs';
 import { detectFlavor, plannedCommands, formatCommand } from '../../lib/update.mjs';
 
 export async function runCli(ctx) {
@@ -20,12 +20,16 @@ export async function runCli(ctx) {
   // the old single-file `finally` block did.
   let daemonPid;
   let firstRunPid;
+  let unrelatedPid;
   ctx.onCleanup(() => {
     if (daemonPid && isPidAlive(daemonPid)) {
       try { process.kill(daemonPid, 'SIGKILL'); } catch { /* already gone */ }
     }
     if (firstRunPid && isPidAlive(firstRunPid)) {
       try { process.kill(firstRunPid, 'SIGKILL'); } catch { /* already gone */ }
+    }
+    if (unrelatedPid && isPidAlive(unrelatedPid)) {
+      try { process.kill(unrelatedPid, 'SIGKILL'); } catch { /* already gone */ }
     }
   });
 
@@ -78,7 +82,13 @@ export async function runCli(ctx) {
   // BD_CONSOLE_SYSTEMD_DIR isolation matters even with PERSIST=0: the
   // supersede step inspects the systemd unit, and it must see the temp dir's
   // (nonexistent) unit, never the machine's real bd-console.service.
-  const daemonEnv = { ...process.env, BD_CONSOLE_CONFIG_DIR: daemonConfigDir, BD_CONSOLE_SYSTEMD_DIR: daemonSystemdDir, BD_CONSOLE_PERSIST: '0' };
+  const daemonEnv = {
+    ...process.env,
+    BD_CONSOLE_CONFIG_DIR: daemonConfigDir,
+    BD_CONSOLE_SYSTEMD_DIR: daemonSystemdDir,
+    BD_CONSOLE_PERSIST: '0',
+    BD_CONSOLE_TOKEN: 'smoke-token',
+  };
   const daemonPort = await getPort();
   const daemonPidPath = join(daemonConfigDir, 'console.pid');
 
@@ -91,14 +101,55 @@ export async function runCli(ctx) {
     });
   }
 
+  // A stale numeric pid file is not proof of process identity. Starting the
+  // hub must leave an unrelated live process alone, discard the stale record,
+  // and continue normally.
+  const unrelated = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    stdio: 'ignore', detached: false,
+  });
+  unrelatedPid = unrelated.pid;
+  writeFileSync(daemonPidPath, String(unrelatedPid));
+
   runServeCommand(['start']);
+  assert(isPidAlive(unrelatedPid), 'daemon start killed an unrelated process named by a stale pid file');
   assert(existsSync(daemonPidPath), 'daemon `start` did not write a pid file');
   const daemonPid1 = Number(readFileSync(daemonPidPath, 'utf8').trim());
   daemonPid = daemonPid1;
   assert(isPidAlive(daemonPid1), 'daemon `start` pid is not alive');
+  assert((statSync(daemonConfigDir).mode & 0o777) === 0o700, 'daemon config directory must be private');
+  assert((statSync(join(daemonConfigDir, 'console.log')).mode & 0o777) === 0o600, 'daemon log must be private');
+  assert((statSync(daemonPidPath).mode & 0o777) === 0o600, 'daemon pid file must be private');
+  assert((statSync(`${daemonPidPath}.meta`).mode & 0o777) === 0o600, 'daemon pid identity file must be private');
+  try {
+    await waitFor(`http://127.0.0.1:${daemonPort}/api/meta`);
+  } catch (err) {
+    const log = readFileSync(join(daemonConfigDir, 'console.log'), 'utf8');
+    throw new Error(`daemon readiness check failed: ${err.message}\n${log}`);
+  }
   const daemonMeta1 = await fetch(`http://127.0.0.1:${daemonPort}/api/meta`).then((r) => r.json());
   assert(daemonMeta1.mode === 'hub', 'daemon /api/meta should report hub mode');
   assert(daemonMeta1.pid === daemonPid1, 'hub /api/meta pid did not match the pid file after first start');
+  assert(daemonMeta1.tokenRequired === true, 'daemon readiness did not preserve the expected token setting');
+  let queryTokenResponse;
+  try {
+    queryTokenResponse = await fetch(
+      `http://127.0.0.1:${daemonPort}/api/settings?token=smoke-token`,
+    );
+  } catch (err) {
+    const log = readFileSync(join(daemonConfigDir, 'console.log'), 'utf8');
+    throw new Error(`query-token request failed: ${err.message}\n${log}`);
+  }
+  assert(queryTokenResponse.status === 401, 'tokens in query strings must not authenticate requests');
+  let headerTokenResponse;
+  try {
+    headerTokenResponse = await fetch(`http://127.0.0.1:${daemonPort}/api/settings`, {
+      headers: { 'x-bd-token': 'smoke-token' },
+    });
+  } catch (err) {
+    const log = readFileSync(join(daemonConfigDir, 'console.log'), 'utf8');
+    throw new Error(`header-token request failed: ${err.message}\n${log}`);
+  }
+  assert(headerTokenResponse.status === 200, 'token header should authenticate sensitive reads');
 
   // Running `start` again must supersede — never silently no-op.
   runServeCommand(['start']);
@@ -107,6 +158,7 @@ export async function runCli(ctx) {
   assert(daemonPid2 !== daemonPid1, 'supersede did not replace the running daemon (pid unchanged)');
   assert(!isPidAlive(daemonPid1), 'previous daemon process is still alive after supersede');
   assert(isPidAlive(daemonPid2), 'superseding daemon pid is not alive');
+  await waitFor(`http://127.0.0.1:${daemonPort}/api/meta`);
   const daemonMeta2 = await fetch(`http://127.0.0.1:${daemonPort}/api/meta`).then((r) => r.json());
   assert(daemonMeta2.pid === daemonPid2, 'hub /api/meta pid did not match the pid file after supersede');
 
@@ -130,11 +182,30 @@ export async function runCli(ctx) {
     execPath: '/usr/bin/node',
     serveEntry: '/opt/bd-console/serve.mjs',
     forwardArgs: ['--port', '4180'],
-    path: '/usr/bin:/home/user/.local/bin'
+    path: '/usr/bin:/home/user/.local/bin',
+    environment: {
+      BD_CONSOLE_CONFIG_DIR: '/tmp/bd-console-config',
+      BD_CONSOLE_HOST: '0.0.0.0',
+      BD_CONSOLE_PORT: '4181',
+      BD_CONSOLE_TOKEN: 'lan-secret',
+      BD_CONSOLE_TERMIX_URL: 'https://termix.example.test',
+      BD_CONSOLE_TERMIX_TOKEN: 'termix-secret',
+      BD_CONSOLE_TERMIX_HOST_ID: '7',
+      NOT_BD_CONSOLE: 'must-not-leak'
+    }
   });
   assert(unitText.includes('ExecStart=/usr/bin/node /opt/bd-console/serve.mjs --port 4180'), 'unit file ExecStart mismatch');
   assert(unitText.includes('Environment="PATH=/usr/bin:/home/user/.local/bin"'),
     'unit file must embed the invoking PATH so the daemon can find bd/tmux under systemd');
+  assert(unitText.includes('Environment="BD_CONSOLE_CONFIG_DIR=/tmp/bd-console-config"'),
+    'unit file must preserve the config-dir environment override');
+  assert(unitText.includes('Environment="BD_CONSOLE_TOKEN=lan-secret"')
+    && unitText.includes('Environment="BD_CONSOLE_TERMIX_URL=https://termix.example.test"'),
+  'unit file must preserve token and Termix environment overrides');
+  assert(!unitText.includes('NOT_BD_CONSOLE'), 'unit file must not copy arbitrary environment variables');
+  const filteredEnv = persistedEnvironment({ BD_CONSOLE_PORT: 1, NOT_BD_CONSOLE: 'x' });
+  assert(filteredEnv.BD_CONSOLE_PORT === '1' && !('NOT_BD_CONSOLE' in filteredEnv),
+    'persistedEnvironment must filter to documented settings');
   assert(unitText.includes('Restart=on-failure'), 'unit file missing Restart=on-failure');
   assert(unitText.includes('WantedBy=default.target'), 'unit file missing WantedBy=default.target');
   assert(unitText.includes('[Service]') && unitText.includes('[Install]'), 'unit file missing expected sections');

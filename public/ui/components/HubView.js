@@ -139,15 +139,16 @@ export function HubView() {
 
   useEffect(() => {
     let live = true;
-    const nextStats = {};
-    const nextErrors = new Set();
-    Promise.all(entries.map(async ([id]) => {
-      try { nextStats[id] = await loadProjectStats(id); }
-      catch { nextErrors.add(id); }
-    })).then(() => {
-      if (!live) return;
-      setStatsById(nextStats);
-      setStatErrors(nextErrors);
+    setStatsById({});
+    setStatErrors(new Set());
+    entries.forEach(async ([id]) => {
+      let stats;
+      try { stats = await loadProjectStats(id); }
+      catch {
+        if (live) setStatErrors((old) => new Set([...old, id]));
+        return;
+      }
+      if (live) setStatsById((old) => ({ ...old, [id]: stats }));
     });
     return () => { live = false; };
   }, [entries.map(([id]) => id).join('\n')]);
@@ -173,7 +174,9 @@ export function HubView() {
       ${AttributionBand()}
 
       ${entries.length === 0
-        ? store.hubUnreachable.value
+        ? store.hubLoading.value
+          ? html`<div class="empty-state hub-empty-state"><div class="empty-icon">…</div><p>Loading projects…</p></div>`
+          : store.hubUnreachable.value
           ? html`<div class="empty-state hub-empty-state hub-unreachable-state">
               <div class="empty-icon">⚠</div>
               <p>Can't reach the bd-console server.</p>

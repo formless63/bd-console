@@ -841,6 +841,23 @@ export async function runUsage(ctx) {
     assert(f4.n === 2 && f4.cached === true,
       `a second fresh inside minIntervalMs must collapse into the first: ${JSON.stringify(f4)}`);
 
+    // Cold requests must share one in-flight computation too. This is the
+    // first-load shape of several tabs hitting /api/usage concurrently; a
+    // cache populated only after await would otherwise still fan out N calls.
+    let coldCalls = 0;
+    let releaseCold;
+    const coldGate = new Promise((resolve) => { releaseCold = resolve; });
+    const coldProbe = defineProvider({
+      provider: 'cold-probe', ttl: { ok: 60_000, other: 60_000 },
+      compute: async () => { coldCalls += 1; await coldGate; return { provider: 'cold-probe', status: 'ok', fetchedAt: Date.now() }; }
+    });
+    const coldA = coldProbe.get();
+    const coldB = coldProbe.get();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert(coldCalls === 1, `concurrent cold requests must coalesce (compute calls: ${coldCalls})`);
+    releaseCold();
+    await Promise.all([coldA, coldB]);
+
     // ---- backoff: one declaration buys long TTL + retryAt + fresh refusal --
     // ttl is 0 for BOTH ok and other here, so the only thing that can keep this
     // value warm is the backoff window — which is the point.

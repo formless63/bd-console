@@ -4,10 +4,10 @@
 // doc:<path>-labelled issue prefilled with the quoted selection.
 import { html } from 'htm/preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { store, openDoc, loadDocs, toast, requireToken } from '../store.js';
+import { store, openDoc, loadDocs, toast, requireToken, setNavigationGuard } from '../store.js';
 import { AuthError } from '../api.js';
 import { createDoc, docFolders, newDocPath, newDocProblem, newDocTemplate } from '../docCreate.js';
-import { c2 } from './state.js';
+import { c2, confirmDirtyDocLeave, discardDirtyDoc } from './state.js';
 import { renderMarkdown } from '../markdown.js';
 import { saveDoc, capturePromoted } from './actions.js';
 import { LearnEmpty } from '../components/ConceptTip.js';
@@ -213,20 +213,28 @@ function Editor({ path }) {
     el?.addEventListener('keydown', onKey);
     return () => el?.removeEventListener('keydown', onKey);
   });
-  const doSave = async () => {
-    try {
-      await saveDoc(path, c2.docDraft.value);
-      c2.docDirty.value = false;
-      store.docContent.value = c2.docDraft.value;
-      loadDocs();
-    } catch { /* toasted */ }
-  };
+  const doSave = () => saveCurrentDoc(path);
   return html`
     <div class="c2-doc-editor">
       <textarea ref=${ref} class="c2-doc-textarea" spellcheck="false" value=${c2.docDraft.value}
         onInput=${(e) => { c2.docDraft.value = e.target.value; c2.docDirty.value = true; }}></textarea>
       ${c2.docPreview.value && html`<div class="markdown c2-md c2-doc-livepreview" dangerouslySetInnerHTML=${{ __html: renderMarkdown(c2.docDraft.value) }}></div>`}
     </div>`;
+}
+
+// Save the exact text the user submitted. If they keep typing while the
+// network request is in flight, the newer draft remains dirty and visible;
+// only an unchanged draft can be marked clean by this save.
+async function saveCurrentDoc(path) {
+  const snapshot = c2.docDraft.value;
+  try {
+    await saveDoc(path, snapshot);
+    if (store.selectedDocPath.value === path) {
+      store.docContent.value = snapshot;
+      if (c2.docDraft.value === snapshot) c2.docDirty.value = false;
+    }
+    loadDocs();
+  } catch { /* toasted */ }
 }
 
 function DocsLanding({ pick, recentPaths, openNew }) {
@@ -279,6 +287,11 @@ export function Docs2() {
 
   useEffect(() => { setRecentPaths(loadRecentDocs(store.projectId.value)); }, [store.projectId.value]);
 
+  useEffect(() => {
+    setNavigationGuard(() => confirmDirtyDocLeave());
+    return () => setNavigationGuard(null);
+  }, []);
+
   // Draft protection: reloading or closing the tab mid-edit used to discard a
   // dirty draft with no warning at all — bd-console-974.2. Scoped to the
   // editor's own lifecycle (added only while `editing` is true, removed the
@@ -297,6 +310,7 @@ export function Docs2() {
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [editing]);
   const pick = (nextPath) => {
+    if (nextPath !== path && !confirmDirtyDocLeave()) return;
     setRecentPaths(saveRecentDoc(store.projectId.value, nextPath));
     openDoc(nextPath);
   };
@@ -347,14 +361,14 @@ export function Docs2() {
                 ${editing
                   ? html`
                     <button class="c2-mini" onClick=${() => (c2.docPreview.value = !c2.docPreview.value)}>${c2.docPreview.value ? 'hide preview' : 'preview'}</button>
-                    <button class="c2-mini" onClick=${async () => { try { await saveDoc(path, c2.docDraft.value); c2.docDirty.value = false; store.docContent.value = c2.docDraft.value; loadDocs(); } catch {} }}>save ⌘S</button>
+                    <button class="c2-mini" onClick=${() => saveCurrentDoc(path)}>save ⌘S</button>
                     <button class="c2-mini" onClick=${() => {
                       // "done" silently discarded a dirty draft with no
                       // confirmation (bd-console-974.2) — ask before throwing
                       // away unsaved work, exactly like the beforeunload guard
                       // above does for a reload/close.
-                      if (c2.docDirty.value && !confirm('Discard unsaved changes to this document?')) return;
-                      c2.docEditing.value = false; c2.docDirty.value = false; c2.docDraft.value = content || '';
+                      if (c2.docDirty.value && !confirmDirtyDocLeave()) return;
+                      discardDirtyDoc(); c2.docDraft.value = content || '';
                     }}>done</button>`
                   : html`
                     <button class="c2-mini c2-promote-toggle" onClick=${() => (c2.promoteOpen.value = !c2.promoteOpen.value)}>promote…</button>

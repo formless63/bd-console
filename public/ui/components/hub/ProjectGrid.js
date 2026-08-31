@@ -65,7 +65,7 @@ function RepoChip({ webUrl }) {
     </a>`;
 }
 
-function GitInsights({ git }) {
+function GitInsights({ git, includeRepo = true }) {
   if (!git) return null;
   const any = git.branch || git.lastCommit || git.webUrl || (git.dirty ?? 0) > 0 || git.ahead != null || git.behind != null || git.commits7d != null;
   if (!any) return null;
@@ -77,7 +77,7 @@ function GitInsights({ git }) {
         ${git.behind != null && git.behind > 0 && html`<span class="git-chip git-behind" title="${git.behind} commit(s) behind upstream">↓${git.behind}</span>`}
         ${(git.dirty ?? 0) > 0 && html`<span class="git-chip git-dirty" title="${git.dirty} file(s) with uncommitted changes">●${git.dirty}</span>`}
         ${git.commits7d != null && html`<span class="git-chip git-velocity">${git.commits7d} commit${git.commits7d === 1 ? '' : 's'}/wk</span>`}
-        ${git.webUrl && html`<${RepoChip} webUrl=${git.webUrl} />`}
+        ${includeRepo && git.webUrl && html`<${RepoChip} webUrl=${git.webUrl} />`}
       </div>
       ${git.lastCommit && (git.lastCommit.subject || git.lastCommit.hash) && html`
         <div class="hub-card-commit muted small" title=${[git.lastCommit.author, git.lastCommit.subject].filter(Boolean).join(' · ')}>
@@ -95,26 +95,15 @@ export function ProjectCard({ id, project, stats, err }) {
   // land on #/p2/<id> (as does the retired #/p/<id>, which redirects there;
   // see routing.js).
   const open = () => navigate('#/p2/' + encodeURIComponent(id));
-  const onKeyDown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } };
-
   return html`
-    <div class="hub-card" role="button" tabIndex="0" onClick=${open} onKeyDown=${onKeyDown}>
+    <article class="hub-card">
+      <button type="button" class="hub-card-open" onClick=${open} aria-label=${'Open project ' + id}>
       <div class="hub-card-top">
         <span class="hub-card-title">${id}</span>
         <span class="hub-card-top-right">
           ${stats && html`<span class="hub-card-total">${stats.openTotal} open · ${stats.total} lifetime</span>`}
-          ${/* Drop a spec/AGENTS.md/etc. into an already-registered project's
-                directory without leaving the hub (bd-console-cox.4) — reuses
-                the same POST /api/files/upload endpoint the new-session
-                dialog's file-attach step uses. stopPropagation so the click
-                doesn't also trigger the card's own onClick navigation. */ ''}
-          <button type="button" class="hub-card-addfiles" title="Add files to this project's directory"
-            aria-label="Add files to ${id}" onClick=${(e) => { e.stopPropagation(); setAddFilesOpen(true); }}>
-            <${AddFilesIcon} />
-          </button>
         </span>
       </div>
-      <${AddFilesDialog} open=${addFilesOpen} onClose=${() => setAddFilesOpen(false)} dir=${project.path} label=${id} />
       <div class="hub-card-path">${project.path}</div>
       ${/* Registered, but the folder itself isn't there anymore (moved,
             renamed, or the disk/mount it lived on is gone) — `missing` on the
@@ -126,7 +115,7 @@ export function ProjectCard({ id, project, stats, err }) {
           ⚠ directory missing
         </span>`}
 
-      <${GitInsights} git=${git} />
+      <${GitInsights} git=${git} includeRepo=${false} />
 
       <div class="hub-card-stats">
         ${err
@@ -145,7 +134,14 @@ export function ProjectCard({ id, project, stats, err }) {
       <div class="hub-card-cta">
         <span>Open project workspace →</span>
       </div>
-    </div>`;
+      </button>
+      ${git?.webUrl && html`<div class="hub-card-repo"><${RepoChip} webUrl=${git.webUrl} /></div>`}
+      <button type="button" class="hub-card-addfiles" title="Add files to this project's directory"
+        aria-label="Add files to ${id}" onClick=${() => setAddFilesOpen(true)}>
+        <${AddFilesIcon} />
+      </button>
+      <${AddFilesDialog} open=${addFilesOpen} onClose=${() => setAddFilesOpen(false)} dir=${project.path} label=${id} />
+    </article>`;
 }
 
 // Dense, always-visible project radar: the landing page remains an

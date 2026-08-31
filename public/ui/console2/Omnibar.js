@@ -4,7 +4,7 @@
 import { html } from 'htm/preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { store, selectIssue, navigate } from '../store.js';
-import { c2 } from './state.js';
+import { c2, setCanvasMode } from './state.js';
 import {
   captureTriage, actClaim, actStart, actClose, actDefer, actPriority,
 } from './actions.js';
@@ -15,8 +15,8 @@ const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*(\.\d+)*$/;
 
 // View + action commands. `arity` = required positional args beyond the verb.
 function buildCommands() {
-  const setMode = (m) => { c2.canvasMode.value = m; };
-  const focus = (lane) => { c2.canvasMode.value = 'flow'; c2.laneFocus.value = lane; };
+  const setMode = (m) => { setCanvasMode(m); };
+  const focus = (lane) => { if (setCanvasMode('flow')) c2.laneFocus.value = lane; };
   return [
     { name: 'ready', hint: 'show ready work', kind: 'view', run: () => focus('ready') },
     { name: 'blocked', hint: 'show blocked issues', kind: 'view', run: () => focus('blocked') },

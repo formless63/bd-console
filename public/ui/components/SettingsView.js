@@ -133,7 +133,7 @@ function SourceChip({ source }) {
 
 function mask(t) {
   if (!t) return '';
-  return t.length <= 4 ? '••••' : t.slice(0, 4) + '…';
+  return '••••••••';
 }
 
 function ServerSettingsPanel() {

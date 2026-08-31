@@ -83,7 +83,13 @@ export const store = {
   mode: signal('hub'),
   meta: signal(null),            // hub-root or project meta
   projects: signal({}),          // hub registry
+  hubLoading: signal(true),
   projectId: signal(null),
+  // A project route is not writable until its own metadata has arrived. This
+  // prevents a click in the old project (or a fast click during bootstrap)
+  // from being sent to a newly selected project's API prefix.
+  projectReady: signal(false),
+  projectMetaError: signal(null),
 
   // True when the most recent loadHub()/loadBootMeta() call failed with a
   // NETWORK-ish error (the daemon didn't answer at all — see
@@ -120,6 +126,7 @@ export const store = {
   // comments (per selected issue)
   comments: signal([]),
   commentsLoading: signal(false),
+  commentsError: signal(null),
 
   // docs
   docs: signal([]),
@@ -314,7 +321,18 @@ export function parseHash() {
   }
   return parseRoute(location.hash);
 }
-export function navigate(hash) { if (location.hash !== hash) location.hash = hash; }
+export function navigate(hash) {
+  if (location.hash === hash || !allowNavigation(hash)) return;
+  location.hash = hash;
+}
+
+// Route changes made by an anchor do not pass through navigate(), so the app
+// installs a short-lived guard while an editable surface is mounted. Keeping
+// the hook here avoids importing Console 2 state into this already central
+// store (and avoids a circular module graph).
+let navigationGuard = null;
+export function setNavigationGuard(fn) { navigationGuard = typeof fn === 'function' ? fn : null; }
+export function allowNavigation(hash) { return !navigationGuard || navigationGuard(hash) !== false; }
 
 // ---------------------------------------------------------------------------
 // Toasts
@@ -408,6 +426,44 @@ export function toggleHubSection(id) {
   lsSet(HUB_SECTIONS_KEY, [...set]);
 }
 
+// Clear every project-scoped value synchronously at the route boundary. The
+// old implementation left meta/docs/epics/comments and bulk selection alive
+// until Console2's effect ran, which made a fast project switch look like the
+// old project and allowed stale controls to issue writes. The loader sequence
+// counters are bumped too, invalidating responses already in flight.
+let projectGeneration = 0;
+export function transitionProject(pid) {
+  const next = pid || null;
+  if (store.projectId.value === next && !store.projectReady.value) return projectGeneration;
+  projectGeneration++;
+  projectMetaSeq++;
+  issuesSeq++;
+  docsSeq++;
+  docOpenSeq++;
+  commentsSeq++;
+  store.projectId.value = next;
+  store.projectReady.value = false;
+  store.projectMetaError.value = null;
+  store.meta.value = null;
+  store.issues.value = [];
+  store.issuesLoading.value = false;
+  store.issuesError.value = null;
+  store.generatedAt.value = null;
+  clearSelection();
+  store.selectedId.value = null;
+  store.comments.value = [];
+  store.commentsLoading.value = false;
+  store.commentsError.value = null;
+  store.docs.value = [];
+  store.docsLoading.value = false;
+  store.docFilter.value = '';
+  store.selectedDocPath.value = null;
+  store.docContent.value = null;
+  store.docLoading.value = false;
+  store.epics.value = [];
+  return projectGeneration;
+}
+
 // ---------------------------------------------------------------------------
 // "Why is this feature hiding?" (bd-console-974.7)
 // ---------------------------------------------------------------------------
@@ -434,7 +490,10 @@ export async function loadBootMeta() {
   try {
     const m = await apiGetRaw('/api/meta');
     store.mode.value = m.mode || 'hub';
-    store.meta.value = m;
+    // Console2 can mount and begin its project bootstrap before this root
+    // request returns. Never let the slower hub response overwrite project
+    // metadata that has already made that route writable.
+    if (!store.projectId.value) store.meta.value = m;
     store.hubUnreachable.value = false;
   } catch (e) {
     // A response that just isn't JSON/ok still means the server answered —
@@ -445,6 +504,7 @@ export async function loadBootMeta() {
 }
 
 export async function loadHub() {
+  store.hubLoading.value = true;
   try {
     const data = await apiGetRaw('/api/projects');
     store.projects.value = data.projects || {};
@@ -456,6 +516,8 @@ export async function loadHub() {
       store.hubUnreachable.value = false;
       toast('Failed to load projects: ' + e.message, 'err');
     }
+  } finally {
+    store.hubLoading.value = false;
   }
 }
 
@@ -541,13 +603,30 @@ export async function loadProjectStats(id) {
 // makes only the newest request's result ever land, regardless of resolve
 // order.
 let projectMetaSeq = 0;
+let commentsSeq = 0;
 export async function loadProjectMeta() {
   const seq = ++projectMetaSeq;
+  const pid = store.projectId.value;
+  if (!pid) return;
   try {
     const m = await apiGet('/api/meta');
-    if (seq !== projectMetaSeq) return; // a newer request already won
+    if (seq !== projectMetaSeq || store.projectId.value !== pid) return false;
+    if (m.projectId !== pid) {
+      store.projectMetaError.value = 'Server returned metadata for a different project';
+      store.projectReady.value = false;
+      return false;
+    }
     store.meta.value = m;
-  } catch (e) { /* keep prior meta */ }
+    store.projectReady.value = true;
+    store.projectMetaError.value = null;
+    return true;
+  } catch (e) {
+    if (seq === projectMetaSeq && store.projectId.value === pid) {
+      store.projectMetaError.value = e.message || 'Could not load project metadata';
+      store.projectReady.value = false;
+    }
+    return false;
+  }
 }
 
 // For loadIssues specifically, overlap is no longer the rare case: every SSE
@@ -557,11 +636,13 @@ export async function loadProjectMeta() {
 let issuesSeq = 0;
 export async function loadIssues({ force = false } = {}) {
   const seq = ++issuesSeq;
+  const pid = store.projectId.value;
+  if (!pid) return;
   store.issuesLoading.value = true;
   store.issuesError.value = null;
   try {
     const data = await apiGet('/api/issues' + (force ? '?refresh=1' : ''));
-    if (seq !== issuesSeq) return; // a newer request already won
+    if (seq !== issuesSeq || store.projectId.value !== pid) return; // a newer request/project already won
     // Swap in place, never through []: a live refresh must not blank the
     // list (and therefore every card/lane mid-interaction) for even one
     // frame while the new data is in flight.
@@ -572,7 +653,7 @@ export async function loadIssues({ force = false } = {}) {
     store.generatedAt.value = data.generatedAt;
     if (store.meta.value) store.meta.value = { ...store.meta.value, export: data.export };
   } catch (e) {
-    if (seq !== issuesSeq) return;
+    if (seq !== issuesSeq || store.projectId.value !== pid) return;
     store.issuesError.value = e.message;
     toast(e.message, 'err');
   } finally {
@@ -583,28 +664,39 @@ export async function loadIssues({ force = false } = {}) {
 let docsSeq = 0;
 export async function loadDocs() {
   const seq = ++docsSeq;
+  const pid = store.projectId.value;
+  if (!pid) return;
   store.docsLoading.value = true;
   try {
     const data = await apiGet('/api/docs');
-    if (seq !== docsSeq) return; // a newer request already won
+    if (seq !== docsSeq || store.projectId.value !== pid) return; // a newer request/project already won
     store.docs.value = data.docs || [];
   } catch (e) {
-    if (seq !== docsSeq) return;
+    if (seq !== docsSeq || store.projectId.value !== pid) return;
     toast('Failed to load docs: ' + e.message, 'err');
   } finally {
-    if (seq === docsSeq) store.docsLoading.value = false;
+    if (seq === docsSeq && store.projectId.value === pid) store.docsLoading.value = false;
   }
 }
 
+let docOpenSeq = 0;
 export async function openDoc(path) {
+  const pid = store.projectId.value;
+  const seq = ++docOpenSeq;
   store.selectedDocPath.value = path;
   store.docLoading.value = true;
   store.docContent.value = null;
   try {
     const data = await apiGet('/api/doc?path=' + encodeURIComponent(path));
+    if (seq !== docOpenSeq || store.projectId.value !== pid || store.selectedDocPath.value !== path) return;
     store.docContent.value = data.content || '';
-  } catch (e) { store.docContent.value = null; toast('Could not load doc', 'err'); }
-  finally { store.docLoading.value = false; }
+  } catch (e) {
+    if (seq !== docOpenSeq || store.projectId.value !== pid || store.selectedDocPath.value !== path) return;
+    store.docContent.value = null;
+    toast('Could not load doc: ' + e.message, 'err');
+  } finally {
+    if (seq === docOpenSeq && store.projectId.value === pid && store.selectedDocPath.value === path) store.docLoading.value = false;
+  }
 }
 
 // Open (non-closed) epics for the active project — feeds the create-issue
@@ -932,15 +1024,19 @@ export async function createStandardEpics(projectId) {
 // Issue selection + comments
 // ---------------------------------------------------------------------------
 export async function selectIssue(id) {
+  const seq = ++commentsSeq;
   store.selectedId.value = id;
-  if (!id) return;
+  store.commentsError.value = null;
+  if (!id) { store.commentsLoading.value = false; return; }
   store.comments.value = [];
   store.commentsLoading.value = true;
   try {
     const data = await apiGet('/api/comments?id=' + encodeURIComponent(id));
-    if (store.selectedId.value === id) store.comments.value = data.comments || [];
-  } catch { /* ignore */ }
-  finally { store.commentsLoading.value = false; }
+    if (seq === commentsSeq && store.selectedId.value === id) store.comments.value = data.comments || [];
+  } catch (e) {
+    if (seq === commentsSeq && store.selectedId.value === id) store.commentsError.value = e.message || 'Could not load comments';
+  }
+  finally { if (seq === commentsSeq) store.commentsLoading.value = false; }
 }
 
 // ---------------------------------------------------------------------------
@@ -964,6 +1060,7 @@ function withAuth(fn) {
 export async function addComment(id, text) {
   const data = await withAuth(() => apiPost('/api/comment', { id, text }));
   store.comments.value = data.comments || [];
+  store.commentsError.value = null;
   toast('Comment added to ' + id);
 }
 

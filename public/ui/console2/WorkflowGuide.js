@@ -3,7 +3,7 @@
 // rail answers a different question every day: "what should I do next?"
 import { html } from 'htm/preact';
 import { store } from '../store.js';
-import { c2, setWorkflowCollapsed } from './state.js';
+import { c2, setWorkflowCollapsed, setCanvasMode } from './state.js';
 import { pulse } from './derive.js';
 
 const STAGES = [
@@ -42,15 +42,13 @@ function runStage(stage) {
     el?.focus(); el?.select(); c2.omniOpen.value = true;
     return;
   }
-  if (stage === 'triage') { c2.canvasMode.value = 'flow'; c2.laneFocus.value = 'triage'; return; }
-  if (stage === 'plan') { c2.canvasMode.value = 'map'; c2.laneFocus.value = null; return; }
+  if (stage === 'triage') { if (setCanvasMode('flow')) c2.laneFocus.value = 'triage'; return; }
+  if (stage === 'plan') { if (setCanvasMode('map')) c2.laneFocus.value = null; return; }
   if (stage === 'work') {
-    c2.canvasMode.value = 'flow';
-    c2.laneFocus.value = pulse.value.inProgress.length ? 'in_progress' : 'ready';
+    if (setCanvasMode('flow')) c2.laneFocus.value = pulse.value.inProgress.length ? 'in_progress' : 'ready';
     return;
   }
-  c2.canvasMode.value = 'flow';
-  c2.laneFocus.value = pulse.value.blocked.length ? 'blocked' : 'stale';
+  if (setCanvasMode('flow')) c2.laneFocus.value = pulse.value.blocked.length ? 'blocked' : 'stale';
 }
 
 function runNext(next) {

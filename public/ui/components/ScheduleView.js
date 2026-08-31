@@ -105,10 +105,14 @@ function usageResetPresets(usage) {
 // input is already focused but the menu got dismissed), and every option
 // shows what it's actually running (pane command + cwd) so the choice is
 // informed rather than a guess.
+let sessionComboboxId = 0;
 function SessionCombobox({ value, onChange, sessions }) {
   const [open, setOpen] = useState(false);
   const [hi, setHi] = useState(-1);
   const wrapRef = useRef(null);
+  const listIdRef = useRef(null);
+  if (!listIdRef.current) listIdRef.current = `session-options-${++sessionComboboxId}`;
+  const listId = listIdRef.current;
 
   const q = value.trim().toLowerCase();
   const filtered = q ? sessions.filter((s) => s.name.toLowerCase().includes(q)) : sessions;
@@ -118,12 +122,13 @@ function SessionCombobox({ value, onChange, sessions }) {
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
   }, []);
-
   const pick = (name) => { onChange(name); setOpen(false); setHi(-1); };
 
   const onKeyDown = (e) => {
-    if (e.key === 'ArrowDown') { e.preventDefault(); setOpen(true); setHi((i) => Math.min(i + 1, filtered.length - 1)); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); setHi((i) => Math.max(i - 1, 0)); }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setOpen(true); setHi((i) => Math.min(Math.max(i, -1) + 1, filtered.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setOpen(true); setHi((i) => Math.max(i <= 0 ? filtered.length - 1 : i - 1, 0)); }
+    else if (e.key === 'Home' && open) { e.preventDefault(); setHi(filtered.length ? 0 : -1); }
+    else if (e.key === 'End' && open) { e.preventDefault(); setHi(filtered.length - 1); }
     else if (e.key === 'Enter') { if (open && hi >= 0 && filtered[hi]) { e.preventDefault(); pick(filtered[hi].name); } }
     else if (e.key === 'Escape') { setOpen(false); setHi(-1); }
   };
@@ -143,15 +148,18 @@ function SessionCombobox({ value, onChange, sessions }) {
 
   return html`
     <div class="combobox" ref=${wrapRef}>
-      <input class="field" placeholder="choose or type a session…" value=${value} autocomplete="off"
+      <input class="field" role="combobox" aria-autocomplete="list" aria-haspopup="listbox"
+        aria-expanded=${open} aria-controls=${listId}
+        aria-activedescendant=${open && hi >= 0 && filtered[hi] ? `${listId}-${hi}` : undefined}
+        placeholder="choose or type a session…" value=${value} autocomplete="off"
         onFocus=${() => setOpen(true)}
         onClick=${() => setOpen(true)}
         onInput=${(e) => { onChange(e.target.value); setOpen(true); setHi(-1); }}
         onKeyDown=${onKeyDown} />
       ${open && filtered.length > 0 && html`
-        <ul class="combobox-menu" role="listbox">
+        <ul class="combobox-menu" id=${listId} role="listbox" aria-label="Live tmux sessions">
           ${filtered.map((s, i) => html`
-            <li key=${s.name} role="option" aria-selected=${i === hi}
+            <li key=${s.name} id=${`${listId}-${i}`} role="option" aria-selected=${i === hi}
               class=${'combobox-opt session-opt' + (i === hi ? ' hi' : '')}
               onMouseDown=${(e) => { e.preventDefault(); pick(s.name); }}
               onMouseEnter=${() => setHi(i)}>
@@ -175,16 +183,22 @@ function SavedPrompts({ prompt, onPick }) {
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [name, setName] = useState('');
+  const [hi, setHi] = useState(-1);
   const wrapRef = useRef(null);
+  const optionRefs = useRef([]);
+  const listId = 'saved-prompt-options';
   const available = store.promptsAvailable.value;
   const prompts = store.prompts.value;
 
   useEffect(() => { loadPrompts(); }, []);
   useEffect(() => {
-    function onDocClick(e) { if (wrapRef.current && !wrapRef.current.contains(e.target)) { setOpen(false); setSaving(false); } }
+    function onDocClick(e) { if (wrapRef.current && !wrapRef.current.contains(e.target)) { setOpen(false); setSaving(false); setHi(-1); } }
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
   }, []);
+  useEffect(() => {
+    if (open && hi >= 0) optionRefs.current[hi]?.focus();
+  }, [open, hi]);
 
   if (!available) {
     // Previously rendered nothing at all — indistinguishable from "there is
@@ -197,8 +211,21 @@ function SavedPrompts({ prompt, onPick }) {
 
   const pick = async (p) => {
     onPick(p.prompt);
-    setOpen(false);
+    setOpen(false); setHi(-1);
     markPromptUsed(p.id);
+  };
+  const openMenu = () => { setOpen(true); setHi(prompts.length ? 0 : -1); };
+  const onTriggerKeyDown = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); openMenu(); }
+    else if (e.key === 'Escape') { setOpen(false); setHi(-1); }
+  };
+  const onOptionKeyDown = (e, index) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setHi(Math.min(index + 1, prompts.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setHi(Math.max(index - 1, 0)); }
+    else if (e.key === 'Home') { e.preventDefault(); setHi(0); }
+    else if (e.key === 'End') { e.preventDefault(); setHi(prompts.length - 1); }
+    else if (e.key === 'Enter') { e.preventDefault(); pick(prompts[index]); }
+    else if (e.key === 'Escape') { e.preventDefault(); setOpen(false); setHi(-1); }
   };
   const remove = async (e, p) => {
     e.stopPropagation();
@@ -217,11 +244,12 @@ function SavedPrompts({ prompt, onPick }) {
 
   return html`
     <div class="combobox saved-prompts" ref=${wrapRef}>
-      <button type="button" class="btn btn-xs btn-ghost" onClick=${() => setOpen((o) => !o)}>
+      <button type="button" class="btn btn-xs btn-ghost" aria-haspopup="listbox" aria-expanded=${open}
+        aria-controls=${listId} onClick=${() => open ? (setOpen(false), setHi(-1)) : openMenu()} onKeyDown=${onTriggerKeyDown}>
         Saved prompts${prompts.length ? ` (${prompts.length})` : ''}
       </button>
       ${open && html`
-        <div class="combobox-menu saved-prompts-menu">
+        <div class="combobox-menu saved-prompts-menu" id=${listId} role="listbox" aria-label="Saved prompts">
           ${!saving
             ? html`<button type="button" class="saved-prompts-save-trigger" onClick=${() => setSaving(true)} disabled=${!prompt.trim()}>
                 + Save current prompt…
@@ -234,9 +262,14 @@ function SavedPrompts({ prompt, onPick }) {
               </div>`}
           ${prompts.length === 0
             ? html`<div class="saved-prompts-empty muted small">No saved prompts yet.</div>`
-            : prompts.map((p) => html`
-                <div key=${p.id} class="combobox-opt saved-prompt-opt" onClick=${() => pick(p)}>
-                  <span class="combobox-opt-name" title=${p.prompt}>${p.name}</span>
+            : prompts.map((p, i) => html`
+                <div key=${p.id} class="saved-prompt-row">
+                  <button type="button" role="option" aria-selected=${i === hi}
+                    class=${'combobox-opt saved-prompt-opt' + (i === hi ? ' hi' : '')}
+                    ref=${(el) => { optionRefs.current[i] = el; }}
+                    onClick=${() => pick(p)} onKeyDown=${(e) => onOptionKeyDown(e, i)}>
+                    <span class="combobox-opt-name" title=${p.prompt}>${p.name}</span>
+                  </button>
                   <button type="button" class="saved-prompt-del" title="Delete"
                     onMouseDown=${(e) => e.stopPropagation()} onClick=${(e) => remove(e, p)}>×</button>
                 </div>`)}

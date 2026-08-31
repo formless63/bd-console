@@ -216,7 +216,8 @@ const SERVE_ENTRY = fileURLToPath(import.meta.url);
 async function cmdStart() {
   try {
     const result = await daemonStart({
-      host: HOST, port: PORT, persist: PERSIST, forwardArgs: ARGS.forward, serveEntry: SERVE_ENTRY
+      host: HOST, port: PORT, token: TOKEN, persist: PERSIST,
+      forwardArgs: ARGS.forward, serveEntry: SERVE_ENTRY
     });
     for (const note of result.notes) console.log(`  ${note}`);
     console.log(result.supervised === 'systemd'
@@ -289,7 +290,10 @@ async function cmdUpdate() {
       pkgRoot,
       dryRun: ARGS.dryRun,
       wasRunning: before.running,
-      restart: () => daemonStart({ host: HOST, port: PORT, persist: PERSIST, forwardArgs: ARGS.forward, serveEntry: SERVE_ENTRY })
+      restart: () => daemonStart({
+        host: HOST, port: PORT, token: TOKEN, persist: PERSIST,
+        forwardArgs: ARGS.forward, serveEntry: SERVE_ENTRY
+      })
     });
 
     if (result.dryRun) {
@@ -427,4 +431,3 @@ startSchedulerLoop({ intervalMs: SCHED_INTERVAL_MS }).then((handle) => {
 }).catch((err) => {
   console.warn(`bd-console: scheduler loop failed to start — ${err.message}`);
 });
-

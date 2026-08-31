@@ -42,6 +42,46 @@ export const c2 = {
   promote: signal(null),         // { text, path } selection promoted from a doc
 };
 
+export function resetProjectUi() {
+  c2.ready.value = false;
+  c2.canvasMode.value = 'flow';
+  c2.pulseOpen.value = false;
+  c2.laneFocus.value = null;
+  c2.delegatePreset.value = null;
+  c2.docTreeOpen.value = false;
+  c2.promoteOpen.value = false;
+  c2.omniOpen.value = false;
+  c2.omniValue.value = '';
+  c2.lastCli.value = null;
+  c2.docEditing.value = false;
+  c2.docDraft.value = '';
+  c2.docDirty.value = false;
+  c2.docPreview.value = false;
+  c2.promote.value = null;
+}
+
+export function discardDirtyDoc() {
+  if (!c2.docDirty.value) return;
+  c2.docDirty.value = false;
+  c2.docEditing.value = false;
+  c2.docPreview.value = false;
+  c2.docDraft.value = '';
+}
+
+export function confirmDirtyDocLeave() {
+  if (!c2.docDirty.value) return true;
+  if (typeof confirm !== 'function' || !confirm('Discard unsaved changes to this document?')) return false;
+  discardDirtyDoc();
+  return true;
+}
+
+export function setCanvasMode(next) {
+  if (c2.canvasMode.value === next) return true;
+  if (c2.canvasMode.value === 'docs' && !confirmDirtyDocLeave()) return false;
+  c2.canvasMode.value = next;
+  return true;
+}
+
 export function flashCli(cmd, label) {
   c2.lastCli.value = { cmd, label: label || '', at: Date.now() };
 }

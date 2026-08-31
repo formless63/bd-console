@@ -54,7 +54,7 @@ import { html } from 'htm/preact';
 import { effect } from '@preact/signals';
 import { App } from './ui/components/App.js';
 import { initTheme } from './ui/theme.js';
-import { store, parseHash, loadBootMeta, loadHub } from './ui/store.js';
+import { store, parseHash, loadBootMeta, loadHub, transitionProject, allowNavigation } from './ui/store.js';
 import { eventsConnected } from './ui/events.js';
 
 // --- "can't reach the server" banner (bd-console-974.7) ---------------------
@@ -124,14 +124,22 @@ function syncRoute() {
     // /api/issues + /api/docs fetch (404s in hub mode, since those only
     // exist per-project as /api/p/<id>/issues|docs). Leave projectId
     // alone here.
+    if (store.projectId.value !== route.projectId) transitionProject(route.projectId);
     return;
   }
-  store.projectId.value = null;
+  if (store.projectId.value !== null) transitionProject(null);
   loadHub();
 }
 
+let lastAcceptedHash = location.hash || '#/';
 function onHashChange() {
+  const next = location.hash || '#/';
+  if (!allowNavigation(next)) {
+    try { history.replaceState(null, '', lastAcceptedHash); } catch { location.hash = lastAcceptedHash; }
+    return;
+  }
   store.route.value = parseHash();
+  lastAcceptedHash = location.hash || next;
   syncRoute();
 }
 
@@ -180,6 +188,7 @@ async function boot() {
   window.addEventListener('keydown', onKeyDown);
   await loadBootMeta();
   store.route.value = parseHash();
+  lastAcceptedHash = location.hash || '#/';
   syncRoute();
 }
 boot();

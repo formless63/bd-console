@@ -213,6 +213,11 @@
 
 * { box-sizing: border-box; }
 html, body { height: 100%; }
+.app-surface-loading, .app-surface-error {
+  min-height: 28vh; display: grid; place-content: center; justify-items: center; gap: 12px;
+  color: var(--text-dim); font-size: 13px; text-align: center; padding: 2rem;
+}
+.app-surface-error p { margin: 0; color: var(--red); }
 body {
   margin: 0;
   font-family: var(--font-body);
@@ -416,7 +421,7 @@ textarea.field { resize: vertical; }
 .hub-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1.25rem; width: 100%; max-width: 1080px; animation: hub-grid-in 0.3s var(--ease); }
 @keyframes hub-grid-in { from { opacity: 0; transform: translateY(6px); } }
 .hub-card {
-  text-align: left; display: flex; flex-direction: column; gap: 0.55rem; cursor: pointer;
+  text-align: left; display: flex; flex-direction: column; gap: 0.55rem; cursor: default;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
   padding: 1.35rem; font: inherit; color: var(--text);
   box-shadow: var(--shadow-sm); transition: transform 0.2s var(--ease), border-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
@@ -431,7 +436,11 @@ textarea.field { resize: vertical; }
 .hub-card:hover { transform: translateY(-4px); border-color: var(--border-2); box-shadow: var(--shadow-lg); }
 .hub-card:hover::before { opacity: 1; }
 .hub-card:hover::after { opacity: 1; }
-.hub-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.hub-card-open {
+  text-align: left; display: flex; flex-direction: column; gap: 0.55rem; width: 100%; min-width: 0;
+  padding: 0 30px 0 0; border: 0; background: transparent; font: inherit; color: inherit; cursor: pointer;
+}
+.hub-card-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: var(--radius-sm); }
 .hub-card-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .hub-card-title { font-family: var(--font-heading); font-weight: 650; font-size: 1.1rem; letter-spacing: -0.01em; }
 .hub-card-total { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
@@ -445,10 +454,12 @@ textarea.field { resize: vertical; }
   background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm);
   color: var(--text-faint); transition: all 0.14s var(--ease);
 }
+.hub-card > .hub-card-addfiles { position: absolute; top: 1.35rem; right: 1.35rem; }
+.hub-card-repo { min-height: 0; margin-top: -0.15rem; display: flex; justify-content: flex-end; }
 .hub-card-addfiles:hover, .hub-card-addfiles:focus-visible { color: var(--accent); border-color: var(--border-2); background: var(--surface-2); }
 .hub-card-path { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* The whole card is already the click target (role="button"), so this reuses
-   .hub-chip/.hub-chip-crit's color treatment without its pointer affordance. */
+/* The badge is status inside the card's primary button, so it reuses the
+   chip color treatment without adding a second pointer affordance. */
 .hub-card-missing-badge { align-self: flex-start; cursor: default; }
 .hub-card-stats { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 0.15rem; min-height: 26px; }
 .stat-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 3px 9px; }
