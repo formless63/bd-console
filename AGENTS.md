@@ -196,7 +196,7 @@ docs/upgrading.md        upgrade + single-repo-era migration guide
 Shipped: Global Hub architecture (registry, superseding `start`, systemd
 persistence, self-`update`), rich issue creation + epics, inline issue edits,
 tmux session introspection, the prompt scheduler, and the Preact/htm
-frontend rewrite (5-preset theming, hash routing). Verified against real
+frontend rewrite (6-preset theming, hash routing). Verified against real
 beads-backed repos via `npm run smoke`.
 
 ## Natural next steps (not built)
@@ -219,6 +219,11 @@ beads-backed repos via `npm run smoke`.
   architecture — see `docs/upgrading.md` for the migration notes.
 - For release or packaging work, run `npm run check`, `npm run smoke`, and
   `npm_config_cache=/tmp/bd-console-npm-cache npm pack --dry-run`.
+- `package.json` is the canonical installed version. Ordinary pushes to `main`
+  receive an automatic patch bump from `.github/workflows/version-bump.yml`.
+  For an intentional release boundary, run `npm run version:bump -- patch`
+  (or `minor`/`major`) in the same commit; the workflow detects and respects
+  that manual bump instead of adding another one.
 - `node scripts/smoke.mjs browser` is an **opt-in** domain, excluded from
   `npm run smoke` because it boots a real headless Chrome (~19s). It drives
   Chrome over the DevTools Protocol with Node's built-in `WebSocket` — never

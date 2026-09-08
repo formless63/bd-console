@@ -11,9 +11,27 @@ import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { parseBdVersionStdout, compareVersions, isBehind } from '../../lib/bdversion.mjs';
 import { parseCliVersionStdout } from '../../lib/cliversions.mjs';
+import { bumpPackageText, nextVersion } from '../bump-version.mjs';
 
 export async function runVersions(ctx) {
   const { assert, getPort, waitFor, tempRoot, serverEntry } = ctx;
+
+  // --- bd-console package version automation ------------------------------
+  assert(nextVersion('0.2.0', 'patch') === '0.2.1', 'patch bump should increment only patch');
+  assert(nextVersion('0.2.9', 'minor') === '0.3.0', 'minor bump should increment minor and reset patch');
+  assert(nextVersion('0.9.9', 'major') === '1.0.0', 'major bump should increment major and reset minor/patch');
+  assert(bumpPackageText('{\n  "name": "x",\n  "version": "1.2.3"\n}\n', 'patch').text
+    === '{\n  "name": "x",\n  "version": "1.2.4"\n}\n',
+  'package bump should preserve surrounding formatting');
+  for (const bad of ['1.2', 'v1.2.3', '1.2.3-beta']) {
+    let rejected = false;
+    try { nextVersion(bad, 'patch'); } catch { rejected = true; }
+    assert(rejected, `unstable or malformed package version must be rejected: ${bad}`);
+  }
+  let badReleaseRejected = false;
+  try { nextVersion('1.2.3', 'banana'); } catch { badReleaseRejected = true; }
+  assert(badReleaseRejected, 'unknown release component must be rejected');
+  console.log('smoke ok (bd-console version bump: major/minor/patch + formatting + invalid input)');
 
   // --- bd (beads CLI) version check (lib/bdversion.mjs + GET /api/bd-version)
   // Pure-function assertions first (no server, no network), then the live

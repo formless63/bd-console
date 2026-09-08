@@ -174,6 +174,26 @@ through the same superseding `start` path, so the new code goes live
 immediately. `--dry-run` prints the detected flavor and exact command(s)
 without running them.
 
+### Versioning
+
+The version in `package.json` is the installed bd-console version. A GitHub
+Actions workflow automatically increments its patch component after each push
+to `main`. If the push already changes the version, the workflow respects that
+deliberate major/minor/patch choice instead of incrementing it again.
+
+For an intentional release bump, maintainers can run one of:
+
+```bash
+npm run version:bump -- patch
+npm run version:bump -- minor
+npm run version:bump -- major
+```
+
+The command only updates `package.json`; it does not implicitly commit, tag,
+publish, or push. The workflow can also be dispatched manually with the same
+three choices. This keeps GitHub-installed copies distinguishable even though
+bd-console is not yet published to the npm registry.
+
 ### Persistence (systemd)
 
 On Linux, when `systemctl --user` is usable, `start` installs/refreshes a

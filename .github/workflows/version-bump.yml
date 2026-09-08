@@ -1,0 +1,74 @@
+name: version-bump
+
+on:
+  push:
+    branches: ["main"]
+    paths-ignore:
+      - "package.json"
+  workflow_dispatch:
+    inputs:
+      release:
+        description: SemVer component to increment
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+concurrency:
+  group: version-bump-main
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Decide whether this push already changed the version
+        id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "bump=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          before_version=$(git show "$BEFORE_SHA:package.json" 2>/dev/null | node -e "let s=''; process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).version))")
+          after_version=$(git show "$AFTER_SHA:package.json" 2>/dev/null | node -e "let s=''; process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).version))")
+          if [ "$before_version" != "$after_version" ]; then
+            echo "Version already changed: $before_version -> $after_version"
+            echo "bump=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "bump=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bump version
+        if: steps.decide.outputs.bump == 'true'
+        env:
+          RELEASE: ${{ inputs.release || 'patch' }}
+        run: |
+          npm run check
+          node scripts/bump-version.mjs "$RELEASE"
+
+      - name: Commit and push
+        if: steps.decide.outputs.bump == 'true'
+        run: |
+          version=$(node -p "require('./package.json').version")
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json
+          git commit -m "chore: bump version to $version"
+          git pull --rebase origin main
+          git push origin main

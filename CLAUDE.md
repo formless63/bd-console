@@ -71,6 +71,12 @@ npm run smoke -- usage          # or: node scripts/smoke.mjs usage
 node scripts/smoke.mjs --list   # the domain names
 ```
 
+`package.json` is the canonical installed version. Ordinary pushes to `main`
+receive an automatic patch bump from `.github/workflows/version-bump.yml`.
+For an intentional release boundary, run `npm run version:bump -- patch` (or
+`minor`/`major`) in the same commit; the workflow detects and respects that
+manual bump instead of adding another one.
+
 Add new coverage to the domain module it belongs to, not to a new tail on one
 file. Shared fixtures, the scratch-port server, and the `BD_CONSOLE_*_DIR`
 isolation live in `scripts/smoke/harness.mjs` — use `ctx`, never the real
