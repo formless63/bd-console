@@ -74,14 +74,14 @@ function severityGaugeClass(severity) {
 // itself. UsageGauge and ScopedLimitRow differ only in WHICH class(es) ride
 // on the row/label and which color-class function picks the fill — never in
 // structure, so that's the only thing left forked below.
-function GaugeRow({ label, labelClass = '', labelTitle, pct, colorClass, resetsAt, rowClass = '', badge = null }) {
+function GaugeRow({ label, labelClass = '', labelTitle, pct, valueLabel, colorClass, resetsAt, rowClass = '', badge = null }) {
   return html`
     <div class=${'usage-gauge-row' + (rowClass ? ' ' + rowClass : '')}>
       <span class=${'usage-gauge-label' + (labelClass ? ' ' + labelClass : '')} title=${labelTitle}>${label}</span>
-      <span class="usage-gauge-pct">${pct != null ? Math.round(pct) + '%' : '—'}</span>
+      <span class="usage-gauge-pct">${valueLabel || (pct != null ? Math.round(pct) + '%' : '—')}</span>
       ${badge}
       ${resetsAt && html`<span class="usage-gauge-reset muted small">${formatResetIn(resetsAt)}</span>`}
-      <div class="usage-gauge-track" role="progressbar" aria-valuenow=${pct ?? 0} aria-valuemin="0" aria-valuemax="100">
+      <div class="usage-gauge-track" role="progressbar" aria-label=${label} aria-valuetext=${valueLabel || (pct != null ? Math.round(pct) + '% used' : 'unavailable')} aria-valuenow=${pct ?? 0} aria-valuemin="0" aria-valuemax="100">
         <div class=${'usage-gauge-fill ' + colorClass} style=${'width:' + (pct ?? 0) + '%'}></div>
       </div>
     </div>`;
@@ -89,7 +89,14 @@ function GaugeRow({ label, labelClass = '', labelTitle, pct, colorClass, resetsA
 
 function UsageGauge({ w }) {
   const pct = typeof w.percent === 'number' ? Math.max(0, Math.min(100, w.percent)) : null;
-  return html`<${GaugeRow} label=${w.label} pct=${pct} colorClass=${gaugeColorClass(pct)} resetsAt=${w.resetsAt} />`;
+  const remaining = typeof w.remainingPercent === 'number'
+    ? Math.max(0, Math.min(100, w.remainingPercent))
+    : (pct == null ? null : 100 - pct);
+  const valueLabel = remaining == null ? null : `${Math.round(remaining)}% left`;
+  return html`<${GaugeRow}
+    label=${w.label} labelTitle=${w.label} pct=${pct} valueLabel=${valueLabel}
+    colorClass=${gaugeColorClass(pct)} resetsAt=${w.resetsAt}
+  />`;
 }
 
 // A single per-model scoped limit row (GET /api/usage's dynamic
@@ -112,7 +119,7 @@ function summarizeUsage(data) {
   if (!data) return '…';
   if (data.status === 'ok') {
     const pcts = (data.windows || []).map((w) => w.percent).filter((p) => typeof p === 'number');
-    return pcts.length ? Math.round(Math.max(...pcts)) + '%' : 'ok';
+    return pcts.length ? Math.round(Math.max(...pcts)) + '% used' : 'ok';
   }
   if (data.status === 'token-expired') return 'expired';
   return 'not detected';

@@ -49,6 +49,8 @@ export async function runUsage(ctx) {
     // must select the LAST token_count event's rate_limits.
     const primaryResetsAtSec = Math.floor(Date.now() / 1000) + 3 * 3600;
     const secondaryResetsAtSec = Math.floor(Date.now() / 1000) + 6 * 86400;
+    const reserveResetsAtSec = Math.floor(Date.now() / 1000) + 2 * 86400;
+    const futureResetsAtSec = Math.floor(Date.now() / 1000) + 90 * 60;
     const staleLine = JSON.stringify({ payload: { type: 'token_count', rate_limits: {
       primary: { used_percent: 5, window_minutes: 300, resets_at: primaryResetsAtSec - 100 },
       secondary: null, plan_type: 'pro', credits: {}
@@ -57,7 +59,16 @@ export async function runUsage(ctx) {
     const freshLine = JSON.stringify({ payload: { type: 'token_count', rate_limits: {
       primary: { used_percent: 63.5, window_minutes: 300, resets_at: primaryResetsAtSec },
       secondary: { used_percent: 12, window_minutes: 10080, resets_at: secondaryResetsAtSec },
+      additional_rate_limits: [{
+        metered_feature: 'gpt-reserve', limit_name: 'gpt-reserve', rate_limit: {
+          primary_window: { used_percent: 30, limit_window_seconds: 300, reset_at: reserveResetsAtSec }
+        }
+      }],
       plan_type: 'pro', credits: {}
+    }, rate_limits_by_limit_id: {
+      'future-model': {
+        windows: [{ id: 'rolling', used_percent: 25, window_minutes: 90, resets_at: futureResetsAtSec }]
+      }
     } } });
     writeFileSync(join(codexDayDir, 'rollout-test.jsonl'), [staleLine, noiseLine, freshLine, ''].join('\n'));
 
@@ -268,6 +279,14 @@ export async function runUsage(ctx) {
       assert(primary.resetsAt === primaryResetsAtSec * 1000, `codex primary resetsAt should be resets_at*1000, got: ${primary.resetsAt}`);
       assert(secondary && secondary.label === '7d', `codex secondary window label should be '7d' (10080 minutes), got: ${JSON.stringify(secondary)}`);
       assert(secondary.resetsAt === secondaryResetsAtSec * 1000, `codex secondary resetsAt should be resets_at*1000, got: ${secondary.resetsAt}`);
+      assert(secondary.remainingPercent === 88, `codex secondary should expose remaining percent, got: ${JSON.stringify(secondary)}`);
+      const reserve = (codex.windows || []).find((w) => w.limitId === 'gpt-reserve');
+      assert(reserve && reserve.label === 'gpt-reserve · 5m', `codex should expose named additional limit, got: ${JSON.stringify(codex.windows)}`);
+      assert(reserve.percent === 30 && reserve.remainingPercent === 70, `gpt-reserve percent mapping mismatch: ${JSON.stringify(reserve)}`);
+      assert(reserve.resetsAt === reserveResetsAtSec * 1000, `gpt-reserve reset mapping mismatch: ${JSON.stringify(reserve)}`);
+      const future = (codex.windows || []).find((w) => w.limitId === 'future-model');
+      assert(future && future.label === 'future-model · rolling (1h 30m)', `codex should expose unknown named limit dimensions, got: ${JSON.stringify(codex.windows)}`);
+      assert(future.resetsAt === futureResetsAtSec * 1000, `future limit reset mapping mismatch: ${JSON.stringify(future)}`);
 
       console.log('smoke ok (usage API: fixture claude token-expired + fixture codex ok, LAST-event selection, no token material leaked)');
 
