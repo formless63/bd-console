@@ -17,8 +17,9 @@ export const c2 = {
 
   // Persistent workflow rail: unlike one-shot learning nudges this remains a
   // dependable "where am I / what next?" path for people learning beads from
-  // the UI. Experienced users can collapse it to a compact summary.
-  workflowCollapsed: signal((() => { try { return localStorage.getItem('bd_c2_workflow') === 'closed'; } catch { return false; } })()),
+  // the UI. Keep the canvas visible by default; users can expand it when they
+  // want the full five-step guide, and the choice persists.
+  workflowCollapsed: signal((() => { try { return localStorage.getItem('bd_c2_workflow') !== 'open'; } catch { return true; } })()),
 
   // Map: which OVERLAY link types (everything but blocking, which is always
   // on) are currently drawn — a Set of display type strings, e.g. {'related'}.

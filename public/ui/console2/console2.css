@@ -100,8 +100,8 @@
    Header
    ========================================================================== */
 .c2-header {
-  display: flex; flex-direction: column; gap: 8px;
-  padding: 14px 20px 12px;
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 8px 16px 6px;
   background: linear-gradient(color-mix(in srgb, var(--surface) 70%, transparent), color-mix(in srgb, var(--bg) 60%, transparent));
   backdrop-filter: var(--c2-blur);
   border-bottom: 1px solid var(--c2-line);
@@ -119,7 +119,7 @@
      those overlays still cover the header exactly as before. */
   z-index: 20;
 }
-.c2-header-top { display: flex; align-items: center; gap: 20px; }
+.c2-header-top { display: flex; align-items: center; gap: 12px; }
 /* Icon-only "go somewhere" links: the hub link on the left of the header and
    the settings gear on the right. Deliberately one rule, not two lookalikes —
    they are the same affordance pointing at different destinations, and the
@@ -145,6 +145,7 @@
 .c2-new:hover { filter: brightness(1.08); }
 
 .c2-header-echo { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-dim); min-height: 22px; }
+.c2-header-echo:empty { display: none; }
 .c2-header-echo b { color: var(--text); font-variant-numeric: tabular-nums; }
 .c2-header-echo .sep { color: var(--text-faint); }
 
@@ -240,14 +241,14 @@
 /* Mobile-only collapse toggle for the whole pulse area — desktop never
    renders it and never honors .pb-collapsed (see the responsive block). */
 .c2-pb-collapse { display: none; }
-.c2-pulsebar { display: flex; align-items: stretch; gap: 12px; padding: 8px 16px; }
-.c2-pb-tiles { display: flex; gap: 8px; flex: 1 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
+.c2-pulsebar { display: flex; align-items: stretch; gap: 8px; padding: 5px 16px; }
+.c2-pb-tiles { display: flex; gap: 6px; flex: 1 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
 .c2-pb-item { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
-  flex: 1 0 86px; min-height: 52px; padding: 6px 10px; background: var(--c2-glass); border: 1px solid var(--c2-line);
+  flex: 1 0 80px; min-height: 48px; padding: 4px 8px; background: var(--c2-glass); border: 1px solid var(--c2-line);
   border-radius: 10px; box-shadow: inset 0 1px 0 var(--c2-rim-soft); cursor: pointer; color: var(--text);
   transition: border-color 0.15s var(--ease), transform 0.1s var(--ease); }
 .c2-pb-item:hover { transform: translateY(-1px); border-color: var(--c2-line-2); }
-.c2-pb-v { font-family: var(--font-display); font-size: 20px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.c2-pb-v { font-family: var(--font-display); font-size: 18px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
 .c2-pb-k { font-family: var(--font-display); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-faint); }
 .c2-pb-sub { font-size: 9px; color: var(--text-dim); }
 .c2-pb-item.tone-green .c2-pb-v { color: var(--green); }
@@ -775,14 +776,15 @@ select.c2-linktype { flex: 0 0 auto; max-width: 140px; }
   html, body { overflow-x: hidden; }
 
   /* ---- header: wrap + condense to icon + short label ---------------------- */
-  .c2-header { padding: calc(10px + env(safe-area-inset-top)) 12px 8px; gap: 6px; }
-  .c2-header-top { flex-wrap: wrap; gap: 8px; }
+  .c2-header { padding: calc(6px + env(safe-area-inset-top)) 8px 6px; gap: 4px; }
+  .c2-header-top { flex-wrap: wrap; gap: 4px; }
   .c2-brand { min-width: 0; flex: 1 1 auto; }
   .c2-brand-name { max-width: 46vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .c2-brand-sub { display: none; }
   .c2-omni { order: 3; flex-basis: 100%; max-width: none; }
   .c2-hublink, .c2-setlink { min-width: 44px; min-height: 44px; }
-  .c2-header-right { gap: 6px; }
+  .c2-header-right { flex-wrap: nowrap; gap: 4px; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .c2-header-right::-webkit-scrollbar { display: none; }
   .c2-sync { display: inline-flex; align-items: center; min-height: 44px; padding: 6px 8px; }
   .c2-header-echo { flex-wrap: wrap; row-gap: 4px; }
 
@@ -792,8 +794,8 @@ select.c2-linktype { flex: 0 0 auto; max-width: 140px; }
   .c2-themesw-pulse .c2-themesw-btn { min-width: 44px; min-height: 44px; }
 
   /* ---- pulse bar: tiles scroll horizontally; sparkline yields its space --- */
-  .c2-pulsebar { padding: 8px 12px; gap: 8px; }
-  .c2-pb-item { flex: 1 0 72px; min-height: 48px; }
+  .c2-pulsebar { padding: 5px 12px; gap: 6px; }
+  .c2-pb-item { flex: 1 0 72px; min-height: 44px; }
   .c2-pb-side .c2-spark { display: none; }
   .c2-pb-more { min-height: 48px; min-width: 44px; }
   .c2-pulsex { grid-template-columns: 1fr; padding: 8px 12px 12px; }
