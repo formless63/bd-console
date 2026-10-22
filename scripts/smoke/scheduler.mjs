@@ -33,7 +33,7 @@ export async function runScheduler(ctx) {
     const createFuture = await fetch(`http://127.0.0.1:${port}/api/schedule`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', origin: `http://127.0.0.1:${port}` },
-      body: JSON.stringify({ prompt: 'echo smoke', session: fakeSession, runAt: nearFuture })
+      body: JSON.stringify({ prompt: 'echo smoke', session: fakeSession, runAt: String(nearFuture) })
     }).then((r) => r.json());
     assert(createFuture.ok && createFuture.job && createFuture.job.id, `schedule create (future) failed: ${JSON.stringify(createFuture)}`);
     assert(createFuture.job.status === 'pending', 'newly created schedule job should be pending');
@@ -60,6 +60,25 @@ export async function runScheduler(ctx) {
       body: JSON.stringify({ id: futureJobId })
     });
     assert(doubleCancel.status === 400, `cancelling an already-cancelled job should 400, got ${doubleCancel.status}`);
+
+    // Invalid timestamps must neither create an immediately due job nor
+    // silently re-arm a cancelled one. Snapshot every field, including retry
+    // bookkeeping, and use only this fixture's nonexistent session.
+    const readJobs = () => fetch(`http://127.0.0.1:${port}/api/schedule`).then(r => r.json());
+    const beforeInvalidTimes = JSON.stringify(await readJobs());
+    for (const runAt of [undefined, null, false, true, '', '  ', [], [nearFuture], {}, 1.5, 8640000000000001, -8640000000000001, Number.MAX_SAFE_INTEGER + 1, 'soon']) {
+      for (const [path, body] of [
+        ['/api/schedule', { prompt: 'must not be queued', session: fakeSession, runAt }],
+        ['/api/schedule/retry', { id: futureJobId, runAt }],
+      ]) {
+        const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+          method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+        });
+        assert(response.status === 400, `${path} must reject runAt=${JSON.stringify(runAt)}, got ${response.status}`);
+      }
+    }
+    assert(JSON.stringify(await readJobs()) === beforeInvalidTimes, 'invalid times must leave the queue and retry history unchanged');
+    console.log('smoke ok (scheduler times: invalid values cannot queue/re-arm jobs, numeric strings remain supported)');
 
     // Validation: bad session name, empty prompt, non-integer runAt.
     const badSessionCreate = await fetch(`http://127.0.0.1:${port}/api/schedule`, {
