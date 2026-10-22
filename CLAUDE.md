@@ -162,6 +162,8 @@ bd export -o .beads/issues.jsonl
   `0.0.0.0`).
 - Keep trusted-LAN use tokenless and frictionless. Browser mutations still
   require JSON and valid Origin/Host context; public access belongs behind an
-  authenticating proxy such as Pangolin. Use `BD_CONSOLE_TRUSTED_HOSTS` only
-  for unusual proxy hostnames, and never put tokens in query strings.
+  authenticating proxy such as Pangolin. Proxies connecting over loopback
+  work automatically; container and remote proxies must list their
+  browser-facing hostnames in `BD_CONSOLE_TRUSTED_HOSTS` and preserve Host
+  so it matches Origin. Never put tokens in query strings.
 - Keep install docs explicit: clone or install path, init step, then run step.

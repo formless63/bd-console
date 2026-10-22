@@ -32,7 +32,7 @@ export async function runScheduler(ctx) {
 
     const createFuture = await fetch(`http://127.0.0.1:${port}/api/schedule`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', origin: `http://127.0.0.1:${port}` },
       body: JSON.stringify({ prompt: 'echo smoke', session: fakeSession, runAt: nearFuture })
     }).then((r) => r.json());
     assert(createFuture.ok && createFuture.job && createFuture.job.id, `schedule create (future) failed: ${JSON.stringify(createFuture)}`);

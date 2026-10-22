@@ -400,9 +400,11 @@ Other invariants, unchanged from the original design:
   interpolation, ever.
 - Issue IDs and labels are format-validated before every write.
 - Browser writes must be same-origin JSON requests. Direct LAN hostnames,
-  interface addresses, and a locally terminating Pangolin/newt proxy work
-  without setup; unusual remote proxy topologies can add their public names
+  interface addresses, and a proxy connecting over loopback work
+  without setup; container and remote proxies must add their public names
   with `BD_CONSOLE_TRUSTED_HOSTS=name1,name2`.
+  Keep the browser-facing Host header intact; trusted names do not bypass
+  the Origin/Host match. A 403 identifies which check failed.
 - File/session creation and doc/formula reads and writes are confined to
   registered workspace roots using real-path checks, including symlinks.
 - Sensitive host reads (settings, scheduler prompts, saved prompts, tmux

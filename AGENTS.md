@@ -145,7 +145,8 @@ docs/upgrading.md        upgrade + single-repo-era migration guide
   applying that default. Tokenless LAN use stays frictionless: mutating browser
   requests are protected by JSON + Origin/Host checks, while internet exposure
   belongs behind an authenticating proxy such as Pangolin. A locally
-  terminating proxy works automatically; unusual proxy hostnames can be listed
+  terminating proxy connecting over loopback works automatically; container
+  and remote proxies must list their browser-facing hostnames
   in `BD_CONSOLE_TRUSTED_HOSTS`. Tokens are header-only, never accepted in a
   query string. Static responses send `cache-control: no-cache` so edits show
   on refresh.

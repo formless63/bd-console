@@ -18,7 +18,7 @@ import {
   termixHostsUrl, normalizeTermixHosts, describeTermixFailure, looksLikeTermixApiKey,
 } from '../../lib/termix.mjs';
 import { validateTermixHostId } from '../../lib/config.mjs';
-import { csrfSafe } from '../../lib/routes.mjs';
+import { csrfSafe, csrfError } from '../../lib/routes.mjs';
 
 export async function runSettings(ctx) {
   const { assert, tempRoot, configDir, serverEntry, port, projectId, fixtures } = ctx;
@@ -155,11 +155,34 @@ export async function runSettings(ctx) {
     method: 'POST', headers: { 'content-type': 'text/plain' }, body: '{}'
   });
   assert(csrfForm.status === 403, `tokenless non-JSON write should be blocked by CSRF guard, got ${csrfForm.status}`);
+  assert(/Content-Type: application\/json/.test((await csrfForm.json()).error), 'non-JSON rejection should identify the Content-Type remedy');
   const csrfOrigin = await fetch(`http://127.0.0.1:${port}/api/settings`, {
     method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://evil.example' },
     body: JSON.stringify({ token: 'must-not-save' })
   });
   assert(csrfOrigin.status === 403, `cross-origin JSON write should be blocked by CSRF guard, got ${csrfOrigin.status}`);
+  assert(/preserve.*Host header/.test((await csrfOrigin.json()).error), 'Origin mismatch should explain proxy Host preservation');
+  const proxyRequest = {
+    headers: { 'content-type': 'application/json', host: 'console.example.test', origin: 'https://console.example.test' },
+    socket: { remoteAddress: '172.18.0.2' },
+  };
+  const previousTrustedHosts = process.env.BD_CONSOLE_TRUSTED_HOSTS;
+  try {
+    delete process.env.BD_CONSOLE_TRUSTED_HOSTS;
+    assert(!csrfSafe(proxyRequest), 'a container peer alone must not grant hostname trust');
+    assert(/BD_CONSOLE_TRUSTED_HOSTS/.test(csrfError(proxyRequest)), 'untrusted hostname should name the configuration remedy');
+    assert(!csrfSafe({ ...proxyRequest, headers: { ...proxyRequest.headers, 'x-forwarded-for': '127.0.0.1' } }),
+      'forwarded headers must not grant hostname trust');
+    process.env.BD_CONSOLE_TRUSTED_HOSTS = 'other.example.test, CONSOLE.EXAMPLE.TEST ';
+    assert(csrfSafe(proxyRequest), 'explicitly trusted hostname should work through a container proxy');
+    assert(!csrfSafe({ ...proxyRequest, headers: { ...proxyRequest.headers, origin: 'https://other.example.test' } }),
+      'trusted hostnames must still require matching Origin and Host');
+    assert(!csrfSafe({ ...proxyRequest, headers: { ...proxyRequest.headers, host: 'untrusted.example.test', origin: 'https://untrusted.example.test' } }),
+      'trusting one hostname must not trust unrelated names');
+  } finally {
+    if (previousTrustedHosts === undefined) delete process.env.BD_CONSOLE_TRUSTED_HOSTS;
+    else process.env.BD_CONSOLE_TRUSTED_HOSTS = previousTrustedHosts;
+  }
   assert(!csrfSafe({
     headers: { 'content-type': 'application/json', host: 'rebind.example', origin: 'http://rebind.example' },
     socket: { remoteAddress: '192.168.1.44' },
