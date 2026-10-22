@@ -7,6 +7,7 @@
 
 import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { networkInterfaces } from 'node:os';
 import { execFileSync } from 'node:child_process';
 // Termix deep-link composition (bd-console-4w7). Every export exercised below
 // is pure string/shape work — no fetch, no Termix instance, no credential.
@@ -179,6 +180,24 @@ export async function runSettings(ctx) {
       'trusted hostnames must still require matching Origin and Host');
     assert(!csrfSafe({ ...proxyRequest, headers: { ...proxyRequest.headers, host: 'untrusted.example.test', origin: 'https://untrusted.example.test' } }),
       'trusting one hostname must not trust unrelated names');
+    const ipv6Request = address => ({
+      headers: { 'content-type': 'application/json', host: `[${address}]:4180`, origin: `http://[${address}]:4180` },
+      socket: { remoteAddress: '192.0.2.10' },
+    });
+    delete process.env.BD_CONSOLE_TRUSTED_HOSTS;
+    const localIPv6 = Object.values(networkInterfaces()).flat().find(a => a.family === 'IPv6' && !a.address.includes('%'));
+    if (localIPv6) {
+      const address = new URL(`http://[${localIPv6.address}]`).hostname.slice(1, -1);
+      assert(csrfSafe(ipv6Request(address)), 'a local IPv6 interface must accept matching Origin/Host from a non-loopback peer');
+    }
+    assert(!csrfSafe(ipv6Request('2001:db8::1234')), 'arbitrary IPv6 addresses must not gain trust');
+    for (const configured of ['2001:db8:0:0:0:0:0:1234', '[2001:db8::1234]']) {
+      process.env.BD_CONSOLE_TRUSTED_HOSTS = configured;
+      const request = ipv6Request('2001:db8::1234');
+      assert(csrfSafe(request), 'configured IPv6 literals must normalize brackets and expanded notation');
+      assert(!csrfSafe({ ...request, headers: { ...request.headers, origin: 'http://[2001:db8::1234]:4181' } }),
+        'IPv6 normalization must preserve the Origin/Host port check');
+    }
   } finally {
     if (previousTrustedHosts === undefined) delete process.env.BD_CONSOLE_TRUSTED_HOSTS;
     else process.env.BD_CONSOLE_TRUSTED_HOSTS = previousTrustedHosts;
