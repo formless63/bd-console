@@ -1558,3 +1558,49 @@ input.edit-input { flex: 1; min-width: 120px; }
   /* Same 44px touch-target floor the rest of the mobile rules use. */
   .toast-action { min-height: 44px; min-width: 64px; }
 }
+
+/* Work hub and issue authoring: compact, wrapping at narrow widths. */
+.work-center, .hub-capacity { width: 100%; max-width: 1080px; box-sizing: border-box; flex: none; margin: 16px 0; padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); min-width: 0; }
+.work-heading, .work-tabs, .work-activity-note { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.work-heading { justify-content: space-between; margin-bottom: 12px; }
+.work-heading h2 { margin: 0; font-size: 18px; }
+.work-tabs { margin-bottom: 12px; }
+.work-filters { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(100px, 180px) minmax(100px, 140px); gap: 8px; margin-bottom: 12px; }
+.work-filters .field { width: 100%; min-width: 0; }
+.work-row { display: flex; justify-content: space-between; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--border); color: var(--text); text-decoration: none; overflow-wrap: anywhere; }
+.work-row:hover strong { text-decoration: underline; }
+.work-row-title { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.work-reasons { font-size: 12px; color: var(--text-dim); max-width: 45%; align-self: center; }
+.work-failure { color: var(--red); flex-direction: column; gap: 4px; }
+.work-warning { border-left: 3px solid var(--red); padding: 4px 10px; overflow-wrap: anywhere; }
+.work-warning p { margin: 4px 0; }
+.work-count { margin-bottom: 0; }
+.hub-capacity summary { cursor: pointer; font-weight: 600; background: transparent; padding: 0; }
+.issue-editor { padding: 12px 0; border-top: 1px solid var(--border); }
+.issue-editor h3 { font-size: 14px; margin: 0 0 8px; }
+.issue-editor-field { display: flex; flex-direction: column; gap: 5px; margin: 10px 0; font-size: 12px; }
+.issue-editor .field { width: 100%; min-width: 0; box-sizing: border-box; }
+.issue-editor textarea { resize: vertical; min-height: 72px; }
+.issue-editor-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.evidence-list { font-size: 12px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.evidence-list dt { margin-top: 8px; color: var(--text-dim); }
+.evidence-list dd { margin: 2px 0 0; }
+.sched-attempts { margin-top: 8px; font-size: 12px; overflow-wrap: anywhere; }
+.sched-attempts summary { cursor: pointer; }
+.sched-attempt { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.sched-notifications { margin-bottom: 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+@media (max-width: 600px) {
+  .work-center, .hub-capacity { padding: 12px; }
+  .work-filters { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .work-filters input { grid-column: 1 / -1; }
+  .work-row { flex-direction: column; gap: 5px; }
+  .work-reasons { max-width: none; align-self: start; }
+}
+.c2-tools { position: relative; }
+.c2-tools summary { cursor: pointer; font-size: 12px; padding: 8px; border: 1px solid var(--border); border-radius: 6px; }
+.c2-tools-menu { position: absolute; right: 0; top: 100%; z-index: 70; width: 180px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: 0 8px 24px #0003; display: flex; flex-direction: column; gap: 4px; }
+.c2-tools-menu .c2-btn-label { display: inline !important; }
+.c2-tools-menu button, .c2-tools-menu a { width: 100%; justify-content: flex-start; }
+.settings-preference { display: flex; align-items: center; gap: 8px; margin: 12px 0; font-size: 13px; }
+
+@media (max-width: 768px) { .c2-tools summary { min-height: 44px; display: flex; align-items: center; } }

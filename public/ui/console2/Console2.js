@@ -5,7 +5,7 @@
 import { html } from 'htm/preact';
 import { useEffect, useState } from 'preact/hooks';
 import {
-  store, navigate, loadProjectMeta, loadIssues, loadDocs, loadTmux, selectIssue, transitionProject, setNavigationGuard,
+  store, navigate, toast, loadProjectMeta, loadIssues, loadDocs, loadTmux, selectIssue, transitionProject, setNavigationGuard,
 } from '../store.js';
 import { eventsAvailable } from '../events.js';
 import { useVisiblePoll } from '../poll.js';
@@ -30,11 +30,13 @@ import { loadDefaultView } from './filters.js';
 import { useConsole2Keyboard, openHelp } from './keyboardNav.js';
 import { HelpOverlay } from './HelpOverlay.js';
 
+import { showCliReceipts } from '../preferences.js';
+
 const MODES = [['flow', 'Flow'], ['map', 'Map'], ['docs', 'Docs']];
 
 function CliFlash() {
   const cli = c2.lastCli.value;
-  if (!cli) return null;
+  if (!cli || !showCliReceipts.value) return null;
   const copy = () => { navigator.clipboard?.writeText(cli.cmd).catch(() => {}); };
   // "✓ ran" reads this as a receipt of something that already happened, not
   // a command being suggested to the user — every action flashes through
@@ -75,6 +77,7 @@ function Header() {
             onClick=${() => (store.createOpen.value = true)}>
             <span aria-hidden="true">+</span><span class="c2-btn-label"> New</span>
           </button>
+          <details class="c2-tools"><summary>Tools</summary><div class="c2-tools-menu" onClick=${e => { e.currentTarget.closest('details').open = false; }}>
           ${/* Molecules had exactly one entry point — typing `> mol` into the
                 omnibar — which is invisible to anyone who hasn't read the
                 docs, i.e. precisely the audience this feature is hardest for.
@@ -103,6 +106,7 @@ function Header() {
           <button class="c2-learnlink" type="button" title="Keyboard shortcuts (?)" onClick=${openHelp}>
             <span aria-hidden="true">⌨</span><span class="c2-btn-label"> Shortcuts</span>
           </button>
+          </div></details>
           <div class="c2-themesw-header"><${ThemeSwitch} /></div>
           ${/* Console 2.0 shipped with no route to #/settings at all: the only
                 ways in were a detour through the (now retired) classic view's
@@ -256,6 +260,13 @@ export function Console2() {
     bootstrapProject(pid);
     return () => { setNavigationGuard(null); };
   }, [pid]);
+
+  const ready = c2.ready.value;
+  useEffect(() => {
+    if (!ready || store.projectId.value !== pid || !route.issueId) return;
+    if (store.issues.value.some(issue => issue.id === route.issueId)) selectIssue(route.issueId);
+    else { selectIssue(null); toast('That issue is not in the current project export.', 'warn'); }
+  }, [pid, route.issueId, ready]);
 
   const detailOpen = !!store.selectedId.value;
 

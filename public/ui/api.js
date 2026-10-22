@@ -38,6 +38,7 @@ export const HUB_PATHS = new Set([
   '/api/schedule',
   '/api/schedule/cancel',
   '/api/schedule/retry',
+  '/api/schedule/attempts',
 ]);
 
 function pathOnly(path) {
@@ -120,10 +121,10 @@ export async function apiGet(path) {
 // secrets), /api/usage and /api/termix/hosts (spends the stored Termix
 // credential) all go through authed(). Sending the header on the ungated ones
 // too is inert — the server only ever compares it when a token is configured.
-export async function apiGetRaw(path) {
+export async function apiGetRaw(path, { signal } = {}) {
   const headers = { accept: 'application/json' };
   if (store.meta.value?.tokenRequired) headers['x-bd-token'] = getToken();
-  const r = await fetch(path, { headers });
+  const r = await fetch(path, { headers, signal });
   return parse(r);
 }
 

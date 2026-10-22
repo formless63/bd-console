@@ -200,14 +200,43 @@ tmux session introspection, the prompt scheduler, and the Preact/htm
 frontend rewrite (6-preset theming, hash routing). Verified against real
 beads-backed repos via `npm run smoke`.
 
+Flow status/epic lanes and doc-anchored capture are shipped.
+
 ## Natural next steps (not built)
 
-- **Planning board** (kanban by status/epic, add child issues).
-- **Doc-anchored ideas** (select text in a doc → capture with a `doc:<path>` label).
 - **Distribution:** publish to npm proper (currently GitHub-install only);
   optional Docker image (would need `bd` and `tmux` in the image).
 - Non-Linux persistence (systemd `--user` is Linux-only; other platforms
   fall back to a plain detached process with no reboot survival).
+
+## Work hub and authoring conventions
+
+- The hub's attention/search/activity surface reuses each registered project's
+  issues API with bounded concurrency and explicit partial-failure reporting.
+  Activity baselines contain summary fields in this browser's localStorage;
+  they are not a server audit log. Only successful project loads are marked
+  reviewed. Use `#/p2/<projectId>/issue/<issueId>` for direct issue links.
+- `POST /api/p/<id>/edit` supports `set-content` and `set-review`, with `fields`
+  and matching `expected` values. The server rereads Beads and rejects stale
+  fields with 409; it serializes hub edits per issue. External CLI writes are
+  not part of a cross-process compare-and-swap transaction.
+- Review data lives in the namespaced `bd_console_review` metadata key as JSON
+  text via `bd update --set-metadata`. Preserve other metadata. Its decision,
+  branch/worktree, commit, URL, tests, reviewer, and summary are explicit
+  records, not automatic verification of builds, merges, or deployment.
+- `GET /api/schedule/attempts?id=` is token-gated like the job list. The
+  additive `job_attempts` table records actual delivery attempts and preserves
+  them across requeue; legacy imports contain only the last known result.
+  Never automatically retry an ambiguous or failed delivery.
+- Failure notifications are opt-in browser notifications while the dashboard
+  remains open. Keep prompt text, session names, and errors out of OS alerts.
+  No closed-browser push or task-completion detection is provided.
+- Sessions/capacity are collapsed on the hub. Project Tools groups advanced
+  actions; command receipts are an opt-in Appearance preference. Keep primary
+  work and New issue accessible without expanding advanced controls.
+- Run `node scripts/smoke.mjs work-browser browser` after changes to these
+  workflows/layouts, in addition to the normal release gates. Both browser
+  domains use isolated fixtures and skip only when Chrome is unavailable.
 
 ## Gotchas
 

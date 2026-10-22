@@ -29,6 +29,7 @@ import { c2, flashCli } from './state.js';
 import { LearnEmpty, ConceptDot } from '../components/ConceptTip.js';
 import { agentName, isServerMode, promptTip, timeAgo } from '../components/common.js';
 import { learn, concept } from '../learn.js';
+import { IssueEditor } from './IssueEditor.js';
 
 // Link/supersede/duplicate writes live in store.js (with the other shared
 // write paths) rather than actions.js; wrap them here so Console 2.0 flashes
@@ -814,6 +815,7 @@ export function Detail() {
           <div class="c2-detail-sections">
             <section class="c2-detail-section" id="c2-detail-panel-overview" role="tabpanel" tabIndex="0" aria-labelledby="c2-detail-tab-overview"
               data-section="overview" hidden=${section !== 'overview'}>
+              <${IssueEditor} key=${'content-' + id} issue=${issue} />
               ${issue.description || issue.close_reason || issue.design || issue.notes || issue.acceptance_criteria
                 ? html`
                   <${NarrativeField} title="Description" value=${issue.description} />
@@ -822,6 +824,7 @@ export function Detail() {
                   <${NarrativeField} title="Notes" value=${issue.notes} />
                   <${NarrativeField} title="Acceptance" value=${issue.acceptance_criteria} />`
                 : html`<div class="c2-lane-empty">No description, notes, design, or acceptance criteria yet.</div>`}
+              <${IssueEditor} key=${'review-' + id} issue=${issue} review=${true} />
             </section>
 
             <section class="c2-detail-section" id="c2-detail-panel-connections" role="tabpanel" tabIndex="0" aria-labelledby="c2-detail-tab-connections"

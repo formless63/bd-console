@@ -332,7 +332,19 @@ export function navigate(hash) {
 // store (and avoids a circular module graph).
 let navigationGuard = null;
 export function setNavigationGuard(fn) { navigationGuard = typeof fn === 'function' ? fn : null; }
-export function allowNavigation(hash) { return !navigationGuard || navigationGuard(hash) !== false; }
+const draftGuards = new Set();
+export function registerDraftGuard(guard) { draftGuards.add(guard); return () => draftGuards.delete(guard); }
+function allowDraftLeave(next = () => true) {
+  const guards = [...draftGuards];
+  if (guards.some(g => g.busy())) return false;
+  const dirty = guards.filter(g => g.dirty());
+  if (dirty.length && !confirm('Discard unsaved issue changes?')) return false;
+  if (!next()) return false;
+  // Do not discard one editor if another editor or a doc blocks navigation.
+  dirty.forEach(g => g.discard());
+  return true;
+}
+export function allowNavigation(hash) { return allowDraftLeave(() => !navigationGuard || navigationGuard(hash) !== false); }
 
 // ---------------------------------------------------------------------------
 // Toasts
@@ -1024,6 +1036,7 @@ export async function createStandardEpics(projectId) {
 // Issue selection + comments
 // ---------------------------------------------------------------------------
 export async function selectIssue(id) {
+  if (id !== store.selectedId.value && !allowDraftLeave()) return;
   const seq = ++commentsSeq;
   store.selectedId.value = id;
   store.commentsError.value = null;

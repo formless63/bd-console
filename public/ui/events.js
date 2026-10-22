@@ -43,6 +43,8 @@ export const eventsAvailable = signal(null);
 // instant a fetch/read fails and reconnect is scheduled. Never permanent
 // either way — it flips back to true on the very next successful `hello`.
 export const eventsConnected = signal(false);
+export const workRevision = signal(0);
+export const scheduleRevision = signal(0);
 
 const BASE_BACKOFF_MS = 1000;
 const MAX_BACKOFF_MS = 30000;
@@ -69,8 +71,11 @@ function scheduleReconnect() {
 // visibilitychange below is what guarantees freshness once someone looks
 // again, so nothing here needs to be remembered/queued.
 function handleChange(evt) {
-  if (!evt || document.hidden) return;
+  if (!evt) return;
+  if (evt.kind === 'schedule') scheduleRevision.value++;
+  if (document.hidden) return;
   if (evt.kind === 'issues') {
+    workRevision.value++;
     if (evt.project && evt.project === store.projectId.value) loadIssues();
   } else if (evt.kind === 'schedule') {
     if (store.route.value.view === 'schedule') loadSchedule();

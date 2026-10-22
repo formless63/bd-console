@@ -783,8 +783,7 @@ select.c2-linktype { flex: 0 0 auto; max-width: 140px; }
   .c2-brand-sub { display: none; }
   .c2-omni { order: 3; flex-basis: 100%; max-width: none; }
   .c2-hublink, .c2-setlink { min-width: 44px; min-height: 44px; }
-  .c2-header-right { flex-wrap: nowrap; gap: 4px; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
-  .c2-header-right::-webkit-scrollbar { display: none; }
+  .c2-header-right { flex-wrap: nowrap; gap: 4px; max-width: 100%; overflow: visible; }
   .c2-sync { display: inline-flex; align-items: center; min-height: 44px; padding: 6px 8px; }
   .c2-header-echo { flex-wrap: wrap; row-gap: 4px; }
 

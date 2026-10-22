@@ -15,7 +15,8 @@ import { useEffect, useState } from 'preact/hooks';
 import { store, navigate, loadProjectStats, loadTmux, loadSchedule, loadProjectsGit, loadBdVersion, toggleHubSection, loadHub, loadBootMeta } from '../store.js';
 import { timeAgo, hostMemSummary, hostMemTip } from './common.js';
 import { ChevronIcon, ExternalLinkIcon, copyUpdateCommand } from './hub/shared.js';
-import { ProjectRadar, ProjectCard, AddProjectForm } from './hub/ProjectGrid.js';
+import { ProjectCard, AddProjectForm } from './hub/ProjectGrid.js';
+import { WorkCenter } from './hub/WorkCenter.js';
 import { NewSessionDialog } from './hub/NewSessionDialog.js';
 import { QuotaSessionsRow, AttributionBand } from './hub/UsageSection.js';
 
@@ -136,6 +137,7 @@ export function HubView() {
   const [statErrors, setStatErrors] = useState(new Set());
   const [addOpen, setAddOpen] = useState(false);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
+  const [capacityOpen, setCapacityOpen] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -158,8 +160,8 @@ export function HubView() {
       <div class="hub-header">
         <div class="hub-header-top">
           <div>
-            <h1>Global Hub</h1>
-            <p class="hub-header-tagline muted small">Select a project to manage its beads.</p>
+            <h1>Work hub</h1>
+            <p class="hub-header-tagline muted small">Review what needs you, then open a project.</p>
           </div>
           <button type="button" class="btn btn-accent" onClick=${() => setNewSessionOpen(true)}>+ New code session</button>
         </div>
@@ -167,11 +169,11 @@ export function HubView() {
       </div>
       <${NewSessionDialog} open=${newSessionOpen} onClose=${() => setNewSessionOpen(false)} />
 
-      <${ProjectRadar} entries=${entries} statsById=${statsById} errors=${statErrors} />
-
-      ${QuotaSessionsRow()}
-
-      ${AttributionBand()}
+      <${WorkCenter} />
+      <details class="hub-capacity" onToggle=${e => setCapacityOpen(e.currentTarget.open)}>
+        <summary>Sessions & capacity</summary>
+        ${capacityOpen && html`<${QuotaSessionsRow} /><${AttributionBand} />`}
+      </details>
 
       ${entries.length === 0
         ? store.hubLoading.value

@@ -14,7 +14,8 @@ import {
   loadPrompts, savePrompt, deletePrompt, markPromptUsed, loadUsage,
   toast, requireToken, SCHED_UNAVAILABLE_MSG,
 } from '../store.js';
-import { apiPostRaw, AuthError } from '../api.js';
+import { apiGetRaw, apiPostRaw, AuthError } from '../api.js';
+import { alertsSince, alertError, toggleScheduleAlerts } from '../scheduleNotifications.js';
 import { useVisiblePoll } from '../poll.js';
 import { relTime, cwdTail, agentName, isServerMode, promptTip } from './common.js';
 
@@ -34,7 +35,7 @@ const USAGE_POLL_MS = 5 * 60000;
 // design, but real, so it needs its own label/style rather than falling
 // through to the raw status-string default (STATUS_LABEL[status] || status)
 // below every other row already guards against.
-const STATUS_LABEL = { pending: 'pending', firing: 'firing', sent: 'sent', failed: 'failed', cancelled: 'cancelled' };
+const STATUS_LABEL = { pending: 'pending', firing: 'firing', sent: 'delivered to terminal', failed: 'failed', cancelled: 'cancelled' };
 
 function pad(n) { return String(n).padStart(2, '0'); }
 function toLocalInputValue(d) {
@@ -327,7 +328,7 @@ function CreateForm() {
         ${sessions.length === 0 && html`<span class="muted small">No live tmux sessions detected; you can still type a session name.</span>`}
       </label>
 
-      <label class="dialog-field"><span>run at</span>
+      <label class="dialog-field"><span>run at · ${Intl.DateTimeFormat().resolvedOptions().timeZone}</span>
         <input class="field" type="datetime-local" value=${runAtLocal} onInput=${(e) => setRunAtLocal(e.target.value)} />
         <div class="preset-row">
           ${RUN_AT_PRESETS.map((p) => html`
@@ -418,7 +419,7 @@ function RequeueBox({ job, sessions, onDone }) {
         <${SessionCombobox} value=${session} onChange=${setSession} sessions=${sessions} />
         ${gone && html`<span class="form-warn">Session "${session.trim()}" is not running right now — this will fail again unless it is back by then.</span>`}
       </label>
-      <label class="dialog-field"><span>run at</span>
+      <label class="dialog-field"><span>run at · ${Intl.DateTimeFormat().resolvedOptions().timeZone}</span>
         <input class="field" type="datetime-local" value=${runAtLocal} onInput=${(e) => setRunAtLocal(e.target.value)} />
         <div class="preset-row">
           ${RUN_AT_PRESETS.map((p) => html`
@@ -434,6 +435,46 @@ function RequeueBox({ job, sessions, onDone }) {
         <button type="button" class="btn btn-xs btn-accent" disabled=${busy || !session.trim()} onClick=${later}>Requeue</button>
       </div>
     </div>`;
+}
+
+function AttemptHistory({ job }) {
+  const [open, setOpen] = useState(false);
+  const [attempts, setAttempts] = useState(null);
+  const [error, setError] = useState('');
+  const [refresh, setRefresh] = useState(0);
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    setAttempts(null); setError('');
+    apiGetRaw('/api/schedule/attempts?id=' + job.id).then(data => { if (live) setAttempts(data.attempts); })
+      .catch(e => { if (live) setError(e.message); });
+    return () => { live = false; };
+  }, [open, job.id, job.status, job.retry_count, refresh]);
+  return html`<details class="sched-attempts" onToggle=${e => setOpen(e.currentTarget.open)}><summary>Delivery history</summary>
+    ${open && html`${error ? html`<p role="alert">${error} <button class="btn btn-xs" onClick=${() => setRefresh(refresh + 1)}>Retry loading</button></p>`
+      : attempts === null ? html`<p>Loading attempts…</p>`
+      : !attempts.length ? html`<p>No delivery attempted.</p>`
+      : attempts.map(attempt => html`<div class="sched-attempt" key=${attempt.id}>
+        <strong>Attempt ${attempt.attempt} · ${STATUS_LABEL[attempt.status] || attempt.status}</strong>
+        <div>${attempt.session} · scheduled ${new Date(attempt.scheduled_at).toLocaleString()}</div>
+        ${attempt.started_at && html`<div>Started ${new Date(attempt.started_at).toLocaleString()}</div>`}
+        ${attempt.finished_at && html`<div>Finished ${new Date(attempt.finished_at).toLocaleString()}</div>`}
+        ${attempt.error && html`<div class="sched-error">${attempt.error}</div>`}
+        ${!!attempt.legacy && html`<div class="muted">Imported last known result. Earlier attempts were not recorded.</div>`}
+      </div>`)}`}
+  </details>`;
+}
+
+function NotificationSettings() {
+  const [busy, setBusy] = useState(false);
+  const enabled = !!alertsSince.value;
+  const blocked = enabled && typeof Notification !== 'undefined' && Notification.permission !== 'granted';
+  return html`<div class="sched-notifications"><button class="btn btn-sm" disabled=${busy} aria-pressed=${enabled}
+    onClick=${async () => { setBusy(true); try { await toggleScheduleAlerts(); } catch(e) { alertError.value = e.message; } finally { setBusy(false); } }}>${enabled ? 'Disable failure alerts' : 'Enable failure alerts'}</button>
+    <span class="muted small">Optional browser notifications for new failures. Keep this dashboard open; closed or suspended browsers cannot receive alerts.</span>
+    ${blocked && html`<span role="status">Browser permission was revoked. Disable alerts, then allow notifications in site settings.</span>`}
+    ${alertError.value && html`<span role="status">${alertError.value}</span>`}
+  </div>`;
 }
 
 function JobRow({ job, expanded, onToggle, onCancel, sessions, requeueOpen, onRequeue, onRequeueDone }) {
@@ -467,6 +508,7 @@ function JobRow({ job, expanded, onToggle, onCancel, sessions, requeueOpen, onRe
                 no hint that it is here for a second time, or why. */ ''}
           ${status === 'pending' && job.last_error && html`<span class="sched-error">requeued after: ${job.last_error}</span>`}
         </div>`}
+      <${AttemptHistory} job=${job} />
       ${requeueOpen && html`<${RequeueBox} job=${job} sessions=${sessions} onDone=${onRequeueDone} />`}
     </div>`;
 }
@@ -507,6 +549,9 @@ export function ScheduleView() {
         <button class="btn btn-ghost" onClick=${() => { loadSchedule(); loadTmux(); }}>Refresh</button>
       </div>
 
+      <p class="muted small">Times shown in ${Intl.DateTimeFormat().resolvedOptions().timeZone}. “Delivered to terminal” confirms text and Enter were sent; agent acceptance and task completion are not tracked.</p>
+      <${NotificationSettings} />
+      ${store.scheduleAvailable.value && store.scheduleAvailableReason.value && html`<p role="alert" class="form-err">Schedule refresh failed: ${store.scheduleAvailableReason.value}. Displayed jobs may be stale.</p>`}
       ${!store.scheduleAvailable.value
         ? html`<div class="empty-state">
             <div class="empty-icon">⏱</div>

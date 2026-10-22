@@ -40,6 +40,8 @@ import { runVersions } from './smoke/versions.mjs';
 import { runRouting } from './smoke/routing.mjs';
 import { runFormulas } from './smoke/formulas.mjs';
 import { runBrowser } from './smoke/browser.mjs';
+import { runWorkBrowser } from './smoke/work-browser.mjs';
+import { runWorkflows } from './smoke/workflows.mjs';
 
 // Order matters: it is the order the sections ran in as one file, so anything
 // that leaned on state an earlier section left behind still sees it.
@@ -49,6 +51,7 @@ import { runBrowser } from './smoke/browser.mjs';
 // is opt-in today: it boots a real Chrome and costs ~10-20s, which is not a
 // price the default fast loop should pay. See scripts/smoke/browser.mjs.
 const DOMAINS = [
+  ['workflows', runWorkflows, 'issue editing, review evidence, and work inbox derivations'],
   ['issues', runIssues, 'issue creation, links/relationships, and the pure derivations over them'],
   ['tmux', runTmux, 'tmux sessions API, agent detection, process/host health'],
   ['scheduler', runScheduler, 'prompt scheduler and saved prompts'],
@@ -60,6 +63,7 @@ const DOMAINS = [
   ['versions', runVersions, 'bd + Claude Code/Codex CLI version checks'],
   ['routing', runRouting, 'hash routes, the hub-route contract, the learn layer'],
   ['formulas', runFormulas, 'formulas and molecules: derivations, routes, authoring'],
+  ['work-browser', runWorkBrowser, 'functional work hub, editing, review and scheduler UI', true],
   ['browser', runBrowser, 'layout/stacking/scroll/hit-testing in a real Chrome', true],
 ];
 

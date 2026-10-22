@@ -49,62 +49,26 @@ header.
 
 Top to bottom, `public/ui/components/HubView.js`:
 
-- **Header** — "Global Hub" + the **Overview** strip: two chips ("N tmux
-  sessions" / "unavailable", "N scheduled prompts"), each a shortcut to
-  `#/tmux` / `#/schedule`. Collapsible on mobile only.
-- **bd version row** — a compact chip showing the installed `bd` (beads CLI)
-  version; if a newer release exists, an "update available" chip that copies
-  the update command to your clipboard (or, if the command can't be
-  determined, sends you to Settings); a warning chip if more than one `bd`
-  binary is on `PATH` (the exact trap where an update can silently target
-  the wrong binary). Fetched once per hub visit (`GET /api/bd-version`,
-  server-cached for hours) — Settings has the fuller version card with a
-  manual recheck.
-- **Usage section** — two bands:
-  - **Live quota**: Claude Code and Codex quota gauges (session/weekly
-    windows, percent + "resets in Xh Ym", color-coded ok/warn/crit), plus
-    per-model "scoped limits" with a loud "⛔ throttled" badge when a model is
-    actively rate-limited. Polls every 5 minutes (paused while the tab is
-    hidden, caught up on return) and the server caches the Claude call for
-    the same 5 minutes, so an open hub can't sustain the provider's rate
-    limit; the ↻ button asks for a genuinely fresh read
-    (`GET /api/usage?fresh=1`), which the server still refuses during a 429
-    backoff (15 min) or within ~20s of the previous manual refresh — those
-    answers come back marked as cached and say so in the UI. Degrades to
-    "not detected" per provider rather than erroring the whole hub. Kimi Code
-    joins this band as a third row when `~/.kimi-code` exists (and renders
-    nothing at all when it doesn't): stack info, not quota — server state from
-    the `kimi web` heartbeat (`running`/`stale`/`stopped`, stale after 90s of
-    silence), host version, host:port, session/workspace counts, and the
-    newest session's model + token total. Kimi publishes no rate-limit data
-    anywhere, so it deliberately gets no gauge. Gemini (Google's Antigravity
-    CLI — the binary is `agy`, not `gemini`) joins as a fourth row on the same
-    terms when `~/.gemini/antigravity-cli` exists: language-server state and
-    version read from the CLI's own log header, sign-in state, conversation and
-    workspace counts, and the newest conversation. Antigravity publishes no
-    limit, utilization or reset instant anywhere either — its internal quota
-    manager logs only control flow — so it gets no gauge; the one real quota
-    fact is whether the API answered `429 RESOURCE_EXHAUSTED`, which surfaces as
-    a dated "⚠️ quota hit" chip and only when it actually happened. The adapter
-    never opens `antigravity-oauth-token` and never surfaces the account email
-    the CLI writes into its own log.
-  - **Usage attribution**: a separate, explicitly-labeled "estimated from
-    local session logs, not quota" band — a 7/30/90-day range picker and a
-    manual refresh. This is parsed from local session logs on the hub host,
-    *not* the providers' own usage APIs, and is presented that way in the UI
-    so it's never confused with the authoritative gauges above it.
-- **Terminal sessions** — a compact table (session name/attached badge, repo
-  chip if a pane's cwd matches a registered project, command, age, last
-  activity, copy-attach button) for up to 6 sessions, "View all →" to
-  `#/tmux`. Hidden entirely if no projects are registered yet.
-- **Project grid** — one card per registered project: issue count, git
-  insights if available (branch, ahead/behind, dirty-file count, commits/week,
-  a labeled repo chip linking to GitHub/GitLab/etc.), status stat pills
-  (Ready/Active/Blocked), a velocity pill (closed in the last 7 days) and an
-  open-bugs pill when non-zero. **The entire card is one click-through to
-  Console 2.0** (`#/p2/<id>`).
-- **Empty state**: "No projects registered. Run `bd-console add` inside a
-  project to register it."
+- **Work hub header** — new code session and an overview strip linking to
+  terminals, schedule, host health, Beads version/update, and the guide.
+- **Your work** — Needs attention, Search all projects, and Since review.
+  Attention explains each signal: human gate, pending review/changes requested,
+  in-progress work unchanged for 24h, blocking open issues, or P0/P1 ready work.
+  Deferred/closed issues are excluded. Failed scheduled prompts link to Schedule.
+- **Global search** — ID, title, descriptions, design, notes, acceptance, labels,
+  and project names, with project/status filters. Results link directly to
+  `#/p2/<projectId>/issue/<issueId>`. Additional results use Show more; data is
+  not silently truncated. Inaccessible projects appear as partial-result warnings.
+- **Since review** — new, updated, closed, and newly ready issues compared with
+  this browser's last reviewed summary. First visits establish a baseline.
+  “Mark all loaded projects reviewed” preserves baselines for unavailable
+  projects. This is a browser-local comparison, not a complete event log.
+- **Sessions & capacity** — collapsed by default and loaded when expanded.
+  Live terminal sessions and provider quota/status share a row; attribution
+  from local session logs stays labeled as estimates, separate from quota.
+- **Tracked Projects** — one card per project with issue/status counts and
+  available git insights, plus Add project. The duplicate project radar has
+  been removed. Empty states include in-browser project registration.
 
 ## 4. Console 2.0 (`#/p2/<id>`)
 
@@ -121,17 +85,26 @@ issue.
 - **+ New** — opens the full-featured `CreateIssueDialog`
   (type/priority/labels/description/acceptance/epic/assignee) — the
   omnibar's own plain-text mode only does quick triage capture, not this.
-- **⚗ Templates** — the molecule/formula pour dialog.
-- **? Guide** — `#/learn`, the concepts reference.
+- **Tools** — Templates (molecule/formula dialog), Add files, Guide, and
+  Keyboard shortcuts.
 - **Theme switch** — preset + light/dark/auto popover.
 - **⚙** — `#/settings`.
 - **Sync chip** — `synced` / `stale` / `error` / `unknown`, reflecting the
   freshness of the `.beads/issues.jsonl` export this view is reading from.
-- **CLI-flash strip** (directly under the header) — every write you make
-  through Console 2.0 echoes the literal `bd`/`tmux` command it just ran
-  ("✓ ran `$ bd update … --claim`"), with copy/dismiss — this is Console
-  2.0's explicit "teach you the CLI" mechanism, not a suggestion to run
-  something yourself.
+- **Command receipts** — optional under Settings → Appearance, off by default.
+  Existing action receipts display the command after a successful action.
+
+### Content and review editing
+
+Detail's Overview has **Edit title & content** for title, description, design,
+notes, and acceptance criteria. Save refreshes the export. A stale field causes
+409 with the draft kept; discard/reload is explicit. Closing, changing the
+selected issue, navigation, and browser unload guard unsaved drafts.
+
+**Review & evidence** records a branch/worktree, commit, URL, validation results,
+reviewer, notes, and decision (needs review / changes requested / approved).
+It uses a namespaced Beads metadata key and preserves unrelated metadata.
+These are explicit records, not proof that tests passed or deployment happened.
 
 ### The Pulse bar
 
@@ -443,9 +416,8 @@ graph, and molecule support existed:
 - **Molecules v1** — pour a molecule from a formula via the omnibar's `> mol`
   command (browse → variables with live preview → dry-run confirm → pour),
   a molecule-aware Detail (progress + parallel-group-aware steps), epic-style
-  grouping in Flow, and a "Burn this molecule" undo path. `bd mol bond`,
-  `bd mol distill`, wisps, and `bd mol squash` are deliberately **not**
-  built — see the caveats below.
+  grouping in Flow, and a "Burn this molecule" undo path. Formula writing/editing and distilling an epic into a reusable recipe are
+  available from Templates. Wisps, bond, and squash remain outside this UI.
 - **Usage analytics** — the hub's Usage section: live Claude Code/Codex
   quota gauges plus a separate "estimated, not quota" attribution band.
 - **bd version surfacing** — the hub's compact bd-version row and Settings'
@@ -471,12 +443,21 @@ graph, and molecule support existed:
 - **Burning a molecule deletes more than the pour created** — everything
   parented under the root, including beads added by hand afterward — and it
   is a real deletion (syncs to remotes), not an archive.
-- **Wisps, `bd mol bond`, `bd mol distill`, and `bd mol squash` are out of
+- **Wisps, `bd mol bond`, and `bd mol squash` are out of
   scope, not just unbuilt.** Wisps are excluded from `bd export` entirely, so
   they're invisible to bd-console's normal read path without a second,
   always-live polling path that doesn't exist yet; `bond`'s formula-name
   resolution was found to be unreliable on the installed CLI version during
   design research. See `docs/molecules-design.md` §2/§8 for the full
   reasoning.
-- **Formula authoring has no UI anywhere** — formulas are files on disk; the
-  Molecule dialog only ever reads them.
+- **Formula authoring** is available through Templates → Write or edit a
+  formula; the empty state also offers creation and distillation from an epic.
+
+## Work supervision release
+
+Scheduler job rows now expose **Delivery history**, preserved across explicit
+requeue, with session, scheduled/start/finish timestamps, and errors. Legacy
+jobs import their last known result only. `sent` reads “delivered to terminal”;
+agent acceptance and task completion are not tracked. Time controls name the
+browser timezone. Failure alerts are opt-in, omit prompt/error contents, and
+require the dashboard to remain open in a browser that permits notifications.

@@ -4,6 +4,7 @@
 // and (token-gated) the server's write token via POST /api/settings.
 // Degrades gracefully if /api/settings 404s (server hasn't landed it yet):
 // the read-only panel is hidden but the browser-token control still works.
+import { showCliReceipts, setCliReceipts } from '../preferences.js';
 import { html } from 'htm/preact';
 import { useEffect, useState } from 'preact/hooks';
 import {
@@ -183,6 +184,7 @@ function AppearancePanel() {
   return html`
     <section class="settings-card">
       <h2 class="settings-card-title">Appearance</h2>
+      <label class="settings-preference"><input type="checkbox" checked=${showCliReceipts.value} onChange=${e => setCliReceipts(e.target.checked)} /> Show command receipts after issue actions</label>
       <p class="muted small">Theme preset and light/dark scheme — applies immediately and persists in this browser.</p>
       <div class="edit-block">
         <span class="edit-label">Preset</span>

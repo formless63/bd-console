@@ -27,7 +27,10 @@ export function legacyProjectHash(hash) {
 export function parseRoute(hash) {
   const parts = String(hash || '').replace(/^#/, '').split('/').filter(Boolean);
   if ((parts[0] === 'p2' || parts[0] === 'p') && parts[1]) {
-    return { view: 'console2', projectId: decodeURIComponent(parts[1]) };
+    try {
+      return { view: 'console2', projectId: decodeURIComponent(parts[1]),
+        ...(parts[2] === 'issue' && parts[3] ? { issueId: decodeURIComponent(parts[3]) } : {}) };
+    } catch { return { view: 'hub' }; }
   }
   if (parts[0] === 'tmux') return { view: 'tmux' };
   if (parts[0] === 'schedule') return { view: 'schedule' };

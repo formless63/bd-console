@@ -9,19 +9,27 @@ Preact app with vendored dependencies — still no bundler, no build step.
 
 ## What it does
 
-- **Global Hub**: one long-running server, many registered projects. Switch
-  between repos from a single dashboard instead of running one server per
-  repo.
+- **Work hub**: one server, many registered projects. An attention inbox
+  surfaces human gates, review requests, aging work, blockers, urgent ready
+  issues, and failed scheduled prompts. Search issue content across projects
+  and open a result directly. “Since review” tracks changes in this browser;
+  unavailable projects are called out explicitly.
 - **Beads triage**: every issue from `.beads/issues.jsonl`, including
   dependencies — status lanes (Ready · Active · Blocked · Done), optional
   epic grouping, a dependency map, and omnibar search. Claim, close, reopen,
-  re-prioritize, label, link and re-parent issues inline.
+  re-prioritize, label, link and re-parent issues inline. Edit titles,
+  descriptions, design, notes, and acceptance criteria with stale-edit
+  protection and unsaved-draft navigation guards.
+- **Review evidence**: record branch/worktree, commit, PR or evidence URL,
+  validation results, reviewer, and an explicit review decision. These are
+  recorded claims; they do not automatically verify tests or deployment.
 - **Rich issue creation**: type, priority, labels, acceptance criteria,
   parent epic, and assignee — not just quick one-line captures.
 - **Comments**: read and add comments on any issue through `bd comment`
   (always read live, never stale).
-- **Docs**: browse project markdown, either auto-discovered or pinned via a
-  per-project `docRoots` list.
+- **Docs**: browse, edit and create project markdown; capture selected text
+  as an issue with a `doc:<path>` provenance label. Discovery can be pinned
+  with a per-project `docRoots` list.
 - **tmux sessions**: see every tmux session and pane on the host the hub
   runs on — what's running, where, and a live scrollback preview.
 - **Prompt scheduler**: queue a literal prompt to be typed into an existing,
@@ -432,7 +440,25 @@ What it does *not* do, by design:
 
 A job that fires against a session that no longer exists (or never existed)
 ends up `failed`, not silently dropped — check `GET /api/schedule` for job
-status (`pending` / `sent` / `failed` / `cancelled`) and `error`.
+status (`pending` / `firing` / `sent` / `failed` / `cancelled`) and `error`.
+The UI labels `sent` as **delivered to terminal**: it confirms that text and
+Enter were sent, not that an agent accepted or completed the task.
+
+Expand **Delivery history** for each attempt's session, scheduled time,
+start, finish, and error. History survives an explicit requeue. Older jobs
+import only their last known result, marked as such. An interrupted send is
+reported as possibly delivered; inspect the terminal before deciding to retry.
+Requeue requires a new time, can change the target session, and never retries
+a failed job automatically. Dates display the browser's named timezone.
+
+**Enable failure alerts** opts this browser into notifications for new failures.
+HTTPS or localhost and browser permission are required. Keep the dashboard
+open; this is not a push service for closed or suspended browsers. Notification
+text includes the job number, never the prompt or terminal error.
+
+The hub keeps session/capacity charts collapsed until requested. Project
+**Tools** groups templates, file upload, guide, and shortcuts. Command receipts
+are off by default; enable them under **Settings → Appearance**.
 
 ### Agent type and "server mode"
 
@@ -462,8 +488,10 @@ GET  /api/tmux                    list tmux sessions/panes (token-gated when con
 GET  /api/tmux/preview?session=&lines=   scrollback preview (token-gated when configured)
 POST /api/tmux/send                type a prompt now: {session, text, force?}
 GET  /api/schedule                 list jobs (token-gated when configured)
+GET  /api/schedule/attempts?id=     delivery receipts (same token gate)
 POST /api/schedule                 create a job: {prompt, session, runAt}
 POST /api/schedule/cancel          cancel a still-pending job: {id}
+POST /api/schedule/retry           explicitly requeue: {id, runAt, session?}
 ```
 
 The scheduler polls for due jobs every `BD_CONSOLE_SCHED_INTERVAL`

@@ -8,36 +8,7 @@
 // component — so everything project-scoped is gone from here.
 import { html } from 'htm/preact';
 import { store, navigate, loadHub } from '../store.js';
-import { THEME_PRESETS, SCHEMES, setPreset, setScheme } from '../theme.js';
 import { ThemeSwitch } from './ThemeSwitch.js';
-
-// Desktop-width theme controls — the two Shoelace selects. Hidden at
-// <=768px (styles.css) in favor of the compact ThemeSwitch popover below,
-// which is what actually works on a phone (the selects, side by side in a
-// horizontally-scrolling topbar-right, didn't).
-function ThemePicker() {
-  return html`
-    <div class="theme-picker">
-      <sl-select
-        class="theme-select"
-        size="small"
-        value=${store.themePreset.value}
-        onsl-change=${(e) => setPreset(e.target.value)}
-        title="Theme preset"
-      >
-        ${THEME_PRESETS.map((p) => html`<sl-option key=${p.id} value=${p.id}>${p.name}</sl-option>`)}
-      </sl-select>
-      <sl-select
-        class="scheme-select"
-        size="small"
-        value=${store.themeScheme.value}
-        onsl-change=${(e) => setScheme(e.target.value)}
-        title="Light / dark"
-      >
-        ${SCHEMES.map((s) => html`<sl-option key=${s.id} value=${s.id}>${s.name}</sl-option>`)}
-      </sl-select>
-    </div>`;
-}
 
 function HubNav() {
   const view = store.route.value.view;
@@ -77,8 +48,7 @@ export function TopBar() {
 
       <div class="topbar-right">
         ${HubNav()}
-        ${ThemePicker()}
-        <${ThemeSwitch} className="theme-switch-mobile" />
+        <${ThemeSwitch} />
         <button class=${'icon-btn settings-trigger' + (route.view === 'settings' ? ' active' : '')} title="Settings" onClick=${() => navigate('#/settings')}>
           <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path fill="currentColor" d="M19.4 13a7.5 7.5 0 000-2l2-1.6-2-3.4-2.4 1a7.6 7.6 0 00-1.7-1l-.4-2.5H10l-.4 2.5c-.6.3-1.2.6-1.7 1l-2.4-1-2 3.4 2 1.6a7.5 7.5 0 000 2l-2 1.6 2 3.4 2.4-1c.5.4 1.1.7 1.7 1l.4 2.5h4l.4-2.5c.6-.3 1.2-.6 1.7-1l2.4 1 2-3.4-2-1.6zM12 15.5a3.5 3.5 0 110-7 3.5 3.5 0 010 7z"/></svg>
         </button>

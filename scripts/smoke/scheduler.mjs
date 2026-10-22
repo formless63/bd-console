@@ -117,6 +117,13 @@ export async function runScheduler(ctx) {
     assert(finalJob.status === 'failed', `due job against a nonexistent session should end up "failed", got "${finalJob.status}"`);
     assert(/not found/i.test(finalJob.error || ''), `due job error should mention "not found", got: ${finalJob.error}`);
 
+    const attemptsFor = id => fetch(`http://127.0.0.1:${port}/api/schedule/attempts?id=${id}`).then(r => r.json());
+    const firstReceipt = (await attemptsFor(dueJobId)).attempts;
+    assert(firstReceipt.length === 1 && firstReceipt[0].status === 'failed' && firstReceipt[0].session === nonexistentSession && firstReceipt[0].started_at <= firstReceipt[0].finished_at, 'a failed send must have an accurate receipt');
+    assert((await attemptsFor(futureJobId)).attempts.length === 0, 'cancelling before delivery must not invent an attempt');
+    assert((await fetch(`http://127.0.0.1:${port}/api/schedule/attempts?id=garbage`)).status === 400, 'bad history id must fail');
+    assert((await fetch(`http://127.0.0.1:${port}/api/schedule/attempts?id=999999`)).status === 404, 'missing history job must fail');
+
     console.log(`smoke ok (scheduler CRUD + tick-driven failure): future=${futureJobId}, due=${dueJobId}`);
 
     // --- requeue a failed job -----------------------------------------------
@@ -176,6 +183,15 @@ export async function runScheduler(ctx) {
     assert(refailed.status === 'failed', `a requeue aimed at a missing session must fail again, got "${refailed.status}"`);
     assert(/not found/i.test(refailed.error || ''), `re-failure should still name the missing session; got: ${refailed.error}`);
 
+    const receipts = (await attemptsFor(dueJobId)).attempts;
+    assert(receipts.length === 2 && receipts[0].attempt === 2 && receipts[0].session === retargetSession && receipts[1].session === nonexistentSession, 'retry history must preserve each actual target');
+    assert(receipts[0].status === 'failed' && JSON.stringify(receipts[1]) === JSON.stringify(firstReceipt[0]), 'retry must never rewrite the first receipt');
+
+    const reopened = JSON.parse(trimLastLine(run(process.execPath, ['--input-type=module', '-e',
+      `const s = await import(${JSON.stringify(resolve('lib/schedule.mjs'))}); console.log(JSON.stringify(await s.listJobAttempts(${dueJobId})));`],
+      { env: { ...process.env, BD_CONSOLE_CONFIG_DIR: ctx.configDir } })));
+    assert(JSON.stringify(reopened.attempts) === JSON.stringify(receipts), 'reopening the database must not fabricate a legacy receipt after skipped requeues');
+
     console.log(`smoke ok (schedule retry: same row re-armed, retarget, explicit runAt required, refires cleanly): job=${dueJobId}`);
 
     // --- schedule.db migration onto a PRE-EXISTING database ------------------
@@ -218,10 +234,11 @@ seed.prepare('INSERT INTO jobs (prompt, session, run_at, status, created_at, fir
   .run('legacy prompt', 'legacy-session', 1000, 'failed', 900, 1001, 'tmux session not found');
 seed.close();
 
-const { listJobs, retryJob } = await import(process.argv[2]);
+const { listJobs, retryJob, listJobAttempts } = await import(process.argv[2]);
 const before = (await listJobs())[0];
 const retried = await retryJob(before.id, { runAt: Date.now() + 60 * 60 * 1000 });
-console.log(JSON.stringify({ before, retried }));
+const history = await listJobAttempts(before.id);
+console.log(JSON.stringify({ before, retried, history }));
 `);
     const migrateOut = JSON.parse(trimLastLine(run(process.execPath, [migrateScript, resolve(join(process.cwd(), 'lib', 'schedule.mjs'))], {
       env: { ...process.env, BD_CONSOLE_CONFIG_DIR: migrateDir },
@@ -232,6 +249,7 @@ console.log(JSON.stringify({ before, retried }));
     assert(migrateOut.before.error === 'tmux session not found', 'migration must preserve the stored error');
     assert(migrateOut.before.retry_count === 0, `retry_count should default to 0 on a migrated row, got ${migrateOut.before.retry_count}`);
     assert(migrateOut.before.last_error === null, `last_error should default to NULL on a migrated row, got ${JSON.stringify(migrateOut.before.last_error)}`);
+    assert(migrateOut.history.attempts.length === 1 && migrateOut.history.attempts[0].legacy === 1 && migrateOut.history.attempts[0].started_at === null && migrateOut.history.attempts[0].finished_at === 1001, 'legacy history must preserve last result without inventing a start');
     // And a job that predates the feature is immediately retryable.
     assert(migrateOut.retried.ok, `retrying a pre-migration job failed: ${JSON.stringify(migrateOut.retried)}`);
     assert(migrateOut.retried.job.retry_count === 1, 'retry_count must increment on a migrated row');
@@ -272,7 +290,8 @@ await new Promise((r) => setTimeout(r, 10));
 const reapedStale = await sched.reapStaleFiringJobs({ olderThanMs: 5 });
 const after = (await sched.listJobs()).find((j) => j.id === created.job.id);
 
-console.log(JSON.stringify({ created, first, second, claimed, reapedFresh, reapedStale, after }));
+const history = await sched.listJobAttempts(created.job.id);
+console.log(JSON.stringify({ created, first, second, claimed, reapedFresh, reapedStale, after, history }));
 `);
     const claimOut = JSON.parse(trimLastLine(run(process.execPath, [claimScript, resolve(join(process.cwd(), 'lib', 'schedule.mjs'))], {
       env: { ...process.env, BD_CONSOLE_CONFIG_DIR: claimDir },
@@ -287,6 +306,8 @@ console.log(JSON.stringify({ created, first, second, claimed, reapedFresh, reape
     assert(claimOut.reapedStale.reaped === 1, `a stranded 'firing' row must be reaped: ${JSON.stringify(claimOut.reapedStale)}`);
     assert(claimOut.after.status === 'failed', `a reaped row must land in 'failed' (the retryable state), got '${claimOut.after.status}'`);
     assert(/being sent/.test(claimOut.after.error || ''), `a reaped row must record why it is failed, got: ${claimOut.after.error}`);
+
+    assert(claimOut.history.attempts.length === 1 && claimOut.history.attempts[0].status === 'failed' && /may or may not/.test(claimOut.history.attempts[0].error), 'recovery must record ambiguous delivery exactly once');
 
     console.log('smoke ok (schedule claim: exclusive pending->firing, stranded firing rows reaped to failed)');
 

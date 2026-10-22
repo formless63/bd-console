@@ -3,6 +3,7 @@
 import { html } from 'htm/preact';
 import { useEffect, useState } from 'preact/hooks';
 import { store } from '../store.js';
+import { useScheduleNotifications } from '../scheduleNotifications.js';
 import { startEventStream } from '../events.js';
 import { TopBar } from './TopBar.js';
 import { HubView } from './HubView.js';
@@ -56,6 +57,7 @@ function CurrentView(route) {
 }
 
 export function App() {
+  useScheduleNotifications();
   const route = store.route.value;
 
   // App-lifetime, route-independent: one connection for the whole session,
