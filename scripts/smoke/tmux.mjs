@@ -8,6 +8,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 // Pure tmux agent-type/promptability classifier (bd-console-2gs) — importable
 // here because every I/O-shaped input (argv, kimi server pids) is gathered by
 // its caller, so the rules can be asserted against fixtures with no tmux
@@ -49,8 +50,8 @@ export async function runTmux(ctx) {
     assert(tmuxBody.sessions.length === 0, '/api/tmux should report no sessions when tmux binary is absent');
     console.log('smoke ok (tmux API: absent -> available:false)');
   } else {
-    // tmux is present, but we never create/attach real sessions in smoke —
-    // just shape-check whatever the host's tmux server (if any) reports.
+    // Only shape-check the host's sessions. Delivery tests below use a
+    // separate tmux server/socket and never send to the host's sessions.
     for (const s of tmuxBody.sessions) {
       assert(typeof s.name === 'string', 'tmux session missing name');
       assert(typeof s.created === 'number', 'tmux session missing numeric created');
@@ -98,6 +99,14 @@ export async function runTmux(ctx) {
     }
 
     console.log(`smoke ok (tmux API: present, ${tmuxBody.sessions.length} session(s), shape-checked only)`);
+
+    const targetRoot = join(tempRoot, 'tmux-targets');
+    mkdirSync(targetRoot);
+    execFileSync(process.execPath, [fileURLToPath(new URL('./tmux-targets.mjs', import.meta.url)), targetRoot], {
+      env: { ...process.env, TMUX: `${join(targetRoot, 'socket')},0,0` },
+      stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
+    });
+    console.log('smoke ok (private tmux server: exact session, active pane, literal prompt + Enter, inspect/preview, prefix isolation)');
   }
 
   // --- agent-type + promptability detection (bd-console-2gs) ----------------
